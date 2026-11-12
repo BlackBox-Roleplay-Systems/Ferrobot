@@ -16,9 +16,13 @@ All settings come from environment variables.
 | `FERRO_START` | `last` | `last`, `home`, or `Region Name/x/y/z` |
 | `FERRO_RELOG` | `true` | Log in again after the connection is lost |
 | `FERRO_RELOG_DELAY` | `60` | Seconds to wait before logging in again |
+| `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
 In Second Life, mark the account as a **scripted agent** (account settings on secondlife.com), as the grid's rules ask of bots.
+
+`ferrobot healthcheck` (the image's Docker `HEALTHCHECK`) exits with 0 while the bot is online, or
+offline for less than 10 minutes (a relog), and with 1 otherwise.
 
 Exit codes: `0` logged out on request, `1` bad settings, `2` a login refusal retrying can't fix (wrong password, terms of service not accepted, two-factor authentication on).
 

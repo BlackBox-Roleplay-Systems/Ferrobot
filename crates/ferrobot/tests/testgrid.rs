@@ -16,10 +16,25 @@ const WAIT: Duration = Duration::from_secs(15);
 struct Bot {
     child: Child,
     log: Arc<Mutex<Vec<String>>>,
+    health_file: std::path::PathBuf,
+}
+
+impl Drop for Bot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.health_file);
+    }
+}
+
+/// A health file of its own for each bot: the tests run side by side.
+fn health_file() -> std::path::PathBuf {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("ferrobot-test-health-{}-{n}", std::process::id()))
 }
 
 impl Bot {
     fn start(grid: &TestGrid, env: &[(&str, &str)]) -> Bot {
+        let health_file = health_file();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_ferrobot"));
         // nothing from the environment of whoever runs the tests: no real account by mistake
         cmd.env_clear()
@@ -28,6 +43,7 @@ impl Bot {
             .env("FERRO_PASSWORD", grid.password())
             .env("FERRO_RELOG_DELAY", "0")
             .env("RUST_LOG", "debug,ferrobot=trace,ferro_client=trace")
+            .env("FERRO_HEALTH_FILE", &health_file)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -45,7 +61,25 @@ impl Bot {
                 lines.lock().expect("log lock").push(line);
             }
         });
-        Bot { child, log }
+        Bot {
+            child,
+            log,
+            health_file,
+        }
+    }
+
+    /// `ferrobot healthcheck`, as Docker runs it.
+    async fn healthcheck(&self) -> i32 {
+        Command::new(env!("CARGO_BIN_EXE_ferrobot"))
+            .arg("healthcheck")
+            .env_clear()
+            .env("FERRO_HEALTH_FILE", &self.health_file)
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .expect("healthcheck runs")
+            .code()
+            .expect("an exit code")
     }
 
     fn log(&self) -> String {
@@ -278,4 +312,23 @@ async fn a_closed_event_queue_neither_ends_the_session_nor_spins() {
 
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+#[tokio::test]
+async fn the_healthcheck_follows_the_bot() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[]);
+    arrived(&grid, &bot, 1).await;
+    // written every 5 s
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !std::fs::read_to_string(&bot.health_file).is_ok_and(|t| t.contains("online=true")) {
+        assert!(tokio::time::Instant::now() < deadline, "{}", bot.log());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(bot.healthcheck().await, 0);
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    // no file: unhealthy
+    std::fs::remove_file(&bot.health_file).expect("remove");
+    assert_eq!(bot.healthcheck().await, 1);
 }

@@ -13,6 +13,13 @@ use tokio::sync::watch;
 /// 2 a login refusal that retrying can't fix (password, terms of service, 2FA).
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    let health_file = std::env::var("FERRO_HEALTH_FILE")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| services::health::DEFAULT_PATH.to_owned());
+    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        return std::process::ExitCode::from(services::health::check(health_file.as_ref()));
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     log::info!("Ferrobot {}", login::version());
     let cfg = match Config::from_env() {
@@ -44,6 +51,7 @@ async fn main() -> std::process::ExitCode {
     };
     let (client, mut network) = Client::new(http.clone());
     tokio::spawn(services::chat_log::run(client.clone()));
+    tokio::spawn(services::health::run(client.clone(), health_file.into()));
     std::process::ExitCode::from(run(&cfg, &http, &mut network, stop_rx).await)
 }
 

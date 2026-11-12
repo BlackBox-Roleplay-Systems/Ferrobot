@@ -52,7 +52,8 @@
   "<name> Resident" like SecondBot's Name2Key), cached; tested on the test grid
 - ⬜ Display names (GetDisplayNames capability, Aurora's request_display_names)
 - 🟡 Health state in the client (`Client::health`: online, region, time since the last packet)
-- ⬜ Docker HEALTHCHECK on the health state
+- ✅ Docker HEALTHCHECK: the bot writes a health file (`FERRO_HEALTH_FILE`), `ferrobot healthcheck`
+  reads it (healthy while online, or offline under 10 min); tested against the test grid
 
 ## Phase 3 - Groups
 
