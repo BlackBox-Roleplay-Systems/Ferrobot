@@ -52,6 +52,10 @@ pub struct GridConfig {
     pub active_group: Option<Uuid>,
     /// The login reply's `home`, as the grid writes it (LLSD notation in a string).
     pub home: String,
+    /// Display names some residents chose; the others have the default one.
+    pub display_names: Vec<(Uuid, String)>,
+    /// The regions give the GetDisplayNames capability (OpenSim may not).
+    pub display_names_cap: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +112,8 @@ impl Default for GridConfig {
             active_group: Some(Uuid::from_u128(0x6000_0001)),
             // in the second region
             home: "{'region_handle':[r256256, r256000], 'position':[r100, r110, r22], 'look_at':[r1, r0, r0]}".into(),
+            display_names: vec![(Uuid::from_u128(0x5eed_0001), "Sunny".into())],
+            display_names_cap: true,
         }
     }
 }
@@ -160,6 +166,10 @@ pub enum Seen {
     AvatarPickerRequest {
         session: u32,
         name: String,
+    },
+    DisplayNamesRequest {
+        session: u32,
+        ids: Vec<Uuid>,
     },
     TeleportLureRequest {
         session: u32,

@@ -21,9 +21,11 @@ struct Running {
 
 /// Log in to a fresh test grid and run the session until arrival.
 async fn connect() -> Running {
-    let grid = TestGrid::start(GridConfig::default())
-        .await
-        .expect("the test grid starts");
+    connect_to(GridConfig::default()).await
+}
+
+async fn connect_to(cfg: GridConfig) -> Running {
+    let grid = TestGrid::start(cfg).await.expect("the test grid starts");
     let http = reqwest::Client::builder()
         .redirect(login::redirect_policy())
         .build()
@@ -339,6 +341,90 @@ async fn teleports_home_and_to_a_location() {
     assert_eq!(
         r.client.teleport_to(42, Vec3::ZERO).await,
         Err(ClientError::Refused("Could not find that region.".into()))
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+#[tokio::test]
+async fn display_names_from_the_people_api_cached() {
+    let r = connect().await;
+    let some = Uuid::from_u128(0x5eed_0001);
+    let other = Uuid::from_u128(0x5eed_0002);
+    let unknown = Uuid::from_u128(0xdead);
+    let names = r
+        .client
+        .display_names(&[some, other, unknown])
+        .await
+        .expect("display names");
+    assert_eq!(names.len(), 2, "{names:?}");
+    let sunny = &names[&some];
+    assert_eq!(
+        (sunny.display_name.as_str(), sunny.username.as_str()),
+        ("Sunny", "some")
+    );
+    assert!(!sunny.is_default);
+    let o = &names[&other];
+    assert_eq!(
+        (o.display_name.as_str(), o.username.as_str()),
+        ("Other Avatar", "other.avatar")
+    );
+    assert!(o.is_default);
+
+    // cached, and the legacy names came with them
+    assert_eq!(
+        r.client
+            .display_name(some)
+            .await
+            .expect("cached")
+            .map(|d| d.display_name),
+        Some("Sunny".into())
+    );
+    assert_eq!(r.client.name(other).await, Ok(Some("Other Avatar".into())));
+    assert_eq!(
+        r.grid
+            .count(|s| matches!(s, Seen::DisplayNamesRequest { .. })),
+        1
+    );
+    assert_eq!(
+        r.grid.count(|s| matches!(s, Seen::UuidNameRequest { .. })),
+        0
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+#[tokio::test]
+async fn without_the_people_api_display_names_are_the_legacy_names() {
+    let r = connect_to(GridConfig {
+        display_names_cap: false,
+        ..GridConfig::default()
+    })
+    .await;
+    // the capabilities come with the seed, a moment after the arrival
+    assert!(
+        r.grid
+            .wait_for(WAIT, |s| matches!(s, Seen::SeedRequest { .. }))
+            .await
+    );
+    let some = Uuid::from_u128(0x5eed_0001);
+    let d = r
+        .client
+        .display_name(some)
+        .await
+        .expect("a reply")
+        .expect("known");
+    assert_eq!(
+        (d.display_name.as_str(), d.username.as_str()),
+        ("Some Resident", "some")
+    );
+    assert!(d.is_default);
+    assert_eq!(
+        r.grid
+            .count(|s| matches!(s, Seen::DisplayNamesRequest { .. })),
+        0
+    );
+    assert_eq!(
+        r.grid.count(|s| matches!(s, Seen::UuidNameRequest { .. })),
+        1
     );
     assert!(matches!(r.logout().await, End::LoggedOut));
 }

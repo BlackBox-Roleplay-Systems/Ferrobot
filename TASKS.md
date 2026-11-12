@@ -62,7 +62,9 @@ then the relog, SIGTERM then the logout (exit 0), the health file. Teleports not
   or UDP, AgentDropGroup), as Aurora's session_social.rs; tested on the test grid
 - 🟡 Names: key -> name (UUIDNameRequest) and name -> key (AvatarPickerRequest, a username meaning
   "<name> Resident" like SecondBot's Name2Key), cached; tested on the test grid
-- ⬜ Display names (GetDisplayNames capability, Aurora's request_display_names)
+- 🟡 Display names (`Client::display_names`): the GetDisplayNames capability as Aurora's
+  request_display_names and LLAvatarName::fromLLSD, cached an hour; legacy names where the grid
+  has no People API (OpenSim); tested on the test grid
 - 🟡 Health state in the client (`Client::health`: online, region, time since the last packet)
 - ✅ Docker HEALTHCHECK: the bot writes a health file (`FERRO_HEALTH_FILE`), `ferrobot healthcheck`
   reads it (healthy while online, or offline under 10 min); tested against the test grid

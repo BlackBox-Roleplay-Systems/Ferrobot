@@ -16,6 +16,7 @@ use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::events::{ChatMessage, Event, InstantMessage};
 use crate::login::LoginResponse;
+use crate::names::DisplayName;
 use crate::region_restart::{self, Restart};
 use crate::state::{ActiveGroup, Group, Region};
 use crate::{Request, Shared, TeleportTo};
@@ -143,6 +144,8 @@ struct Session<'a> {
     login: &'a LoginResponse,
     shared: &'a Shared,
     http: &'a reqwest::Client,
+    /// The current region's capabilities (secrets of the session, never logged).
+    caps: HashMap<String, String>,
     /// The current region's event queue, and the task that polls it.
     eq_rx: mpsc::UnboundedReceiver<EqMessage>,
     eq_open: bool,
@@ -286,6 +289,7 @@ impl Session<'_> {
             match caps::resolve_seed(&http, &seed).await {
                 Ok(caps) => {
                     log::info!("{} capabilities", caps.len());
+                    let _ = tx.send(EqMessage::Caps(caps.clone()));
                     match caps.get("EventQueueGet") {
                         Some(url) => caps::event_queue_loop(http, url.clone(), tx).await,
                         None => log::warn!("the region gave no event queue"),
@@ -309,6 +313,7 @@ impl Session<'_> {
         self.arrived = false;
         self.movement_sent = None;
         self.region_name.clear();
+        self.caps.clear();
         self.shared.state_mut().region = None;
         self.send_use_circuit_code();
         self.start_caps(seed);
@@ -391,6 +396,19 @@ impl Session<'_> {
                 self.name_waits.push((missing, reply));
             }
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
+            Request::DisplayNames { ids, reply } => match self.caps.get("GetDisplayNames") {
+                Some(cap) => {
+                    tokio::spawn(fetch_display_names(
+                        self.http.clone(),
+                        cap.clone(),
+                        ids,
+                        reply,
+                    ));
+                }
+                None => {
+                    let _ = reply.send(Err("no GetDisplayNames capability".into()));
+                }
+            },
             Request::FindAvatars { name, reply } => {
                 let query = Uuid::new_v4();
                 let mut m = AvatarPickerRequest::default();
@@ -762,6 +780,71 @@ impl Session<'_> {
     }
 }
 
+/// LLAvatarNameCache::requestNamesViaCapability (Aurora's request_display_names): GET
+/// `<GetDisplayNames>/?ids=<id>&ids=<id>…`, URLs kept under ~3500 characters.
+async fn fetch_display_names(
+    http: reqwest::Client,
+    cap: String,
+    ids: Vec<Uuid>,
+    reply: oneshot::Sender<Result<Vec<DisplayName>, String>>,
+) {
+    const NAME_URL_SEND_THRESHOLD: usize = 3500;
+    // caps are granted without the slash the query needs
+    let base = if cap.ends_with('/') {
+        cap
+    } else {
+        format!("{cap}/")
+    };
+    let mut urls: Vec<String> = Vec::new();
+    for id in ids {
+        match urls.last_mut() {
+            Some(url) if url.len() <= NAME_URL_SEND_THRESHOLD => {
+                url.push_str("&ids=");
+                url.push_str(&id.to_string());
+            }
+            _ => urls.push(format!("{base}?ids={id}")),
+        }
+    }
+    let mut found = Vec::new();
+    for url in urls {
+        let resp = match http
+            .get(&url)
+            .header("Accept", "application/llsd+xml")
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => resp,
+            Ok(resp) => {
+                let _ = reply.send(Err(format!("GetDisplayNames: HTTP {}", resp.status())));
+                return;
+            }
+            Err(e) => {
+                let _ = reply.send(Err(format!("GetDisplayNames: {}", e.without_url())));
+                return;
+            }
+        };
+        match resp
+            .bytes()
+            .await
+            .ok()
+            .and_then(|b| ferro_llsd::from_xml(&b).ok())
+        {
+            Some(v) if v.is_map() => found.extend(
+                v["agents"]
+                    .as_array()
+                    .iter()
+                    .map(DisplayName::from_llsd)
+                    .filter(|d| !d.id.is_nil()),
+            ),
+            _ => {
+                let _ = reply.send(Err("GetDisplayNames: an invalid reply".into()));
+                return;
+            }
+        }
+    }
+    let _ = reply.send(Ok(found));
+}
+
 /// An IPv4 address as the event queue carries it (Aurora's ip_from_llsd).
 fn ip_from_llsd(v: &Llsd) -> Option<Ipv4Addr> {
     match v {
@@ -803,6 +886,7 @@ async fn run(
     };
     let (_, eq_rx) = mpsc::unbounded_channel();
     let mut s = Session {
+        caps: HashMap::new(),
         login,
         shared,
         http,
@@ -858,6 +942,7 @@ async fn run(
             // The capabilities task drops its sender when it ends; a closed channel is always
             // ready, so its branch is switched off then, or the loop would spin.
             ev = s.eq_rx.recv(), if s.eq_open => match ev {
+                Some(EqMessage::Caps(caps)) => s.caps = caps,
                 Some(EqMessage::Event(e)) => {
                     if let Some(end) = s.on_event(e) {
                         break end;

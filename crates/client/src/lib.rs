@@ -13,7 +13,7 @@ mod caps;
 mod circuit;
 pub mod events;
 pub mod login;
-mod names;
+pub mod names;
 mod network;
 pub mod region_restart;
 pub mod state;
@@ -21,6 +21,7 @@ mod xmlrpc;
 
 pub use events::{ChatMessage, Event, InstantMessage};
 pub use login::{LoginError, LoginRequest, LoginResponse, StartLocation};
+pub use names::DisplayName;
 pub use network::{End, Network};
 pub use state::{Group, Health, Home, State};
 
@@ -61,6 +62,12 @@ pub(crate) enum Request {
     FindAvatars {
         name: String,
         reply: oneshot::Sender<Vec<(Uuid, String)>>,
+    },
+    /// Display names (the GetDisplayNames capability); an error when the region has none or it
+    /// fails.
+    DisplayNames {
+        ids: Vec<Uuid>,
+        reply: oneshot::Sender<Result<Vec<DisplayName>, String>>,
     },
     /// A teleport; answered with the region arrived in, or the grid's reason.
     Teleport {
@@ -208,6 +215,57 @@ impl Client {
     /// The name of one avatar, `None` when the grid does not know it.
     pub async fn name(&self, id: Uuid) -> Result<Option<String>, ClientError> {
         Ok(self.names(&[id]).await?.remove(&id))
+    }
+
+    /// Display names of these avatars: from the cache (an hour), else the People API
+    /// (GetDisplayNames); a grid without it gives the legacy names instead, as the viewer shows
+    /// them. Ids the grid does not know are left out.
+    pub async fn display_names(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, DisplayName>, ClientError> {
+        let missing: Vec<Uuid> = {
+            let cache = self.shared.names();
+            ids.iter()
+                .copied()
+                .filter(|id| !id.is_nil() && cache.display(*id).is_none())
+                .collect()
+        };
+        if !missing.is_empty() {
+            let asked = missing.clone();
+            match self
+                .ask(|reply| Request::DisplayNames { ids: asked, reply })
+                .await?
+            {
+                Ok(found) => {
+                    let mut cache = self.shared.names();
+                    for d in found {
+                        cache.insert_display(d, names::DISPLAY_NAME_TTL);
+                    }
+                }
+                Err(why) => {
+                    log::debug!("display names: {why}; legacy names instead");
+                    let legacy = self.names(&missing).await?;
+                    let mut cache = self.shared.names();
+                    for (id, name) in legacy {
+                        cache.insert_display(
+                            DisplayName::from_legacy(id, &name),
+                            names::LEGACY_DISPLAY_NAME_TTL,
+                        );
+                    }
+                }
+            }
+        }
+        let cache = self.shared.names();
+        Ok(ids
+            .iter()
+            .filter_map(|id| cache.display(*id).map(|d| (*id, d.clone())))
+            .collect())
+    }
+
+    /// The display name of one avatar.
+    pub async fn display_name(&self, id: Uuid) -> Result<Option<DisplayName>, ClientError> {
+        Ok(self.display_names(&[id]).await?.remove(&id))
     }
 
     /// The key of the avatar with this name ("First Last", or a username, "Resident" then

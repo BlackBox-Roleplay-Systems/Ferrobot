@@ -85,14 +85,15 @@ async fn connection(mut stream: TcpStream, shared: Arc<Shared>) {
 }
 
 async fn route(shared: &Arc<Shared>, req: Request) -> Response {
-    if req.method != "POST" {
-        return Response::status(405);
-    }
-    if req.path == "/login.cgi" {
+    let (path, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
+    if path == "/login.cgi" {
+        if req.method != "POST" {
+            return Response::status(405);
+        }
         return crate::login::handle(shared, &req.body);
     }
-    // /cap/<session>/<region>/<name>
-    let mut parts = req.path.trim_start_matches('/').split('/');
+    // /cap/<session>/<region>/<name>, GetDisplayNames with a slash and a query after it
+    let mut parts = path.trim_matches('/').split('/');
     match (
         parts.next(),
         parts.next(),
@@ -103,7 +104,8 @@ async fn route(shared: &Arc<Shared>, req: Request) -> Response {
         (Some("cap"), Some(n), Some(region), Some(name), None) => {
             match (n.parse(), region.parse()) {
                 (Ok(n), Ok(region)) => {
-                    crate::caps::handle(shared, n, region, name, &req.body).await
+                    crate::caps::handle(shared, n, region, name, &req.method, query, &req.body)
+                        .await
                 }
                 _ => Response::status(404),
             }

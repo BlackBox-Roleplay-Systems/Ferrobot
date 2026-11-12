@@ -13,15 +13,18 @@ pub async fn handle(
     n: u32,
     region: usize,
     name: &str,
+    method: &str,
+    query: &str,
     body: &[u8],
 ) -> Response {
     match shared.state().sessions.get(&n) {
         Some(s) if !s.ended && (s.region == region || s.expected == Some(region)) => {}
         _ => return Response::status(404),
     }
-    match name {
-        "seed" => seed(shared, n, region, body),
-        "eq" => event_queue(shared, n, region).await,
+    match (name, method) {
+        ("seed", "POST") => seed(shared, n, region, body),
+        ("eq", "POST") => event_queue(shared, n, region).await,
+        ("displaynames", "GET") => display_names(shared, n, query),
         _ => Response::status(404),
     }
 }
@@ -42,6 +45,13 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         caps: caps.clone(),
     });
     let mut m = Map::new();
+    if shared.cfg.display_names_cap && caps.iter().any(|c| c == "GetDisplayNames") {
+        // granted without a trailing slash, as the grid does
+        m.insert(
+            "GetDisplayNames".into(),
+            format!("http://{}/cap/{n}/{region}/displaynames", shared.http_addr).into(),
+        );
+    }
     if caps.iter().any(|c| c == "EventQueueGet") {
         m.insert(
             "EventQueueGet".into(),
@@ -92,6 +102,57 @@ async fn event_queue(shared: &Arc<Shared>, n: u32, region: usize) -> Response {
             return Response::status(502);
         }
     }
+}
+
+/// The People API: `?ids=<id>&ids=<id>…`; `agents` for the avatars the grid knows, `bad_ids`
+/// for the others (LLAvatarNameCache reads both).
+fn display_names(shared: &Arc<Shared>, n: u32, query: &str) -> Response {
+    let ids: Vec<uuid::Uuid> = query
+        .split('&')
+        .filter_map(|p| p.strip_prefix("ids="))
+        .filter_map(|id| id.parse().ok())
+        .collect();
+    shared.saw(Seen::DisplayNamesRequest {
+        session: n,
+        ids: ids.clone(),
+    });
+    let cfg = &shared.cfg;
+    let mut agents = Vec::new();
+    let mut bad = Vec::new();
+    for id in ids {
+        let Some(r) = cfg.residents.iter().find(|r| r.id == id) else {
+            bad.push(Llsd::from(id));
+            continue;
+        };
+        let username = if r.last == "Resident" {
+            r.first.to_lowercase()
+        } else {
+            format!("{}.{}", r.first, r.last).to_lowercase()
+        };
+        let chosen = cfg
+            .display_names
+            .iter()
+            .find(|(who, _)| *who == id)
+            .map(|(_, name)| name.clone());
+        let mut a = Map::new();
+        a.insert("id".into(), id.into());
+        a.insert("username".into(), username.into());
+        a.insert(
+            "display_name".into(),
+            chosen
+                .clone()
+                .unwrap_or_else(|| format!("{} {}", r.first, r.last))
+                .into(),
+        );
+        a.insert("legacy_first_name".into(), r.first.clone().into());
+        a.insert("legacy_last_name".into(), r.last.clone().into());
+        a.insert("is_display_name_default".into(), chosen.is_none().into());
+        agents.push(Llsd::Map(a));
+    }
+    let mut m = Map::new();
+    m.insert("agents".into(), Llsd::Array(agents));
+    m.insert("bad_ids".into(), Llsd::Array(bad));
+    llsd_reply(&Llsd::Map(m))
 }
 
 fn llsd_reply(v: &Llsd) -> Response {

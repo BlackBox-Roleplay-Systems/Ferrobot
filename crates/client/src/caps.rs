@@ -95,6 +95,8 @@ pub struct EqEvent {
 
 #[derive(Debug)]
 pub enum EqMessage {
+    /// The region's capabilities, from its seed (URLs: secrets of the session, never logged).
+    Caps(HashMap<String, String>),
     Event(EqEvent),
     /// The queue failed too many times in a row.
     Lost,
