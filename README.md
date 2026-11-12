@@ -37,3 +37,10 @@ docker run --rm -e FERRO_USERNAME='Bot Name' -e FERRO_PASSWORD='…' ferrobot
 - `crates/msg` - the UDP message system, generated from `message_template.msg` (from Aurora Viewer)
 
 See `NOTICE.md` for what comes from where.
+
+## Plan and contributing
+
+- [ROADMAP.md](ROADMAP.md) - the plan, phase by phase
+- [TASKS.md](TASKS.md) - where each step stands
+- [ARCHITECTURE.md](ARCHITECTURE.md) - how the code is laid out
+- [AGENTS.md](AGENTS.md) - rules for AI agents working on Ferrobot
