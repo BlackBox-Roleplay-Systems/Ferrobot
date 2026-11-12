@@ -16,15 +16,18 @@ use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch};
 
-/// No packet from the region for this long: the connection is lost.
-const REGION_TIMEOUT: Duration = Duration::from_secs(60);
+/// No packet from the region for this long: the connection is lost. 100 s like the viewer
+/// (llstartup.cpp circuit_timeout) and Aurora's SIM_TIMEOUT: 60 s cut sessions that a laggy
+/// region or a short network outage would survive.
+const REGION_TIMEOUT: Duration = Duration::from_secs(100);
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 const AGENT_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 const TICK: Duration = Duration::from_millis(100);
 /// How long a logout waits for the region's LogoutReply.
 const LOGOUT_WAIT: Duration = Duration::from_secs(10);
-/// No AgentMovementComplete this long after CompleteAgentMovement: the arrival failed.
-const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(30);
+/// No AgentMovementComplete this long after CompleteAgentMovement: the arrival failed
+/// (STATE_AGENT_WAIT_TIMEOUT, llstartup.cpp; Aurora's LOGIN_ARRIVAL_TIMEOUT).
+const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 
 /// How a session ended.
 #[derive(Debug)]
@@ -143,6 +146,9 @@ impl Session<'_> {
             && let Some(sent) = self.movement_sent
             && now.duration_since(sent) > ARRIVAL_TIMEOUT
         {
+            // The session exists on the grid: log it out, or the next login finds it still there
+            // and is refused for a minute or two (llstartup.cpp STATE_AGENT_WAIT, Aurora's session).
+            self.send_logout_request();
             return Some(End::Lost("no AgentMovementComplete from the region".into()));
         }
         if now.duration_since(self.last_ping) >= PING_INTERVAL {
@@ -331,6 +337,9 @@ pub async fn run(
     let mut buf = vec![0u8; 8192];
     let mut tick = tokio::time::interval(TICK);
     let mut logging_out: Option<Instant> = None;
+    // The capabilities task drops its sender when it ends; a closed channel is always ready, so
+    // its branch is switched off then, or the loop would spin.
+    let mut eq_open = true;
     let end = loop {
         tokio::select! {
             r = s.sock.recv_from(&mut buf) => match r {
@@ -350,14 +359,17 @@ pub async fn run(
                     break end;
                 }
             }
-            ev = eq_rx.recv() => match ev {
+            ev = eq_rx.recv(), if eq_open => match ev {
                 Some(EqMessage::Event(e)) => {
                     if let Some(end) = s.on_event(e) {
                         break end;
                     }
                 }
-                Some(EqMessage::Lost) => log::warn!("event queue lost"),
-                None => {}
+                // Without the region's event queue, IM sessions, group chat and teleports fail
+                // and nothing gets better before a new login (LLEventPollImpl, Aurora's
+                // on_eq_lost): end the session so that the bot logs in again.
+                Some(EqMessage::Lost) => break End::Lost("the region's event queue was lost".into()),
+                None => eq_open = false,
             },
             changed = shutdown.changed(), if logging_out.is_none() => {
                 if changed.is_err() || *shutdown.borrow() {
@@ -370,5 +382,81 @@ pub async fn run(
     };
     s.circuit.flush_acks(&s.sock);
     caps_task.abort();
+    // Once the logout is asked, however the region ends the session (LogoutReply, a kick,
+    // DisableSimulator, its queue closing), the bot is out as it was asked to be.
+    if logging_out.is_some() {
+        return End::LoggedOut;
+    }
     end
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn login(sim_port: u16, seed: String) -> LoginResponse {
+        LoginResponse {
+            agent_id: uuid::Uuid::from_u128(1),
+            session_id: uuid::Uuid::from_u128(2),
+            first_name: "Test".into(),
+            last_name: "Bot".into(),
+            sim_ip: Ipv4Addr::LOCALHOST,
+            sim_port,
+            circuit_code: 3,
+            seed_capability: seed,
+            message: String::new(),
+            secure_session_id: uuid::Uuid::from_u128(4),
+            inventory_root: uuid::Uuid::nil(),
+        }
+    }
+
+    /// A region whose seed capability never answers leaves the bot without its event queue: the
+    /// session ends, so that the bot logs in again, instead of staying half connected.
+    #[tokio::test(start_paused = true)]
+    async fn a_lost_event_queue_ends_the_session() {
+        let region = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let seed = format!("http://{}/seed", closed.local_addr().expect("address"));
+        drop(closed);
+        let port = region.local_addr().expect("address").port();
+        let (_stop_tx, stop_rx) = watch::channel(false);
+        let end = run(&reqwest::Client::new(), &login(port, seed), stop_rx).await;
+        assert!(
+            matches!(&end, End::Lost(why) if why.contains("event queue")),
+            "{end:?}"
+        );
+    }
+
+    /// Asked to log out, the session ends as logged out even when the region drops the circuit
+    /// instead of answering LogoutReply.
+    #[tokio::test]
+    async fn a_session_closed_during_logout_is_logged_out() {
+        let region = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let port = region.local_addr().expect("address").port();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let http = reqwest::Client::new();
+        let resp = login(port, "http://127.0.0.1:9/seed".into());
+        let session = run(&http, &resp, stop_rx);
+        let region_side = async {
+            let mut buf = [0u8; 2048];
+            let (_, bot) = region.recv_from(&mut buf).await.expect("UseCircuitCode");
+            stop_tx.send(true).expect("stop");
+            // wait for the LogoutRequest, then close the circuit
+            loop {
+                let (n, _) = region.recv_from(&mut buf).await.expect("packet");
+                if parse_packet(&buf[..n]).is_ok_and(|p| p.id == LogoutRequest::ID) {
+                    break;
+                }
+            }
+            let mut out = Vec::new();
+            let mut w = ferro_msg::Writer::new();
+            DisableSimulator::ID.encode(&mut w.buf);
+            DisableSimulator::default().encode_body(&mut w);
+            ferro_msg::packet::build_raw(&w.buf, false, 1, false, false, &[], &mut out);
+            region.send_to(&out, bot).await.expect("send");
+        };
+        let (end, ()) = tokio::join!(session, region_side);
+        assert!(matches!(end, End::LoggedOut), "{end:?}");
+    }
 }
