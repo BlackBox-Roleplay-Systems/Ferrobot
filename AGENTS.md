@@ -16,6 +16,12 @@ that the bot behaves on the grid the way the grid expects.
    credentials**: you do not type, read, store or transmit a bot's user name, password, token or
    key. You may build and start the bot for the human; **they** set the credentials and log it in.
    Anything done on a grid is done by the human.
+   **Exception, granted by the human: NGC**, the local OpenSim-NGC (Tranquillity) test server in
+   `../OpenSim-Tranquillity` (standalone, region "Sandbox", login `http://127.0.0.1:9000/`). On it,
+   agents may start the server (`bin/opensim.sh`), create test accounts from its console, and run
+   the bot against it. The passwords of those test accounts stay in the worktree's `.scratch/`,
+   never in the repository or a log. NGC is OpenSim, not Second Life: it never replaces the human's
+   validation on the grid (rule 4).
 2. **No secret in the repository or the logs**: no password, token, API key, shared secret,
    capability URL or personal data (e-mail address, real name). Capability URLs are secrets of a
    session: the code never logs them. Grid places are not named either: say "a region", "a sandbox".
@@ -97,6 +103,8 @@ worktree, branch and `target` folder.
   a test that runs the bot through it.
 - **Captured traffic**: when the human records a real exchange for a test (a packet, an LLSD
   reply), strip everything personal first: names, keys, capability URLs, region names.
+- **NGC** (rule 1's exception): a real OpenSim server on this machine. Use it after the test grid,
+  to check what a real server does; note in the PR what was run there.
 - **On the grid**: only the human (rule 1). Tell them precisely what to test.
 
 ```bash
