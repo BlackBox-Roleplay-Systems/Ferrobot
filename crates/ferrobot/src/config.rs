@@ -13,6 +13,8 @@ pub struct Config {
     pub relog: bool,
     /// Seconds to wait before logging in again.
     pub relog_delay: u64,
+    /// The avatars the bot obeys: "First Last" or usernames (SecondBot's MastersCSV).
+    pub masters: Vec<String>,
 }
 
 impl std::fmt::Debug for Config {
@@ -24,6 +26,7 @@ impl std::fmt::Debug for Config {
             .field("start", &self.start)
             .field("relog", &self.relog)
             .field("relog_delay", &self.relog_delay)
+            .field("masters", &self.masters)
             .finish_non_exhaustive()
     }
 }
@@ -57,7 +60,8 @@ fn flag(name: &'static str, default: bool) -> Result<bool, ConfigError> {
 
 impl Config {
     /// FERRO_USERNAME, FERRO_PASSWORD (required); FERRO_LOGIN_URI (Second Life by default), FERRO_START
-    /// ("last", "home" or "Region Name/x/y/z"), FERRO_RELOG (true), FERRO_RELOG_DELAY (60 s).
+    /// ("last", "home" or "Region Name/x/y/z"), FERRO_RELOG (true), FERRO_RELOG_DELAY (60 s),
+    /// FERRO_MASTERS (none).
     pub fn from_env() -> Result<Config, ConfigError> {
         let start = match var("FERRO_START") {
             None => StartLocation::Last,
@@ -82,8 +86,20 @@ impl Config {
             start,
             relog: flag("FERRO_RELOG", true)?,
             relog_delay,
+            masters: var("FERRO_MASTERS")
+                .map(|v| parse_masters(&v))
+                .unwrap_or_default(),
         })
     }
+}
+
+/// A comma-separated list of names, as SecondBot's MastersCSV.
+pub fn parse_masters(csv: &str) -> Vec<String> {
+    csv.split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// "last", "home", or "Region Name/x/y/z" (x, y, z optional, 128/128/0 by default).
@@ -112,6 +128,15 @@ pub fn parse_start(s: &str) -> Option<StartLocation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn masters_are_a_list_of_names() {
+        assert_eq!(
+            parse_masters(" Some Resident, other.avatar ,, "),
+            vec!["Some Resident".to_owned(), "other.avatar".to_owned()]
+        );
+        assert!(parse_masters("").is_empty());
+    }
 
     #[test]
     fn start_locations() {

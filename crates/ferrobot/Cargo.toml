@@ -16,6 +16,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signa
 [dev-dependencies]
 ferro-llsd = { path = "../llsd" }
 ferro-testgrid = { path = "../testgrid" }
+uuid = "1.27.0"
 # processes, to run the bot against the test grid
 tokio = { version = "1", features = ["process", "io-util"] }
 

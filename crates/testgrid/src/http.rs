@@ -91,13 +91,23 @@ async fn route(shared: &Arc<Shared>, req: Request) -> Response {
     if req.path == "/login.cgi" {
         return crate::login::handle(shared, &req.body);
     }
-    // /cap/<session>/<name>
+    // /cap/<session>/<region>/<name>
     let mut parts = req.path.trim_start_matches('/').split('/');
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some("cap"), Some(n), Some(name), None) => match n.parse() {
-            Ok(n) => crate::caps::handle(shared, n, name, &req.body).await,
-            Err(_) => Response::status(404),
-        },
+    match (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) {
+        (Some("cap"), Some(n), Some(region), Some(name), None) => {
+            match (n.parse(), region.parse()) {
+                (Ok(n), Ok(region)) => {
+                    crate::caps::handle(shared, n, region, name, &req.body).await
+                }
+                _ => Response::status(404),
+            }
+        }
         _ => Response::status(404),
     }
 }

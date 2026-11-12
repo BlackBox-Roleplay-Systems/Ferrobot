@@ -39,6 +39,9 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
         session_id: Uuid::new_v4(),
         circuit_code: 1000 + n,
         ended: false,
+        region: crate::FIRST_REGION,
+        expected: None,
+        arrival: crate::region::ARRIVAL,
         events: VecDeque::new(),
         close_queue: false,
         eq_id: 0,
@@ -52,16 +55,14 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
     r.insert("first_name".into(), format!("\"{}\"", cfg.first).into());
     r.insert("last_name".into(), cfg.last.clone().into());
     r.insert("circuit_code".into(), (session.circuit_code as i32).into());
-    r.insert("sim_ip".into(), shared.region_addr.ip().to_string().into());
-    r.insert(
-        "sim_port".into(),
-        i32::from(shared.region_addr.port()).into(),
-    );
-    r.insert("region_x".into(), (crate::region::REGION_X as i32).into());
-    r.insert("region_y".into(), (crate::region::REGION_Y as i32).into());
+    let region = &shared.regions[crate::FIRST_REGION];
+    r.insert("sim_ip".into(), region.addr.ip().to_string().into());
+    r.insert("sim_port".into(), i32::from(region.addr.port()).into());
+    r.insert("region_x".into(), (region.x as i32).into());
+    r.insert("region_y".into(), (region.y as i32).into());
     r.insert(
         "seed_capability".into(),
-        format!("http://{}/cap/{n}/seed", shared.http_addr).into(),
+        shared.seed_url(n, crate::FIRST_REGION).into(),
     );
     r.insert("look_at".into(), "[r1,r0,r0]".into());
     r.insert("start_location".into(), p["start"].as_str().into());

@@ -1,8 +1,10 @@
-//! The region: one UDP socket, a circuit per login. It acks what the bot sends reliably, answers
+//! A region: one UDP socket, a circuit per login. It acks what the bot sends reliably, answers
 //! the connect sequence (UseCircuitCode then RegionHandshake, CompleteAgentMovement then
-//! AgentMovementComplete), pings both ways and answers LogoutRequest, as a simulator does.
+//! AgentMovementComplete), pings both ways, answers LogoutRequest, and sends the agent to the
+//! other region on a teleport (TeleportStart, then TeleportFinish on the event queue), as a
+//! simulator does.
 
-use crate::{RegionCommand, Seen, Shared};
+use crate::{FIRST_REGION, RegionCommand, SECOND_REGION, Seen, Shared};
 use ferro_llsd::{Llsd, Map};
 use ferro_msg::msgs::*;
 use ferro_msg::{IncomingPacket, Msg, build_packet, field_str, parse_packet, str_field};
@@ -14,10 +16,11 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-/// Where the region sits on the grid, in metres (the login reply's region_x / region_y).
-pub const REGION_X: u32 = 1000 * 256;
-pub const REGION_Y: u32 = 1000 * 256;
-const ARRIVAL: Vec3 = Vec3::new(128.0, 128.0, 25.0);
+/// TELEPORT_FLAGS_VIA_LURE, VIA_LANDMARK, VIA_HOME, VIA_LOCATION (lltelepostflags.h)
+const VIA_LURE: u32 = 1 << 2;
+const VIA_HOME: u32 = 1 << 4;
+const VIA_LOCATION: u32 = 1 << 5;
+pub const ARRIVAL: Vec3 = Vec3::new(128.0, 128.0, 25.0);
 
 /// The circuit of one login.
 struct Client {
@@ -27,6 +30,7 @@ struct Client {
 }
 
 struct Region {
+    index: usize,
     sock: UdpSocket,
     shared: Arc<Shared>,
     clients: HashMap<SocketAddr, Client>,
@@ -65,10 +69,14 @@ impl Region {
             log::debug!("testgrid region: bad packet from {from}");
             return;
         };
+        // a UseCircuitCode always opens a fresh circuit: an agent that comes back after a
+        // teleport finds its old one gone
+        if pkt.id == UseCircuitCode::ID {
+            self.clients.remove(&from);
+            self.use_circuit_code(&pkt, from);
+            return;
+        }
         if !self.clients.contains_key(&from) {
-            if pkt.id == UseCircuitCode::ID {
-                self.use_circuit_code(&pkt, from);
-            }
             return;
         }
         if pkt.reliable() {
@@ -88,7 +96,10 @@ impl Region {
         } else if id == CompletePingCheck::ID {
             self.shared.saw(Seen::CompletePingCheck { session: n });
         } else if id == CompleteAgentMovement::ID {
-            self.shared.saw(Seen::CompleteAgentMovement { session: n });
+            self.shared.saw(Seen::CompleteAgentMovement {
+                session: n,
+                region: self.index,
+            });
             self.agent_movement_complete(from);
         } else if id == AgentThrottle::ID {
             self.shared.saw(Seen::AgentThrottle { session: n });
@@ -122,6 +133,55 @@ impl Region {
                 });
                 self.avatar_picker(from, m.agent_data.query_id, &name);
             }
+        } else if id == TeleportLureRequest::ID {
+            if let Ok(m) = pkt.decode::<TeleportLureRequest>() {
+                let lure = m.info.lure_id;
+                self.shared
+                    .saw(Seen::TeleportLureRequest { session: n, lure });
+                let known = self.shared.state().lures.remove(&lure);
+                if known {
+                    let to = self.other();
+                    self.teleport(from, n, to, ARRIVAL, VIA_LURE);
+                } else {
+                    self.teleport_failed(n, "That teleport offer is no longer valid.");
+                }
+            }
+        } else if id == TeleportLandmarkRequest::ID {
+            if let Ok(m) = pkt.decode::<TeleportLandmarkRequest>() {
+                self.shared.saw(Seen::TeleportLandmarkRequest {
+                    session: n,
+                    landmark: m.info.landmark_id,
+                });
+                if m.info.landmark_id.is_nil() {
+                    // home: in the second region (GridConfig::home)
+                    self.teleport(
+                        from,
+                        n,
+                        SECOND_REGION,
+                        Vec3::new(100.0, 110.0, 22.0),
+                        VIA_HOME,
+                    );
+                } else {
+                    self.teleport_failed(n, "The landmark could not be found.");
+                }
+            }
+        } else if id == TeleportLocationRequest::ID {
+            if let Ok(m) = pkt.decode::<TeleportLocationRequest>() {
+                let handle = m.info.region_handle;
+                self.shared.saw(Seen::TeleportLocationRequest {
+                    session: n,
+                    region_handle: handle,
+                });
+                match self
+                    .shared
+                    .regions
+                    .iter()
+                    .position(|r| r.handle() == handle)
+                {
+                    Some(to) => self.teleport(from, n, to, m.info.position, VIA_LOCATION),
+                    None => self.teleport_failed(n, "Could not find that region."),
+                }
+            }
         } else if id == LogoutRequest::ID {
             self.shared.saw(Seen::LogoutRequest { session: n });
             let mut r = LogoutReply::default();
@@ -138,18 +198,27 @@ impl Region {
             return;
         };
         let c = &m.circuit_code;
-        let found = self
-            .shared
-            .state()
-            .sessions
-            .values()
-            .find(|s| {
+        // the login region of a new session, or the region a teleport sends the agent to
+        let found = {
+            let mut st = self.shared.state();
+            let index = self.index;
+            let s = st.sessions.values_mut().find(|s| {
                 !s.ended
                     && s.circuit_code == c.code
                     && s.session_id == c.session_id
                     && c.id == self.shared.agent_id
+                    && (s.expected == Some(index) || (s.expected.is_none() && s.region == index))
+            });
+            s.map(|s| {
+                if s.expected == Some(index) {
+                    s.region = index;
+                    s.expected = None;
+                    // the queue of the new region starts empty
+                    s.events.clear();
+                }
+                (s.n, s.session_id)
             })
-            .map(|s| (s.n, s.session_id));
+        };
         let Some((n, session_id)) = found else {
             log::debug!("testgrid region: UseCircuitCode for no session");
             return;
@@ -162,14 +231,17 @@ impl Region {
                 next_seq: 1,
             },
         );
-        self.shared.saw(Seen::UseCircuitCode { session: n });
+        self.shared.saw(Seen::UseCircuitCode {
+            session: n,
+            region: self.index,
+        });
         let ack = PacketAck {
             packets: vec![packet_ack::Packets { id: pkt.sequence }],
         };
         self.send(from, &ack, false);
 
         let mut h = RegionHandshake::default();
-        h.region_info.sim_name = str_field(&self.shared.cfg.region_name);
+        h.region_info.sim_name = str_field(&self.shared.regions[self.index].name);
         h.region_info.water_height = 20.0;
         h.region_info2.region_id = Uuid::new_v4();
         self.send(from, &h, true);
@@ -182,9 +254,15 @@ impl Region {
         let mut m = AgentMovementComplete::default();
         m.agent_data.agent_id = self.shared.agent_id;
         m.agent_data.session_id = c.session_id;
-        m.data.position = ARRIVAL;
+        let n = c.n;
+        m.data.position = self
+            .shared
+            .state()
+            .sessions
+            .get(&n)
+            .map_or(ARRIVAL, |s| s.arrival);
         m.data.look_at = Vec3::X;
-        m.data.region_handle = (u64::from(REGION_X) << 32) | u64::from(REGION_Y);
+        m.data.region_handle = self.shared.regions[self.index].handle();
         m.sim_data.channel_version = str_field("Ferrobot Test Grid 1.0");
         self.send(to, &m, true);
     }
@@ -291,7 +369,96 @@ impl Region {
         self.send(to, &m, true);
     }
 
+    fn other(&self) -> usize {
+        if self.index == FIRST_REGION {
+            SECOND_REGION
+        } else {
+            FIRST_REGION
+        }
+    }
+
+    /// The agent goes to region `to`: in this region, TeleportLocal; elsewhere TeleportStart,
+    /// then TeleportFinish on the event queue with the region's address and seed, as the grid
+    /// sends them (LLAgent::processTeleportFinish reads them). Fails if a test asked for it.
+    fn teleport(&mut self, from: SocketAddr, n: u32, to: usize, position: Vec3, flags: u32) {
+        let failure = self.shared.state().fail_teleport.take();
+        if let Some(reason) = failure {
+            self.teleport_failed(n, &reason);
+            return;
+        }
+        if to == self.index {
+            let mut m = TeleportLocal::default();
+            m.info.agent_id = self.shared.agent_id;
+            m.info.position = position;
+            m.info.look_at = Vec3::X;
+            m.info.teleport_flags = flags;
+            self.send(from, &m, true);
+            return;
+        }
+        let mut start = TeleportStart::default();
+        start.info.teleport_flags = flags;
+        self.send(from, &start, true);
+        if let Some(s) = self.shared.state().sessions.get_mut(&n) {
+            s.expected = Some(to);
+            s.arrival = position;
+        }
+        let region = &self.shared.regions[to];
+        let ip = match region.addr.ip() {
+            std::net::IpAddr::V4(ip) => ip.octets().to_vec(),
+            std::net::IpAddr::V6(_) => vec![127, 0, 0, 1],
+        };
+        let mut info = Map::new();
+        info.insert("AgentID".into(), self.shared.agent_id.into());
+        info.insert("LocationID".into(), 4.into());
+        info.insert("SimIP".into(), ip.into());
+        info.insert("SimPort".into(), i32::from(region.addr.port()).into());
+        info.insert(
+            "RegionHandle".into(),
+            region.handle().to_be_bytes().to_vec().into(),
+        );
+        info.insert("SeedCapability".into(), self.shared.seed_url(n, to).into());
+        info.insert("SimAccess".into(), 13.into());
+        info.insert("TeleportFlags".into(), (flags as i32).into());
+        info.insert("RegionSizeX".into(), 256.into());
+        info.insert("RegionSizeY".into(), 256.into());
+        let mut body = Map::new();
+        body.insert("Info".into(), Llsd::Array(vec![Llsd::Map(info)]));
+        self.shared
+            .queue_event(n, "TeleportFinish", Llsd::Map(body));
+    }
+
+    /// TeleportFailed on the event queue, as the grid sends it.
+    fn teleport_failed(&mut self, n: u32, reason: &str) {
+        let mut info = Map::new();
+        info.insert("AgentID".into(), self.shared.agent_id.into());
+        info.insert("Reason".into(), reason.into());
+        let mut body = Map::new();
+        body.insert("Info".into(), Llsd::Array(vec![Llsd::Map(info)]));
+        self.shared
+            .queue_event(n, "TeleportFailed", Llsd::Map(body));
+    }
+
+    /// Circuits of agents that went to the other region are closed here.
+    fn forget_departed(&mut self) {
+        let here: Vec<SocketAddr> = {
+            let st = self.shared.state();
+            self.clients
+                .iter()
+                .filter(|(_, c)| {
+                    st.sessions
+                        .get(&c.n)
+                        .is_some_and(|s| s.region != self.index)
+                })
+                .map(|(addr, _)| *addr)
+                .collect()
+        };
+        for addr in here {
+            self.clients.remove(&addr);
+        }
+    }
+
     fn ping_all(&mut self, ping_id: u8) {
+        self.forget_departed();
         let addrs: Vec<SocketAddr> = self.clients.keys().copied().collect();
         for addr in addrs {
             let mut m = StartPingCheck::default();
@@ -332,6 +499,17 @@ impl Region {
                 b.message = str_field(&text);
                 self.send(to, &m, true);
             }
+            RegionCommand::OfferTeleport { from, lure } => {
+                let mut m = ImprovedInstantMessage::default();
+                m.agent_data.agent_id = from.id;
+                let b = &mut m.message_block;
+                b.to_agent_id = self.shared.agent_id;
+                b.dialog = 22; // IM_LURE_USER
+                b.id = lure;
+                b.from_agent_name = str_field(&format!("{} {}", from.first, from.last));
+                b.message = str_field("Join me in Second Region");
+                self.send(to, &m, true);
+            }
             RegionCommand::Kick { reason } => {
                 let mut m = KickUser::default();
                 m.user_info.agent_id = self.shared.agent_id;
@@ -349,12 +527,14 @@ impl Region {
 }
 
 pub async fn run(
+    index: usize,
     sock: UdpSocket,
     shared: Arc<Shared>,
     mut commands: mpsc::UnboundedReceiver<RegionCommand>,
 ) {
     let mut ping = tokio::time::interval(shared.cfg.ping_interval);
     let mut r = Region {
+        index,
         sock,
         shared,
         clients: HashMap::new(),

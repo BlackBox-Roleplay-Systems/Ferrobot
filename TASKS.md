@@ -43,8 +43,16 @@
 - ✅ `crates/client` (ferro-client): the protocol code moved out of the bot; `Client` (requests with
   replies and a timeout, a broadcast of events, the state) and `Network` (the network task, one
   session at a time); the bot's chat and IM log is now a service on the events
-- ⬜ Neighbour regions, crossings, region restarts
-- ⬜ Teleports: requests, lures from masters, TeleportFinish, EstablishAgentCommunication
+- 🟡 Teleports (`Client::accept_lure`, `teleport_home`, `teleport_to`): TeleportLureRequest,
+  TeleportLandmarkRequest, TeleportLocationRequest; TeleportFinish and CrossedRegion move the
+  circuit and the event queue to the new region (Aurora's switch_region), TeleportFailed and
+  TeleportLocal handled; tested on the test grid's two regions
+- 🟡 Masters' teleport offers accepted (`FERRO_MASTERS`, services/lures.rs, SecondBot's
+  BotTeleportOffer); others ignored
+- ✅ Neighbour regions: not connected, like LibreMetaverse's bots (`MultipleSims = false`); a
+  bot that stays put needs no child agents. Revisit with movement (phase 7)
+- ⬜ Region restarts: today the bot logs in again once the region goes down; to do: leave
+  before the restart (teleport home or elsewhere), Aurora's region_restart.rs
 - 🟡 The bot's state (`ferro_client::State`): online, region, position, home (login reply), active
   group (AgentDataUpdate, as LLAgent asks for it), groups (AgentGroupDataUpdate on the event queue
   or UDP, AgentDropGroup), as Aurora's session_social.rs; tested on the test grid

@@ -5,23 +5,30 @@
 //! `newview/llstartup.cpp`: UseCircuitCode, then once it is acked CompleteAgentMovement and
 //! AgentThrottle; RegionHandshake is answered with RegionHandshakeReply; pings both ways; once
 //! arrived, AgentDataUpdateRequest (LLAgent's active group and the group list).
+//!
+//! Teleports and region crossings move the session to another region: on TeleportFinish or
+//! CrossedRegion (event queue), a circuit to the new region (UseCircuitCode, then
+//! CompleteAgentMovement once acked) and its own seed and event queue, as Aurora's switch_region.
+//! The old region is left behind: like LibreMetaverse's bots (AgentSettings.MultipleSims = false),
+//! the bot keeps no circuits to neighbour regions.
 
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::events::{ChatMessage, Event, InstantMessage};
 use crate::login::LoginResponse;
 use crate::state::{ActiveGroup, Group, Region};
-use crate::{Request, Shared};
+use crate::{Request, Shared, TeleportTo};
 use ferro_llsd::Llsd;
 use ferro_msg::msgs::*;
 use ferro_msg::{IncomingPacket, Msg, MsgId, field_str, parse_packet, str_field};
 use glam::{Quat, Vec3};
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 /// No packet from the region for this long: the connection is lost. 100 s like the viewer
@@ -38,6 +45,8 @@ const LOGOUT_WAIT: Duration = Duration::from_secs(10);
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// Ids per UUIDNameRequest (Aurora's RequestNames).
 const NAMES_PER_REQUEST: usize = 64;
+/// TELEPORT_FLAGS_VIA_LURE (lltelepostflags.h); LibreMetaverse's TeleportLureRespond sends it.
+const TELEPORT_VIA_LURE: u32 = 1 << 2;
 
 /// How a session ended.
 #[derive(Debug, Clone)]
@@ -127,9 +136,20 @@ impl Network {
     }
 }
 
+type TeleportReply = oneshot::Sender<Result<String, String>>;
+
 struct Session<'a> {
     login: &'a LoginResponse,
     shared: &'a Shared,
+    http: &'a reqwest::Client,
+    /// The current region's event queue, and the task that polls it.
+    eq_rx: mpsc::UnboundedReceiver<EqMessage>,
+    eq_open: bool,
+    caps_task: Option<JoinHandle<()>>,
+    /// Arrivals in a region: the login's, then each teleport's.
+    arrivals: u32,
+    /// A teleport under way, and who waits for it.
+    teleport: Option<Option<TeleportReply>>,
     sock: UdpSocket,
     circuit: Circuit,
     ucc_seq: u32,
@@ -206,6 +226,8 @@ impl Session<'_> {
 
     fn on_arrival(&mut self, region_handle: u64) {
         self.arrived = true;
+        self.arrivals += 1;
+        let first = self.arrivals == 1;
         let p = self.position;
         log::info!(
             "in world: {} {} at {}, {}, {}",
@@ -218,8 +240,10 @@ impl Session<'_> {
         {
             let mut st = self.shared.state_mut();
             st.online = true;
-            st.logins += 1;
-            st.online_since = Some(SystemTime::now());
+            if first {
+                st.logins += 1;
+                st.online_since = Some(SystemTime::now());
+            }
             st.position = p;
             st.region = Some(Region {
                 name: self.region_name.clone(),
@@ -231,12 +255,113 @@ impl Session<'_> {
             position: p,
         });
         self.send_agent_update();
-        // LLAgent: the active group and title (AgentDataUpdate), and the groups
-        // (AgentGroupDataUpdate) come in answer
-        let mut r = AgentDataUpdateRequest::default();
-        r.agent_data.agent_id = self.login.agent_id;
-        r.agent_data.session_id = self.login.session_id;
-        self.send(&r, true);
+        if let Some(waiting) = self.teleport.take() {
+            log::info!("teleported to {}", self.region_name);
+            if let Some(reply) = waiting {
+                let _ = reply.send(Ok(self.region_name.clone()));
+            }
+        }
+        if first {
+            // LLAgent: the active group and title (AgentDataUpdate), and the groups
+            // (AgentGroupDataUpdate) come in answer
+            let mut r = AgentDataUpdateRequest::default();
+            r.agent_data.agent_id = self.login.agent_id;
+            r.agent_data.session_id = self.login.session_id;
+            self.send(&r, true);
+        }
+    }
+
+    /// Ask the region's seed for the capabilities, then poll its event queue; the previous
+    /// region's queue is dropped.
+    fn start_caps(&mut self, seed: String) {
+        if let Some(old) = self.caps_task.take() {
+            old.abort();
+        }
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.eq_rx = rx;
+        self.eq_open = true;
+        let http = self.http.clone();
+        self.caps_task = Some(tokio::spawn(async move {
+            match caps::resolve_seed(&http, &seed).await {
+                Ok(caps) => {
+                    log::info!("{} capabilities", caps.len());
+                    match caps.get("EventQueueGet") {
+                        Some(url) => caps::event_queue_loop(http, url.clone(), tx).await,
+                        None => log::warn!("the region gave no event queue"),
+                    }
+                }
+                Err(e) => {
+                    log::warn!("seed capability failed: {e}");
+                    let _ = tx.send(EqMessage::Lost);
+                }
+            }
+        }));
+    }
+
+    /// TeleportFinish, CrossedRegion: the agent is now in the region at `addr`. A circuit to it,
+    /// CompleteAgentMovement once it is up, and its capabilities (Aurora's switch_region,
+    /// LibreMetaverse's TeleportFinishEventHandler).
+    fn switch_region(&mut self, addr: SocketAddr, region_handle: u64, seed: String) {
+        log::info!("moving to region {:x} at {addr}", region_handle);
+        self.circuit.flush_acks(&self.sock);
+        self.circuit = Circuit::new(addr);
+        self.arrived = false;
+        self.movement_sent = None;
+        self.region_name.clear();
+        self.shared.state_mut().region = None;
+        self.send_use_circuit_code();
+        self.start_caps(seed);
+        // a crossing has no request behind it, but it is under way all the same
+        if self.teleport.is_none() {
+            self.teleport = Some(None);
+        }
+    }
+
+    fn teleport_failed(&mut self, reason: String) {
+        log::warn!("teleport failed: {reason}");
+        if let Some(Some(reply)) = self.teleport.take() {
+            let _ = reply.send(Err(reason.clone()));
+        }
+        self.shared.emit(Event::TeleportFailed { reason });
+    }
+
+    fn start_teleport(&mut self, to: TeleportTo, reply: TeleportReply) {
+        if self.teleport.is_some() {
+            let _ = reply.send(Err("a teleport is already under way".into()));
+            return;
+        }
+        let (agent_id, session_id) = (self.login.agent_id, self.login.session_id);
+        match to {
+            TeleportTo::Lure(lure) => {
+                let mut m = TeleportLureRequest::default();
+                m.info.agent_id = agent_id;
+                m.info.session_id = session_id;
+                m.info.lure_id = lure;
+                m.info.teleport_flags = TELEPORT_VIA_LURE;
+                self.send(&m, true);
+            }
+            TeleportTo::Home => {
+                // LLAgent::teleportHome: a landmark request without a landmark
+                let mut m = TeleportLandmarkRequest::default();
+                m.info.agent_id = agent_id;
+                m.info.session_id = session_id;
+                m.info.landmark_id = Uuid::nil();
+                self.send(&m, true);
+            }
+            TeleportTo::Location {
+                region_handle,
+                position,
+            } => {
+                let mut m = TeleportLocationRequest::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.info.region_handle = region_handle;
+                m.info.position = position;
+                m.info.look_at = Vec3::X;
+                self.send(&m, true);
+            }
+        }
+        self.teleport = Some(Some(reply));
     }
 
     fn on_request(&mut self, req: Request) {
@@ -264,6 +389,7 @@ impl Session<'_> {
                 }
                 self.name_waits.push((missing, reply));
             }
+            Request::Teleport { to, reply } => self.start_teleport(to, reply),
             Request::FindAvatars { name, reply } => {
                 let query = Uuid::new_v4();
                 let mut m = AvatarPickerRequest::default();
@@ -509,6 +635,29 @@ impl Session<'_> {
             if let Some(reply) = self.picker_waits.remove(&m.agent_data.query_id) {
                 let _ = reply.send(list);
             }
+        } else if id == TeleportStart::ID {
+            let m: TeleportStart = pkt.decode()?;
+            log::debug!("teleport started, flags {:#x}", m.info.teleport_flags);
+            if self.teleport.is_none() {
+                // begun by the region (a god teleport, a home teleport from a script…)
+                self.teleport = Some(None);
+            }
+        } else if id == TeleportProgress::ID {
+            let m: TeleportProgress = pkt.decode()?;
+            log::debug!("teleport: {}", field_str(&m.info.message));
+        } else if id == TeleportFailed::ID {
+            let m: TeleportFailed = pkt.decode()?;
+            self.teleport_failed(field_str(&m.info.reason));
+        } else if id == TeleportLocal::ID {
+            // process_teleport_local: moved inside the region
+            let m: TeleportLocal = pkt.decode()?;
+            self.position = m.info.position;
+            self.shared.state_mut().position = m.info.position;
+            log::info!("teleported inside the region");
+            if let Some(Some(reply)) = self.teleport.take() {
+                let _ = reply.send(Ok(self.region_name.clone()));
+            }
+            self.send_agent_update();
         } else if id == KickUser::ID {
             let m: KickUser = pkt.decode()?;
             return Ok(Some(End::Kicked(field_str(&m.user_info.reason))));
@@ -548,9 +697,46 @@ impl Session<'_> {
             // via LLAgentGroupDataUpdateViewerNode; Aurora's social::parse_group_data)
             "AgentGroupDataUpdate" => self.set_groups(parse_group_data(&e.body)),
             "AgentDropGroup" => self.drop_group(e.body["AgentData"][0]["GroupID"].as_uuid()),
+            // LLAgent::processTeleportFinish, LLViewerRegion's CrossedRegion
+            "TeleportFinish" | "CrossedRegion" => {
+                let key = if e.message == "TeleportFinish" {
+                    "Info"
+                } else {
+                    "RegionData"
+                };
+                let info = &e.body[key][0];
+                let Some(ip) = ip_from_llsd(&info["SimIP"]) else {
+                    log::warn!("{} without a region address", e.message);
+                    return None;
+                };
+                let port = u16::try_from(info["SimPort"].as_i32()).unwrap_or(0);
+                let seed = info["SeedCapability"].as_str().to_owned();
+                if port == 0 || seed.is_empty() {
+                    log::warn!("{} without a port or a seed capability", e.message);
+                    return None;
+                }
+                self.switch_region(
+                    SocketAddr::from((ip, port)),
+                    info["RegionHandle"].as_u64(),
+                    seed,
+                );
+            }
+            "TeleportFailed" => {
+                self.teleport_failed(e.body["Info"][0]["Reason"].as_str().to_owned());
+            }
             _ => {}
         }
         None
+    }
+}
+
+/// An IPv4 address as the event queue carries it (Aurora's ip_from_llsd).
+fn ip_from_llsd(v: &Llsd) -> Option<Ipv4Addr> {
+    match v {
+        Llsd::Binary(b) if b.len() == 4 => Some(Ipv4Addr::new(b[0], b[1], b[2], b[3])),
+        Llsd::String(s) => s.parse().ok(),
+        Llsd::Integer(i) => Some(Ipv4Addr::from((*i as u32).to_be_bytes())),
+        _ => None,
     }
 }
 
@@ -583,9 +769,16 @@ async fn run(
         Ok(sock) => sock,
         Err(e) => return End::Lost(format!("no UDP socket: {e}")),
     };
+    let (_, eq_rx) = mpsc::unbounded_channel();
     let mut s = Session {
         login,
         shared,
+        http,
+        eq_rx,
+        eq_open: false,
+        caps_task: None,
+        arrivals: 0,
+        teleport: None,
         sock,
         circuit: Circuit::new(addr),
         ucc_seq: 0,
@@ -599,33 +792,12 @@ async fn run(
         picker_waits: HashMap::new(),
     };
     s.send_use_circuit_code();
-
     // capabilities and the event queue, alongside the circuit
-    let (eq_tx, mut eq_rx) = mpsc::unbounded_channel();
-    let seed_http = http.clone();
-    let seed = login.seed_capability.clone();
-    let caps_task = tokio::spawn(async move {
-        match caps::resolve_seed(&seed_http, &seed).await {
-            Ok(caps) => {
-                log::info!("{} capabilities", caps.len());
-                match caps.get("EventQueueGet") {
-                    Some(url) => caps::event_queue_loop(seed_http, url.clone(), eq_tx).await,
-                    None => log::warn!("the region gave no event queue"),
-                }
-            }
-            Err(e) => {
-                log::warn!("seed capability failed: {e}");
-                let _ = eq_tx.send(EqMessage::Lost);
-            }
-        }
-    });
+    s.start_caps(login.seed_capability.clone());
 
     let mut buf = vec![0u8; 8192];
     let mut tick = tokio::time::interval(TICK);
     let mut logging_out: Option<Instant> = None;
-    // The capabilities task drops its sender when it ends; a closed channel is always ready, so
-    // its branch is switched off then, or the loop would spin.
-    let mut eq_open = true;
     let end = loop {
         tokio::select! {
             r = s.sock.recv_from(&mut buf) => match r {
@@ -651,7 +823,9 @@ async fn run(
                     s.on_request(req);
                 }
             }
-            ev = eq_rx.recv(), if eq_open => match ev {
+            // The capabilities task drops its sender when it ends; a closed channel is always
+            // ready, so its branch is switched off then, or the loop would spin.
+            ev = s.eq_rx.recv(), if s.eq_open => match ev {
                 Some(EqMessage::Event(e)) => {
                     if let Some(end) = s.on_event(e) {
                         break end;
@@ -661,7 +835,7 @@ async fn run(
                 // and nothing gets better before a new login (LLEventPollImpl, Aurora's
                 // on_eq_lost): end the session so that the bot logs in again.
                 Some(EqMessage::Lost) => break End::Lost("the region's event queue was lost".into()),
-                None => eq_open = false,
+                None => s.eq_open = false,
             },
             changed = shutdown.changed(), if logging_out.is_none() => {
                 if changed.is_err() || *shutdown.borrow() {
@@ -673,7 +847,12 @@ async fn run(
         }
     };
     s.circuit.flush_acks(&s.sock);
-    caps_task.abort();
+    if let Some(task) = s.caps_task.take() {
+        task.abort();
+    }
+    if let Some(Some(reply)) = s.teleport.take() {
+        let _ = reply.send(Err("the session ended".into()));
+    }
     // Once the logout is asked, however the region ends the session (LogoutReply, a kick,
     // DisableSimulator, its queue closing), the bot is out as it was asked to be.
     if logging_out.is_some() {

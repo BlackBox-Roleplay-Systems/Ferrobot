@@ -31,6 +31,8 @@ use uuid::Uuid;
 
 /// How long a request waits for the grid's answer.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a teleport may take, from the request to the arrival.
+pub const TELEPORT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Events a slow subscriber may fall behind by before it misses some.
 const EVENT_BUFFER: usize = 1024;
 const REQUEST_BUFFER: usize = 256;
@@ -41,6 +43,8 @@ pub enum ClientError {
     NotConnected,
     #[error("no answer from the grid in time")]
     Timeout,
+    #[error("{0}")]
+    Refused(String),
 }
 
 /// What the network task is asked to do. Each request that has an answer carries the
@@ -56,6 +60,24 @@ pub(crate) enum Request {
     FindAvatars {
         name: String,
         reply: oneshot::Sender<Vec<(Uuid, String)>>,
+    },
+    /// A teleport; answered with the region arrived in, or the grid's reason.
+    Teleport {
+        to: TeleportTo,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum TeleportTo {
+    /// Accept a teleport offer (TeleportLureRequest).
+    Lure(Uuid),
+    /// TeleportLandmarkRequest with no landmark: home.
+    Home,
+    /// TeleportLocationRequest.
+    Location {
+        region_handle: u64,
+        position: glam::Vec3,
     },
 }
 
@@ -134,6 +156,14 @@ impl Client {
         &self,
         make: impl FnOnce(oneshot::Sender<T>) -> Request,
     ) -> Result<T, ClientError> {
+        self.ask_within(REQUEST_TIMEOUT, make).await
+    }
+
+    async fn ask_within<T>(
+        &self,
+        timeout: Duration,
+        make: impl FnOnce(oneshot::Sender<T>) -> Request,
+    ) -> Result<T, ClientError> {
         if !self.shared.state().online {
             return Err(ClientError::NotConnected);
         }
@@ -142,7 +172,7 @@ impl Client {
             .send(make(tx))
             .await
             .map_err(|_| ClientError::NotConnected)?;
-        match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(v)) => Ok(v),
             // the session ended before the answer
             Ok(Err(_)) => Err(ClientError::NotConnected),
@@ -199,5 +229,35 @@ impl Client {
             .into_iter()
             .find(|(_, n)| names::normalize(n).eq_ignore_ascii_case(&wanted))
             .map(|(id, _)| id))
+    }
+
+    async fn teleport(&self, to: TeleportTo) -> Result<String, ClientError> {
+        self.ask_within(TELEPORT_TIMEOUT, |reply| Request::Teleport { to, reply })
+            .await?
+            .map_err(ClientError::Refused)
+    }
+
+    /// Accept a teleport offer (the `id` of an IM_LURE_USER instant message). Answers with the
+    /// region arrived in.
+    pub async fn accept_lure(&self, lure: Uuid) -> Result<String, ClientError> {
+        self.teleport(TeleportTo::Lure(lure)).await
+    }
+
+    /// Teleport home.
+    pub async fn teleport_home(&self) -> Result<String, ClientError> {
+        self.teleport(TeleportTo::Home).await
+    }
+
+    /// Teleport to a place in a region, by the region's handle.
+    pub async fn teleport_to(
+        &self,
+        region_handle: u64,
+        position: glam::Vec3,
+    ) -> Result<String, ClientError> {
+        self.teleport(TeleportTo::Location {
+            region_handle,
+            position,
+        })
+        .await
     }
 }

@@ -15,6 +15,8 @@ pub enum Event {
     Alert(String),
     /// The groups the bot is in changed (AgentGroupDataUpdate, AgentDropGroup).
     GroupsChanged,
+    /// A teleport failed; the bot stays where it is (TeleportFailed).
+    TeleportFailed { reason: String },
     /// The session ended; a new login comes next, or not, as the caller decides.
     Disconnected { reason: String },
 }

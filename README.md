@@ -16,6 +16,7 @@ All settings come from environment variables.
 | `FERRO_START` | `last` | `last`, `home`, or `Region Name/x/y/z` |
 | `FERRO_RELOG` | `true` | Log in again after the connection is lost |
 | `FERRO_RELOG_DELAY` | `60` | Seconds to wait before logging in again |
+| `FERRO_MASTERS` | (none) | Avatars the bot obeys, comma-separated: `First Last` or usernames. Their teleport offers are accepted |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 

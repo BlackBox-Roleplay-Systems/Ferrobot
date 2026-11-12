@@ -52,6 +52,7 @@ async fn main() -> std::process::ExitCode {
     let (client, mut network) = Client::new(http.clone());
     tokio::spawn(services::chat_log::run(client.clone()));
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
+    tokio::spawn(services::lures::run(client.clone(), cfg.masters.clone()));
     std::process::ExitCode::from(run(&cfg, &http, &mut network, stop_rx).await)
 }
 

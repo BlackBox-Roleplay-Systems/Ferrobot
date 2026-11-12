@@ -80,7 +80,7 @@ async fn the_state_after_arrival() {
     assert_eq!(st.position, Vec3::new(128.0, 128.0, 25.0));
     assert_eq!(st.logins, 1);
     let home = st.home.expect("a home");
-    assert_eq!(home.region_handle, (256000u64 << 32) | 256000);
+    assert_eq!(home.region_handle, (256256u64 << 32) | 256000);
     assert_eq!(home.position, Vec3::new(100.0, 110.0, 22.0));
 
     let health = r.client.health();
@@ -209,4 +209,136 @@ async fn after_the_session_requests_fail_at_once_and_the_state_says_offline() {
         client.name(Uuid::from_u128(0x5eed_0002)).await,
         Err(ClientError::NotConnected)
     );
+}
+
+fn some_resident() -> ferro_testgrid::Resident {
+    ferro_testgrid::Resident {
+        id: Uuid::from_u128(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    }
+}
+
+#[tokio::test]
+async fn a_teleport_offer_accepted_moves_the_bot_and_it_keeps_working() {
+    let r = connect().await;
+    let mut events = r.client.subscribe();
+    let lure = r.grid.offer_teleport(&some_resident());
+    // the offer reaches the client as an IM_LURE_USER with the lure's id
+    let offer = tokio::time::timeout(WAIT, async {
+        loop {
+            if let Ok(Event::InstantMessage(im)) = events.recv().await {
+                return im;
+            }
+        }
+    })
+    .await
+    .expect("the offer");
+    assert_eq!(
+        (offer.dialog, offer.id),
+        (ferro_client::events::dialog::LURE_USER, lure)
+    );
+
+    assert_eq!(
+        r.client.accept_lure(offer.id).await,
+        Ok("Second Region".into())
+    );
+    let st = r.client.state();
+    assert!(st.online);
+    let region = st.region.expect("a region");
+    assert_eq!(region.name, "Second Region");
+    assert_eq!(
+        region.handle,
+        r.grid.region_handle(ferro_testgrid::SECOND_REGION)
+    );
+    assert_eq!(st.logins, 1, "a teleport is not a login");
+    assert!(
+        r.grid.count(|s| *s
+            == Seen::UseCircuitCode {
+                session: 1,
+                region: 1
+            })
+            == 1
+    );
+    assert!(
+        r.grid
+            .wait_for(WAIT, |s| *s
+                == Seen::EventQueuePoll {
+                    session: 1,
+                    region: 1
+                })
+            .await
+    );
+
+    // the new region answers requests and its chat reaches the client
+    assert_eq!(
+        r.client.name(Uuid::from_u128(0x5eed_0002)).await,
+        Ok(Some("Other Avatar".into()))
+    );
+    r.grid.say("Other Avatar", "welcome");
+    let chat = tokio::time::timeout(WAIT, async {
+        loop {
+            if let Ok(Event::Chat(c)) = events.recv().await {
+                return c;
+            }
+        }
+    })
+    .await
+    .expect("chat in the new region");
+    assert_eq!(chat.message, "welcome");
+
+    // and the logout goes to the new region
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+#[tokio::test]
+async fn a_failed_teleport_leaves_the_bot_where_it_was() {
+    let r = connect().await;
+    r.grid.fail_next_teleport("The region is full.");
+    let lure = r.grid.offer_teleport(&some_resident());
+    assert_eq!(
+        r.client.accept_lure(lure).await,
+        Err(ClientError::Refused("The region is full.".into()))
+    );
+    assert_eq!(
+        r.client.accept_lure(Uuid::new_v4()).await,
+        Err(ClientError::Refused(
+            "That teleport offer is no longer valid.".into()
+        ))
+    );
+    let st = r.client.state();
+    assert!(st.online);
+    assert_eq!(st.region.expect("a region").name, "Test Region");
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+#[tokio::test]
+async fn teleports_home_and_to_a_location() {
+    let r = connect().await;
+    // home is in the second region
+    assert_eq!(r.client.teleport_home().await, Ok("Second Region".into()));
+    assert_eq!(r.client.state().position, Vec3::new(100.0, 110.0, 22.0));
+
+    // back to the first region, by its handle
+    let first = r.grid.region_handle(ferro_testgrid::FIRST_REGION);
+    assert_eq!(
+        r.client
+            .teleport_to(first, Vec3::new(10.0, 20.0, 30.0))
+            .await,
+        Ok("Test Region".into())
+    );
+    // inside the region: TeleportLocal
+    assert_eq!(
+        r.client
+            .teleport_to(first, Vec3::new(50.0, 60.0, 30.0))
+            .await,
+        Ok("Test Region".into())
+    );
+    assert_eq!(r.client.state().position, Vec3::new(50.0, 60.0, 30.0));
+    // nowhere
+    assert_eq!(
+        r.client.teleport_to(42, Vec3::ZERO).await,
+        Err(ClientError::Refused("Could not find that region.".into()))
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
 }

@@ -2,3 +2,4 @@
 
 pub mod chat_log;
 pub mod health;
+pub mod lures;

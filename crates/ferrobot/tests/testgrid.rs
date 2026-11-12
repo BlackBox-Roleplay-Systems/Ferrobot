@@ -163,8 +163,19 @@ async fn logs_in_arrives_talks_and_logs_out_on_sigterm() {
     );
     // CompleteAgentMovement only once UseCircuitCode is acked (llstartup.cpp)
     assert!(
-        position(&seen, &Seen::UseCircuitCode { session: 1 })
-            < position(&seen, &Seen::CompleteAgentMovement { session: 1 })
+        position(
+            &seen,
+            &Seen::UseCircuitCode {
+                session: 1,
+                region: 0
+            }
+        ) < position(
+            &seen,
+            &Seen::CompleteAgentMovement {
+                session: 1,
+                region: 0
+            }
+        )
     );
     position(&seen, &Seen::AgentThrottle { session: 1 });
     position(
@@ -178,11 +189,14 @@ async fn logs_in_arrives_talks_and_logs_out_on_sigterm() {
     bot.wait_log("in world: Test Bot at 128, 128, 25").await;
 
     wait_for(&grid, &bot, "the seed request", |s| {
-        matches!(s, Seen::SeedRequest { session: 1, caps } if caps.iter().any(|c| c == "EventQueueGet"))
+        matches!(s, Seen::SeedRequest { session: 1, caps, .. } if caps.iter().any(|c| c == "EventQueueGet"))
     })
     .await;
     wait_for(&grid, &bot, "an event queue poll", |s| {
-        *s == Seen::EventQueuePoll { session: 1 }
+        *s == Seen::EventQueuePoll {
+            session: 1,
+            region: 0,
+        }
     })
     .await;
     grid.queue_event("TestEvent", ferro_llsd::llsd_map! { "answer" => 42 });
@@ -294,7 +308,10 @@ async fn a_closed_event_queue_neither_ends_the_session_nor_spins() {
     let mut bot = Bot::start(&grid, &[]);
     arrived(&grid, &bot, 1).await;
     wait_for(&grid, &bot, "an event queue poll", |s| {
-        *s == Seen::EventQueuePoll { session: 1 }
+        *s == Seen::EventQueuePoll {
+            session: 1,
+            region: 0,
+        }
     })
     .await;
     grid.close_event_queue();
@@ -331,4 +348,56 @@ async fn the_healthcheck_follows_the_bot() {
     // no file: unhealthy
     std::fs::remove_file(&bot.health_file).expect("remove");
     assert_eq!(bot.healthcheck().await, 1);
+}
+
+/// A master's teleport offer is accepted: the bot arrives in the other region and keeps working
+/// there; anyone else's is ignored.
+#[tokio::test]
+async fn a_master_teleports_the_bot_and_others_cannot() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[("FERRO_MASTERS", "Other Avatar, some")]);
+    arrived(&grid, &bot, 1).await;
+
+    let stranger = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0003),
+        first: "Someone".into(),
+        last: "Else".into(),
+    };
+    grid.offer_teleport(&stranger);
+    bot.wait_log("teleport offer from Someone Else ignored: not a master")
+        .await;
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::TeleportLureRequest { .. })),
+        0
+    );
+
+    let master = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    let lure = grid.offer_teleport(&master);
+    wait_for(&grid, &bot, "the TeleportLureRequest", |s| {
+        *s == Seen::TeleportLureRequest { session: 1, lure }
+    })
+    .await;
+    wait_for(&grid, &bot, "the arrival in the second region", |s| {
+        *s == Seen::CompleteAgentMovement {
+            session: 1,
+            region: ferro_testgrid::SECOND_REGION,
+        }
+    })
+    .await;
+    bot.wait_log("teleported to Second Region").await;
+    // chat and IMs in the new region reach the bot
+    grid.say("Other Avatar", "you made it");
+    bot.wait_log("[chat] Other Avatar: you made it").await;
+
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    assert_eq!(grid.count(|s| matches!(s, Seen::Login { .. })), 1);
+}
+
+fn uuid_from(n: u128) -> uuid::Uuid {
+    uuid::Uuid::from_u128(n)
 }
