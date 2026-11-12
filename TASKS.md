@@ -40,7 +40,9 @@
 
 ## Phase 2 - The client becomes a library
 
-- ⬜ `crates/client`: network task, requests with replies, events
+- ✅ `crates/client` (ferro-client): the protocol code moved out of the bot; `Client` (requests with
+  replies and a timeout, a broadcast of events, the state) and `Network` (the network task, one
+  session at a time); the bot's chat and IM log is now a service on the events
 - ⬜ Neighbour regions, crossings, region restarts
 - ⬜ Teleports: requests, lures from masters, TeleportFinish, EstablishAgentCommunication
 - ⬜ The bot's state: AgentDataUpdate, AgentGroupDataUpdate, position, home

@@ -55,6 +55,8 @@ pub struct LoginResponse {
     pub circuit_code: u32,
     pub seed_capability: String,
     pub message: String,
+    /// Where home is, when the grid says.
+    pub home: Option<crate::state::Home>,
     /// For the inventory and group commands to come.
     #[allow(dead_code)]
     pub secure_session_id: Uuid,
@@ -327,6 +329,28 @@ fn parse_success(v: &Llsd) -> Result<LoginResponse, LoginError> {
         seed_capability: v["seed_capability"].as_str().to_owned(),
         message: v["message"].as_str().to_owned(),
         inventory_root: v["inventory-root"][0]["folder_id"].as_uuid(),
+        home: parse_home(v["home"].as_str()),
+    })
+}
+
+/// The login reply's `home`, LLSD notation in a string:
+/// `{'region_handle':[r256000, r256000], 'position':[r128, r128, r25], 'look_at':[r1, r0, r0]}`
+/// (LLStartUp's "home" handling, LibreMetaverse's LoginResponseData).
+fn parse_home(s: &str) -> Option<crate::state::Home> {
+    if s.trim().is_empty() {
+        return None;
+    }
+    let v = ferro_llsd::from_notation(s.as_bytes()).ok()?;
+    let vec3 = |l: &Llsd| glam::Vec3::new(l[0].as_f32(), l[1].as_f32(), l[2].as_f32());
+    let handle = &v["region_handle"];
+    let (x, y) = (handle[0].as_f64(), handle[1].as_f64());
+    if x <= 0.0 || y <= 0.0 {
+        return None;
+    }
+    Some(crate::state::Home {
+        region_handle: crate::state::region_handle(x as u32, y as u32),
+        position: vec3(&v["position"]),
+        look_at: vec3(&v["look_at"]),
     })
 }
 
@@ -403,6 +427,19 @@ pub async fn login(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_from_the_login_reply() {
+        let home = parse_home(
+            "{'region_handle':[r256000, r255744], 'position':[r33.5, r40, r22.25], 'look_at':[r0, r1, r0]}",
+        )
+        .expect("a home");
+        assert_eq!(home.region_handle, (256000u64 << 32) | 255744);
+        assert_eq!(home.position, glam::Vec3::new(33.5, 40.0, 22.25));
+        assert_eq!(home.look_at, glam::Vec3::Y);
+        assert!(parse_home("").is_none());
+        assert!(parse_home("not notation").is_none());
+    }
 
     #[test]
     fn username_split() {

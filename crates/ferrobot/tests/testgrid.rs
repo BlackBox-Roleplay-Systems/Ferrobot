@@ -27,7 +27,7 @@ impl Bot {
             .env("FERRO_USERNAME", grid.username())
             .env("FERRO_PASSWORD", grid.password())
             .env("FERRO_RELOG_DELAY", "0")
-            .env("RUST_LOG", "debug,ferrobot=trace")
+            .env("RUST_LOG", "debug,ferrobot=trace,ferro_client=trace")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

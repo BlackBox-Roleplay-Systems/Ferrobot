@@ -322,6 +322,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferro-client"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ferro-llsd",
+ "ferro-msg",
+ "ferro-testgrid",
+ "glam",
+ "log",
+ "md5",
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "ferro-llsd"
 version = "0.1.0"
 dependencies = [
@@ -357,18 +374,14 @@ dependencies = [
 name = "ferrobot"
 version = "0.1.0"
 dependencies = [
- "base64",
  "env_logger",
+ "ferro-client",
  "ferro-llsd",
- "ferro-msg",
  "ferro-testgrid",
- "glam",
  "log",
- "md5",
  "reqwest",
  "thiserror",
  "tokio",
- "uuid",
 ]
 
 [[package]]

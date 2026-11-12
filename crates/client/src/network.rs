@@ -1,20 +1,28 @@
-//! One logged-in session in one region: the UDP circuit, the event queue, keep-alive and logout.
+//! The network task: one logged-in session at a time, in one region. It owns the UDP socket, the
+//! circuit and the event queue; it answers the client's requests and reports events.
 //!
 //! The connect sequence follows aurora-net/src/session.rs (Aurora Viewer, see NOTICE.md) and
 //! `newview/llstartup.cpp`: UseCircuitCode, then once it is acked CompleteAgentMovement and
-//! AgentThrottle; RegionHandshake is answered with RegionHandshakeReply; pings both ways.
-//! A bot stays in its region: crossings and teleports come later.
+//! AgentThrottle; RegionHandshake is answered with RegionHandshakeReply; pings both ways; once
+//! arrived, AgentDataUpdateRequest (LLAgent's active group and the group list).
 
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
+use crate::events::{ChatMessage, Event, InstantMessage};
 use crate::login::LoginResponse;
+use crate::state::{ActiveGroup, Group, Region};
+use crate::{Request, Shared};
+use ferro_llsd::Llsd;
 use ferro_msg::msgs::*;
-use ferro_msg::{IncomingPacket, Msg, MsgId, parse_packet};
+use ferro_msg::{IncomingPacket, Msg, MsgId, field_str, parse_packet, str_field};
 use glam::{Quat, Vec3};
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
+use uuid::Uuid;
 
 /// No packet from the region for this long: the connection is lost. 100 s like the viewer
 /// (llstartup.cpp circuit_timeout) and Aurora's SIM_TIMEOUT: 60 s cut sessions that a laggy
@@ -28,9 +36,11 @@ const LOGOUT_WAIT: Duration = Duration::from_secs(10);
 /// No AgentMovementComplete this long after CompleteAgentMovement: the arrival failed
 /// (STATE_AGENT_WAIT_TIMEOUT, llstartup.cpp; Aurora's LOGIN_ARRIVAL_TIMEOUT).
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
+/// Ids per UUIDNameRequest (Aurora's RequestNames).
+const NAMES_PER_REQUEST: usize = 64;
 
 /// How a session ended.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum End {
     /// Logged out on request (shutdown).
     LoggedOut,
@@ -38,6 +48,16 @@ pub enum End {
     Kicked(String),
     /// The connection was lost.
     Lost(String),
+}
+
+impl std::fmt::Display for End {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            End::LoggedOut => write!(f, "logged out"),
+            End::Kicked(reason) => write!(f, "disconnected by the grid: {reason}"),
+            End::Lost(reason) => write!(f, "connection lost: {reason}"),
+        }
+    }
 }
 
 /// RegionHandshakeReply flags (LLViewerRegion::unpackRegionHandshake).
@@ -51,14 +71,65 @@ const THROTTLES: [f32; 7] = [
     100_000.0, 30_000.0, 1_000.0, 1_000.0, 100_000.0, 30_000.0, 100_000.0,
 ];
 
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes)
-        .trim_end_matches('\0')
-        .to_owned()
+/// The network task. One per client; [`Network::session`] runs each login's session.
+pub struct Network {
+    http: reqwest::Client,
+    requests: mpsc::Receiver<Request>,
+    shared: Arc<Shared>,
+}
+
+impl Network {
+    pub(crate) fn new(
+        http: reqwest::Client,
+        requests: mpsc::Receiver<Request>,
+        shared: Arc<Shared>,
+    ) -> Self {
+        Network {
+            http,
+            requests,
+            shared,
+        }
+    }
+
+    /// Connect to the login region and stay there until `shutdown` or the session ends.
+    pub async fn session(&mut self, login: &LoginResponse, shutdown: watch::Receiver<bool>) -> End {
+        {
+            let mut st = self.shared.state_mut();
+            st.online = false;
+            st.agent_id = login.agent_id;
+            st.name = format!("{} {}", login.first_name, login.last_name);
+            st.region = None;
+            st.home = login.home.or(st.home);
+        }
+        self.shared
+            .names()
+            .insert(login.agent_id, &login.first_name, &login.last_name);
+        // requests left from before this session have no one waiting any more
+        while self.requests.try_recv().is_ok() {}
+        let end = run(
+            &self.http,
+            login,
+            shutdown,
+            &mut self.requests,
+            &self.shared,
+        )
+        .await;
+        {
+            let mut st = self.shared.state_mut();
+            st.online = false;
+            st.region = None;
+            st.online_since = None;
+        }
+        self.shared.emit(Event::Disconnected {
+            reason: end.to_string(),
+        });
+        end
+    }
 }
 
 struct Session<'a> {
     login: &'a LoginResponse,
+    shared: &'a Shared,
     sock: UdpSocket,
     circuit: Circuit,
     ucc_seq: u32,
@@ -68,6 +139,10 @@ struct Session<'a> {
     position: Vec3,
     last_ping: Instant,
     last_update: Instant,
+    /// Names asked for: what is still missing, and who waits.
+    name_waits: Vec<(HashSet<Uuid>, oneshot::Sender<()>)>,
+    /// Avatar searches, by query id.
+    picker_waits: HashMap<Uuid, oneshot::Sender<Vec<(Uuid, String)>>>,
 }
 
 impl Session<'_> {
@@ -129,6 +204,108 @@ impl Session<'_> {
         self.send(&m, true);
     }
 
+    fn on_arrival(&mut self, region_handle: u64) {
+        self.arrived = true;
+        let p = self.position;
+        log::info!(
+            "in world: {} {} at {}, {}, {}",
+            self.login.first_name,
+            self.login.last_name,
+            p.x.round(),
+            p.y.round(),
+            p.z.round()
+        );
+        {
+            let mut st = self.shared.state_mut();
+            st.online = true;
+            st.logins += 1;
+            st.online_since = Some(SystemTime::now());
+            st.position = p;
+            st.region = Some(Region {
+                name: self.region_name.clone(),
+                handle: region_handle,
+            });
+        }
+        self.shared.emit(Event::Arrived {
+            region: self.region_name.clone(),
+            position: p,
+        });
+        self.send_agent_update();
+        // LLAgent: the active group and title (AgentDataUpdate), and the groups
+        // (AgentGroupDataUpdate) come in answer
+        let mut r = AgentDataUpdateRequest::default();
+        r.agent_data.agent_id = self.login.agent_id;
+        r.agent_data.session_id = self.login.session_id;
+        self.send(&r, true);
+    }
+
+    fn on_request(&mut self, req: Request) {
+        match req {
+            Request::Names { ids, reply } => {
+                let missing: HashSet<Uuid> = {
+                    let cache = self.shared.names();
+                    ids.into_iter()
+                        .filter(|id| cache.name(*id).is_none())
+                        .collect()
+                };
+                if missing.is_empty() {
+                    let _ = reply.send(());
+                    return;
+                }
+                let list: Vec<Uuid> = missing.iter().copied().collect();
+                for chunk in list.chunks(NAMES_PER_REQUEST) {
+                    let m = UUIDNameRequest {
+                        uuid_name_block: chunk
+                            .iter()
+                            .map(|id| uuid_name_request::UUIDNameBlock { id: *id })
+                            .collect(),
+                    };
+                    self.send(&m, true);
+                }
+                self.name_waits.push((missing, reply));
+            }
+            Request::FindAvatars { name, reply } => {
+                let query = Uuid::new_v4();
+                let mut m = AvatarPickerRequest::default();
+                m.agent_data.agent_id = self.login.agent_id;
+                m.agent_data.session_id = self.login.session_id;
+                m.agent_data.query_id = query;
+                m.data.name = str_field(&name);
+                self.send(&m, true);
+                self.picker_waits.insert(query, reply);
+            }
+        }
+    }
+
+    fn on_names(&mut self, names: impl IntoIterator<Item = (Uuid, String, String)>) {
+        let mut got = Vec::new();
+        {
+            let mut cache = self.shared.names();
+            for (id, first, last) in names {
+                cache.insert(id, &first, &last);
+                got.push(id);
+            }
+        }
+        for (missing, _) in &mut self.name_waits {
+            for id in &got {
+                missing.remove(id);
+            }
+        }
+        let (done, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.name_waits)
+            .into_iter()
+            .partition(|(missing, _)| missing.is_empty());
+        self.name_waits = waiting;
+        for (_, reply) in done {
+            let _ = reply.send(());
+        }
+    }
+
+    fn set_groups(&mut self, groups: Vec<Group>) {
+        log::debug!("in {} groups", groups.len());
+        self.shared.state_mut().groups = groups;
+        self.shared.emit(Event::GroupsChanged);
+    }
+
     /// Timers: resends and acks, the arrival, pings, agent updates, the region's silence.
     fn tick(&mut self) -> Option<End> {
         let now = Instant::now();
@@ -163,6 +340,9 @@ impl Session<'_> {
             self.last_update = now;
             self.send_agent_update();
         }
+        // callers that gave up waiting
+        self.name_waits.retain(|(_, reply)| !reply.is_closed());
+        self.picker_waits.retain(|_, reply| !reply.is_closed());
         if now.duration_since(self.circuit.last_recv) > REGION_TIMEOUT {
             return Some(End::Lost(format!(
                 "nothing from the region for {} s",
@@ -186,6 +366,7 @@ impl Session<'_> {
         if !self.circuit.on_receive(pkt.flags, pkt.sequence, &pkt.acks) {
             return None;
         }
+        self.shared.state_mut().last_packet = Some(Instant::now());
         match self.dispatch(&pkt) {
             Ok(end) => {
                 self.circuit.accept(pkt.flags, pkt.sequence);
@@ -216,7 +397,7 @@ impl Session<'_> {
             }
         } else if id == RegionHandshake::ID {
             let m: RegionHandshake = pkt.decode()?;
-            self.region_name = text(&m.region_info.sim_name);
+            self.region_name = field_str(&m.region_info.sim_name);
             log::info!("region handshake: {}", self.region_name);
             let mut reply = RegionHandshakeReply::default();
             reply.agent_data.agent_id = self.login.agent_id;
@@ -229,44 +410,108 @@ impl Session<'_> {
             let m: AgentMovementComplete = pkt.decode()?;
             self.position = m.data.position;
             if !self.arrived {
-                self.arrived = true;
-                let p = m.data.position;
-                log::info!(
-                    "in world: {} {} at {}, {}, {}",
-                    self.login.first_name,
-                    self.login.last_name,
-                    p.x.round(),
-                    p.y.round(),
-                    p.z.round()
-                );
-                self.send_agent_update();
+                self.on_arrival(m.data.region_handle);
+            } else {
+                self.shared.state_mut().position = m.data.position;
             }
         } else if id == ChatFromSimulator::ID {
             let m: ChatFromSimulator = pkt.decode()?;
-            let c = &m.chat_data;
-            // 0 whisper, 1 say, 2 shout; the others are typing, start/stop and debug
-            if c.chat_type <= 2 && c.source_id != self.login.agent_id {
-                log::info!("[chat] {}: {}", text(&c.from_name), text(&c.message));
-            }
+            let c = m.chat_data;
+            self.shared.emit(Event::Chat(ChatMessage {
+                from_name: field_str(&c.from_name),
+                source_id: c.source_id,
+                owner_id: c.owner_id,
+                source_type: c.source_type,
+                chat_type: c.chat_type,
+                audible: c.audible,
+                position: c.position,
+                message: field_str(&c.message),
+            }));
         } else if id == ImprovedInstantMessage::ID {
             let m: ImprovedInstantMessage = pkt.decode()?;
-            let b = &m.message_block;
-            // dialog 0: a plain IM
-            if b.dialog == 0 {
-                log::info!("[im] {}: {}", text(&b.from_agent_name), text(&b.message));
-            } else {
-                log::debug!(
-                    "instant message, dialog {} from {}",
-                    b.dialog,
-                    text(&b.from_agent_name)
-                );
-            }
+            let b = m.message_block;
+            self.shared.emit(Event::InstantMessage(InstantMessage {
+                from_agent_id: m.agent_data.agent_id,
+                from_name: field_str(&b.from_agent_name),
+                to_agent_id: b.to_agent_id,
+                dialog: b.dialog,
+                id: b.id,
+                message: field_str(&b.message),
+                from_group: b.from_group,
+                offline: b.offline != 0,
+                timestamp: b.timestamp,
+                region_id: b.region_id,
+                position: b.position,
+                binary_bucket: b.binary_bucket,
+            }));
         } else if id == AlertMessage::ID {
             let m: AlertMessage = pkt.decode()?;
-            log::info!("alert: {}", text(&m.alert_data.message));
+            let message = field_str(&m.alert_data.message);
+            log::info!("alert: {message}");
+            self.shared.emit(Event::Alert(message));
+        } else if id == AgentDataUpdate::ID {
+            // LLAgent::processAgentDataUpdate
+            let m: AgentDataUpdate = pkt.decode()?;
+            let a = m.agent_data;
+            if a.agent_id == self.login.agent_id {
+                self.shared.state_mut().active_group =
+                    (!a.active_group_id.is_nil()).then(|| ActiveGroup {
+                        id: a.active_group_id,
+                        name: field_str(&a.group_name),
+                        title: field_str(&a.group_title),
+                    });
+            }
+        } else if id == AgentGroupDataUpdate::ID {
+            let m: AgentGroupDataUpdate = pkt.decode()?;
+            let groups = m
+                .group_data
+                .iter()
+                .filter(|g| !g.group_id.is_nil())
+                .map(|g| Group {
+                    id: g.group_id,
+                    name: field_str(&g.group_name),
+                    insignia: g.group_insignia_id,
+                    powers: g.group_powers,
+                    accept_notices: g.accept_notices,
+                    contribution: g.contribution,
+                })
+                .collect();
+            self.set_groups(groups);
+        } else if id == AgentDropGroup::ID {
+            let m: AgentDropGroup = pkt.decode()?;
+            self.drop_group(m.agent_data.group_id);
+        } else if id == UUIDNameReply::ID {
+            let m: UUIDNameReply = pkt.decode()?;
+            self.on_names(
+                m.uuid_name_block
+                    .iter()
+                    .map(|b| (b.id, field_str(&b.first_name), field_str(&b.last_name))),
+            );
+        } else if id == AvatarPickerReply::ID {
+            let m: AvatarPickerReply = pkt.decode()?;
+            let found: Vec<(Uuid, String, String)> = m
+                .data
+                .iter()
+                .filter(|d| !d.avatar_id.is_nil())
+                .map(|d| {
+                    (
+                        d.avatar_id,
+                        field_str(&d.first_name),
+                        field_str(&d.last_name),
+                    )
+                })
+                .collect();
+            let list = found
+                .iter()
+                .map(|(id, first, last)| (*id, format!("{first} {last}")))
+                .collect();
+            self.on_names(found);
+            if let Some(reply) = self.picker_waits.remove(&m.agent_data.query_id) {
+                let _ = reply.send(list);
+            }
         } else if id == KickUser::ID {
             let m: KickUser = pkt.decode()?;
-            return Ok(Some(End::Kicked(text(&m.user_info.reason))));
+            return Ok(Some(End::Kicked(field_str(&m.user_info.reason))));
         } else if id == LogoutReply::ID {
             return Ok(Some(End::LoggedOut));
         } else if id == DisableSimulator::ID {
@@ -275,31 +520,63 @@ impl Session<'_> {
         Ok(None)
     }
 
-    fn on_event(&mut self, e: EqEvent) -> Option<End> {
-        match e.message.as_str() {
-            "DisableSimulator" => Some(End::Lost(
-                "the region closed the connection (event queue)".into(),
-            )),
-            other => {
-                // Only the field names: some bodies hold capability URLs (TeleportFinish,
-                // EstablishAgentCommunication…), which are secrets of the session.
-                let fields: Vec<&str> = e
-                    .body
-                    .as_map()
-                    .map(|m| m.keys().map(String::as_str).collect())
-                    .unwrap_or_default();
-                log::debug!("event: {other} {fields:?}");
-                None
-            }
+    fn drop_group(&mut self, group: Uuid) {
+        if group.is_nil() {
+            return;
         }
+        let mut groups = self.shared.state().groups.clone();
+        groups.retain(|g| g.id != group);
+        self.set_groups(groups);
+    }
+
+    fn on_event(&mut self, e: EqEvent) -> Option<End> {
+        // Only the field names: some bodies hold capability URLs (TeleportFinish,
+        // EstablishAgentCommunication…), which are secrets of the session.
+        let fields: Vec<&str> = e
+            .body
+            .as_map()
+            .map(|m| m.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        log::debug!("event: {} {fields:?}", e.message);
+        match e.message.as_str() {
+            "DisableSimulator" => {
+                return Some(End::Lost(
+                    "the region closed the connection (event queue)".into(),
+                ));
+            }
+            // The grid sends the group list on the event queue (LLAgent::processAgentGroupDataUpdate
+            // via LLAgentGroupDataUpdateViewerNode; Aurora's social::parse_group_data)
+            "AgentGroupDataUpdate" => self.set_groups(parse_group_data(&e.body)),
+            "AgentDropGroup" => self.drop_group(e.body["AgentData"][0]["GroupID"].as_uuid()),
+            _ => {}
+        }
+        None
     }
 }
 
-/// Connect to the login region and stay there until shutdown or the connection ends.
-pub async fn run(
+/// The groups of an AgentGroupDataUpdate event (aurora-net social::parse_group_data).
+fn parse_group_data(body: &Llsd) -> Vec<Group> {
+    body["GroupData"]
+        .as_array()
+        .iter()
+        .filter(|g| !g["GroupID"].as_uuid().is_nil())
+        .map(|g| Group {
+            id: g["GroupID"].as_uuid(),
+            name: g["GroupName"].as_str().to_owned(),
+            insignia: g["GroupInsigniaID"].as_uuid(),
+            powers: g["GroupPowers"].as_u64(),
+            accept_notices: g["AcceptNotices"].as_bool(),
+            contribution: g["Contribution"].as_i32(),
+        })
+        .collect()
+}
+
+async fn run(
     http: &reqwest::Client,
     login: &LoginResponse,
     mut shutdown: watch::Receiver<bool>,
+    requests: &mut mpsc::Receiver<Request>,
+    shared: &Shared,
 ) -> End {
     let addr = SocketAddr::from((login.sim_ip, login.sim_port));
     let sock = match UdpSocket::bind("0.0.0.0:0").await {
@@ -308,6 +585,7 @@ pub async fn run(
     };
     let mut s = Session {
         login,
+        shared,
         sock,
         circuit: Circuit::new(addr),
         ucc_seq: 0,
@@ -317,6 +595,8 @@ pub async fn run(
         position: Vec3::new(128.0, 128.0, 0.0),
         last_ping: Instant::now(),
         last_update: Instant::now(),
+        name_waits: Vec::new(),
+        picker_waits: HashMap::new(),
     };
     s.send_use_circuit_code();
 
@@ -363,6 +643,12 @@ pub async fn run(
                 }
                 if let Some(end) = s.tick() {
                     break end;
+                }
+            }
+            // requests wait for the arrival: the region answers nothing before
+            req = requests.recv(), if s.arrived && logging_out.is_none() => {
+                if let Some(req) = req {
+                    s.on_request(req);
                 }
             }
             ev = eq_rx.recv(), if eq_open => match ev {
@@ -414,6 +700,7 @@ mod tests {
             message: String::new(),
             secure_session_id: uuid::Uuid::from_u128(4),
             inventory_root: uuid::Uuid::nil(),
+            home: None,
         }
     }
 
@@ -427,7 +714,8 @@ mod tests {
         drop(closed);
         let port = region.local_addr().expect("address").port();
         let (_stop_tx, stop_rx) = watch::channel(false);
-        let end = run(&reqwest::Client::new(), &login(port, seed), stop_rx).await;
+        let (_client, mut network) = crate::Client::new(reqwest::Client::new());
+        let end = network.session(&login(port, seed), stop_rx).await;
         assert!(
             matches!(&end, End::Lost(why) if why.contains("event queue")),
             "{end:?}"
@@ -441,9 +729,9 @@ mod tests {
         let region = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
         let port = region.local_addr().expect("address").port();
         let (stop_tx, stop_rx) = watch::channel(false);
-        let http = reqwest::Client::new();
+        let (_client, mut network) = crate::Client::new(reqwest::Client::new());
         let resp = login(port, "http://127.0.0.1:9/seed".into());
-        let session = run(&http, &resp, stop_rx);
+        let session = network.session(&resp, stop_rx);
         let region_side = async {
             let mut buf = [0u8; 2048];
             let (_, bot) = region.recv_from(&mut buf).await.expect("UseCircuitCode");

@@ -1,15 +1,11 @@
 //! Ferrobot: a Second Life bot in a container.
 
-mod caps;
-mod circuit;
 mod config;
-mod login;
-mod session;
-mod xmlrpc;
+mod services;
 
 use config::Config;
-use login::{LoginError, LoginRequest};
-use session::End;
+use ferro_client::login::{self, LoginError, LoginRequest};
+use ferro_client::{Client, End, Network};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -46,10 +42,18 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(1);
         }
     };
-    std::process::ExitCode::from(run(&cfg, &http, stop_rx).await)
+    let (client, mut network) = Client::new(http.clone());
+    tokio::spawn(services::chat_log::run(client.clone()));
+    std::process::ExitCode::from(run(&cfg, &http, &mut network, stop_rx).await)
 }
 
-async fn run(cfg: &Config, http: &reqwest::Client, mut stop: watch::Receiver<bool>) -> u8 {
+/// Log in, run the session, and log in again when it ends, as the settings say.
+async fn run(
+    cfg: &Config,
+    http: &reqwest::Client,
+    network: &mut Network,
+    mut stop: watch::Receiver<bool>,
+) -> u8 {
     let req = LoginRequest {
         login_uri: cfg.login_uri.clone(),
         username: cfg.username.clone(),
@@ -69,7 +73,7 @@ async fn run(cfg: &Config, http: &reqwest::Client, mut stop: watch::Receiver<boo
                 if !resp.message.trim().is_empty() {
                     log::info!("message of the day: {}", resp.message.trim());
                 }
-                match session::run(http, &resp, stop.clone()).await {
+                match network.session(&resp, stop.clone()).await {
                     End::LoggedOut => {
                         log::info!("logged out");
                         return 0;

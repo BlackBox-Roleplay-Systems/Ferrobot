@@ -1,6 +1,6 @@
 //! The bot's settings, from environment variables (the container's env).
 
-use crate::login::{SL_MAIN_GRID, StartLocation};
+use ferro_client::login::{SL_MAIN_GRID, StartLocation};
 
 #[derive(Clone)]
 pub struct Config {

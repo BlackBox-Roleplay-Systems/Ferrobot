@@ -1,7 +1,7 @@
 # Architecture
 
-Ferrobot is a Cargo workspace. Today one binary holds everything; ROADMAP phase 2 splits the
-Second Life client out into a library, so that the bot's services sit on top of it.
+Ferrobot is a Cargo workspace: the Second Life client is a library (`ferro-client`), and the bot
+(`ferrobot`) is its settings, its relog loop and its services on top of it.
 
 ## Today
 
@@ -10,14 +10,21 @@ crates/
   llsd/       ferro-llsd   LLSD values: XML, binary and notation codecs (from Aurora Viewer)
   msg/        ferro-msg    UDP message system: packet framing, zerocoding, typed messages generated
                            at build time from message_template.msg (from Aurora Viewer)
-  ferrobot/   ferrobot     the bot
-    src/main.rs            settings, signals, the login / relog loop, exit codes
-    src/config.rs          FERRO_* environment variables
-    src/login.rs           XML-RPC login (login_to_simulator)
+  client/     ferro-client the Second Life client, as a library: no settings, no HTTP API
+    src/lib.rs             Client: requests with replies, events, state; Network: the network task
+    src/login.rs           XML-RPC login (login_to_simulator), the home location
     src/xmlrpc.rs          the XML-RPC codec of the login
     src/circuit.rs         reliable UDP circuit: sequence numbers, acks, resends, duplicates
     src/caps.rs            the seed capability and the EventQueueGet long poll
-    src/session.rs         one region: connect sequence, keep-alive, incoming messages, logout
+    src/network.rs         one session in one region: connect sequence, keep-alive, incoming
+                           messages, requests, logout
+    src/events.rs          what the client reports (Event, chat, IMs)
+    src/state.rs           what it keeps: who and where the bot is, its groups, its health
+    src/names.rs           key <-> name cache
+  ferrobot/   ferrobot     the bot
+    src/main.rs            settings, signals, the login / relog loop, exit codes
+    src/config.rs          FERRO_* environment variables
+    src/services/          one service per job, on the client's events (chat_log)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it
@@ -27,8 +34,8 @@ crates/
     src/http.rs, xmlrpc.rs a minimal HTTP/1.1 server and the grid's side of XML-RPC
 ```
 
-One tokio runtime. `session::run` owns the UDP socket and the circuit, and `select!`s over the
-socket, a 100 ms tick, the event queue's channel and the shutdown signal.
+One tokio runtime. `Network::session` owns the UDP socket and the circuit, and `select!`s over the
+socket, a 100 ms tick, the client's requests, the event queue's channel and the shutdown signal.
 
 ## Target (ROADMAP phase 2 onwards)
 

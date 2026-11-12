@@ -1,0 +1,203 @@
+//! Ferro-client: a Second Life client as a library, for the bot's services to build on.
+//!
+//! - [`Client`] is a cheap handle (clone it freely): it sends requests to the network task and
+//!   awaits their replies, hands out [`Event`]s, and reads the [`State`] the client keeps.
+//! - [`Network`] is the network task: it owns the UDP socket, the circuit and the event queue,
+//!   and runs one session at a time ([`Network::session`]). Nothing else touches them.
+//!
+//! The relog policy is the caller's: log in ([`login::login`]), run the session, decide what to
+//! do when it ends. Requests made between sessions fail with [`ClientError::NotConnected`].
+//! ARCHITECTURE.md, "How the pieces talk".
+
+mod caps;
+mod circuit;
+pub mod events;
+pub mod login;
+mod names;
+mod network;
+pub mod state;
+mod xmlrpc;
+
+pub use events::{ChatMessage, Event, InstantMessage};
+pub use login::{LoginError, LoginRequest, LoginResponse, StartLocation};
+pub use network::{End, Network};
+pub use state::{Group, Health, Home, State};
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::time::Duration;
+use tokio::sync::{broadcast, mpsc, oneshot};
+use uuid::Uuid;
+
+/// How long a request waits for the grid's answer.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Events a slow subscriber may fall behind by before it misses some.
+const EVENT_BUFFER: usize = 1024;
+const REQUEST_BUFFER: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ClientError {
+    #[error("the bot is not connected")]
+    NotConnected,
+    #[error("no answer from the grid in time")]
+    Timeout,
+}
+
+/// What the network task is asked to do. Each request that has an answer carries the
+/// `oneshot` it goes back on.
+#[derive(Debug)]
+pub(crate) enum Request {
+    /// Names of avatars (UUIDNameRequest); answered once all are known.
+    Names {
+        ids: Vec<Uuid>,
+        reply: oneshot::Sender<()>,
+    },
+    /// Avatars whose name matches (AvatarPickerRequest).
+    FindAvatars {
+        name: String,
+        reply: oneshot::Sender<Vec<(Uuid, String)>>,
+    },
+}
+
+/// What the client and the network task share.
+pub(crate) struct Shared {
+    pub events: broadcast::Sender<Event>,
+    state: RwLock<State>,
+    names: Mutex<names::Cache>,
+}
+
+impl Shared {
+    pub fn state(&self) -> std::sync::RwLockReadGuard<'_, State> {
+        self.state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn state_mut(&self) -> std::sync::RwLockWriteGuard<'_, State> {
+        self.state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn names(&self) -> MutexGuard<'_, names::Cache> {
+        self.names
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn emit(&self, e: Event) {
+        // no subscriber is not an error
+        let _ = self.events.send(e);
+    }
+}
+
+#[derive(Clone)]
+pub struct Client {
+    requests: mpsc::Sender<Request>,
+    shared: Arc<Shared>,
+}
+
+impl Client {
+    /// A client and its network task. `http` must be built with [`login::redirect_policy`].
+    pub fn new(http: reqwest::Client) -> (Client, Network) {
+        let (events, _) = broadcast::channel(EVENT_BUFFER);
+        let shared = Arc::new(Shared {
+            events,
+            state: RwLock::new(State::default()),
+            names: Mutex::new(names::Cache::default()),
+        });
+        let (tx, rx) = mpsc::channel(REQUEST_BUFFER);
+        (
+            Client {
+                requests: tx,
+                shared: shared.clone(),
+            },
+            Network::new(http, rx, shared),
+        )
+    }
+
+    /// Everything the client reports from now on.
+    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
+        self.shared.events.subscribe()
+    }
+
+    /// A copy of the client's state.
+    pub fn state(&self) -> State {
+        self.shared.state().clone()
+    }
+
+    pub fn health(&self) -> Health {
+        self.shared.state().health()
+    }
+
+    async fn ask<T>(
+        &self,
+        make: impl FnOnce(oneshot::Sender<T>) -> Request,
+    ) -> Result<T, ClientError> {
+        if !self.shared.state().online {
+            return Err(ClientError::NotConnected);
+        }
+        let (tx, rx) = oneshot::channel();
+        self.requests
+            .send(make(tx))
+            .await
+            .map_err(|_| ClientError::NotConnected)?;
+        match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
+            Ok(Ok(v)) => Ok(v),
+            // the session ended before the answer
+            Ok(Err(_)) => Err(ClientError::NotConnected),
+            Err(_) => Err(ClientError::Timeout),
+        }
+    }
+
+    /// The names ("First Last") of these avatars: from the cache, else asked of the grid. Ids the
+    /// grid does not know are left out.
+    pub async fn names(&self, ids: &[Uuid]) -> Result<HashMap<Uuid, String>, ClientError> {
+        let missing: Vec<Uuid> = {
+            let cache = self.shared.names();
+            ids.iter()
+                .copied()
+                .filter(|id| !id.is_nil() && cache.name(*id).is_none())
+                .collect()
+        };
+        if !missing.is_empty() {
+            self.ask(|reply| Request::Names {
+                ids: missing,
+                reply,
+            })
+            .await?;
+        }
+        let cache = self.shared.names();
+        Ok(ids
+            .iter()
+            .filter_map(|id| cache.name(*id).map(|n| (*id, n.to_owned())))
+            .collect())
+    }
+
+    /// The name of one avatar, `None` when the grid does not know it.
+    pub async fn name(&self, id: Uuid) -> Result<Option<String>, ClientError> {
+        Ok(self.names(&[id]).await?.remove(&id))
+    }
+
+    /// The key of the avatar with this name ("First Last", or a username, "Resident" then
+    /// implied, like SecondBot's Name2Key): from the cache, else searched on the grid.
+    pub async fn find_avatar(&self, name: &str) -> Result<Option<Uuid>, ClientError> {
+        let wanted = names::normalize(name);
+        if wanted.is_empty() {
+            return Ok(None);
+        }
+        if let Some(id) = self.shared.names().key(&wanted) {
+            return Ok(Some(id));
+        }
+        let found = self
+            .ask(|reply| Request::FindAvatars {
+                name: wanted.clone(),
+                reply,
+            })
+            .await?;
+        Ok(found
+            .into_iter()
+            .find(|(_, n)| names::normalize(n).eq_ignore_ascii_case(&wanted))
+            .map(|(id, _)| id))
+    }
+}
