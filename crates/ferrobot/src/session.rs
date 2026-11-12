@@ -281,8 +281,14 @@ impl Session<'_> {
                 "the region closed the connection (event queue)".into(),
             )),
             other => {
-                log::debug!("event: {other}");
-                log::trace!("{other}: {:?}", e.body);
+                // Only the field names: some bodies hold capability URLs (TeleportFinish,
+                // EstablishAgentCommunication…), which are secrets of the session.
+                let fields: Vec<&str> = e
+                    .body
+                    .as_map()
+                    .map(|m| m.keys().map(String::as_str).collect())
+                    .unwrap_or_default();
+                log::debug!("event: {other} {fields:?}");
                 None
             }
         }
