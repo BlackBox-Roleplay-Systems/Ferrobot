@@ -45,9 +45,14 @@
   session at a time); the bot's chat and IM log is now a service on the events
 - ⬜ Neighbour regions, crossings, region restarts
 - ⬜ Teleports: requests, lures from masters, TeleportFinish, EstablishAgentCommunication
-- ⬜ The bot's state: AgentDataUpdate, AgentGroupDataUpdate, position, home
-- ⬜ Names: key <-> name, display names, cache
-- ⬜ Health state for the API and the Docker HEALTHCHECK
+- 🟡 The bot's state (`ferro_client::State`): online, region, position, home (login reply), active
+  group (AgentDataUpdate, as LLAgent asks for it), groups (AgentGroupDataUpdate on the event queue
+  or UDP, AgentDropGroup), as Aurora's session_social.rs; tested on the test grid
+- 🟡 Names: key -> name (UUIDNameRequest) and name -> key (AvatarPickerRequest, a username meaning
+  "<name> Resident" like SecondBot's Name2Key), cached; tested on the test grid
+- ⬜ Display names (GetDisplayNames capability, Aurora's request_display_names)
+- 🟡 Health state in the client (`Client::health`: online, region, time since the last packet)
+- ⬜ Docker HEALTHCHECK on the health state
 
 ## Phase 3 - Groups
 

@@ -36,6 +36,28 @@ pub struct GridConfig {
     pub eq_hold: Duration,
     /// How often the region pings the bot.
     pub ping_interval: Duration,
+    /// Other avatars the grid knows, for names and searches.
+    pub residents: Vec<Resident>,
+    /// The groups the bot is in, and its active group.
+    pub groups: Vec<GridGroup>,
+    pub active_group: Option<Uuid>,
+    /// The login reply's `home`, as the grid writes it (LLSD notation in a string).
+    pub home: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Resident {
+    pub id: Uuid,
+    pub first: String,
+    pub last: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GridGroup {
+    pub id: Uuid,
+    pub name: String,
+    pub title: String,
+    pub powers: u64,
 }
 
 impl Default for GridConfig {
@@ -47,6 +69,34 @@ impl Default for GridConfig {
             region_name: "Test Region".into(),
             eq_hold: Duration::from_secs(15),
             ping_interval: Duration::from_secs(2),
+            residents: vec![
+                Resident {
+                    id: Uuid::from_u128(0x5eed_0001),
+                    first: "Some".into(),
+                    last: "Resident".into(),
+                },
+                Resident {
+                    id: Uuid::from_u128(0x5eed_0002),
+                    first: "Other".into(),
+                    last: "Avatar".into(),
+                },
+            ],
+            groups: vec![
+                GridGroup {
+                    id: Uuid::from_u128(0x6000_0001),
+                    name: "Test Group".into(),
+                    title: "Bot".into(),
+                    powers: 0x0000_0002_0000_0002,
+                },
+                GridGroup {
+                    id: Uuid::from_u128(0x6000_0002),
+                    name: "Second Group".into(),
+                    title: "Member".into(),
+                    powers: 0,
+                },
+            ],
+            active_group: Some(Uuid::from_u128(0x6000_0001)),
+            home: "{'region_handle':[r256000, r256000], 'position':[r100, r110, r22], 'look_at':[r1, r0, r0]}".into(),
         }
     }
 }
@@ -86,6 +136,17 @@ pub enum Seen {
     LogoutRequest {
         session: u32,
     },
+    AgentDataUpdateRequest {
+        session: u32,
+    },
+    UuidNameRequest {
+        session: u32,
+        ids: Vec<Uuid>,
+    },
+    AvatarPickerRequest {
+        session: u32,
+        name: String,
+    },
     SeedRequest {
         session: u32,
         caps: Vec<String>,
@@ -106,6 +167,9 @@ impl Seen {
             | Seen::AgentUpdate { session }
             | Seen::CompletePingCheck { session }
             | Seen::LogoutRequest { session }
+            | Seen::AgentDataUpdateRequest { session }
+            | Seen::UuidNameRequest { session, .. }
+            | Seen::AvatarPickerRequest { session, .. }
             | Seen::SeedRequest { session, .. }
             | Seen::EventQueuePoll { session } => Some(*session),
             Seen::LoginRefused { .. } => None,
@@ -153,6 +217,13 @@ impl Shared {
     fn saw(&self, seen: Seen) {
         log::debug!("testgrid saw {seen:?}");
         self.state().seen.push(seen);
+    }
+
+    fn queue_event(&self, n: u32, message: &str, body: Llsd) {
+        if let Some(s) = self.state().sessions.get_mut(&n) {
+            s.events.push_back((message.into(), body));
+        }
+        self.eq_wake.notify_waiters();
     }
 
     fn end_session(&self, n: u32) {

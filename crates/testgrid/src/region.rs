@@ -3,8 +3,9 @@
 //! AgentMovementComplete), pings both ways and answers LogoutRequest, as a simulator does.
 
 use crate::{RegionCommand, Seen, Shared};
+use ferro_llsd::{Llsd, Map};
 use ferro_msg::msgs::*;
-use ferro_msg::{IncomingPacket, Msg, build_packet, parse_packet, str_field};
+use ferro_msg::{IncomingPacket, Msg, build_packet, field_str, parse_packet, str_field};
 use glam::Vec3;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -100,6 +101,27 @@ impl Region {
             }
         } else if id == AgentUpdate::ID {
             self.shared.saw(Seen::AgentUpdate { session: n });
+        } else if id == AgentDataUpdateRequest::ID {
+            self.shared.saw(Seen::AgentDataUpdateRequest { session: n });
+            self.agent_data(from, n);
+        } else if id == UUIDNameRequest::ID {
+            if let Ok(m) = pkt.decode::<UUIDNameRequest>() {
+                let ids: Vec<Uuid> = m.uuid_name_block.iter().map(|b| b.id).collect();
+                self.shared.saw(Seen::UuidNameRequest {
+                    session: n,
+                    ids: ids.clone(),
+                });
+                self.names(from, &ids);
+            }
+        } else if id == AvatarPickerRequest::ID {
+            if let Ok(m) = pkt.decode::<AvatarPickerRequest>() {
+                let name = field_str(&m.data.name);
+                self.shared.saw(Seen::AvatarPickerRequest {
+                    session: n,
+                    name: name.clone(),
+                });
+                self.avatar_picker(from, m.agent_data.query_id, &name);
+            }
         } else if id == LogoutRequest::ID {
             self.shared.saw(Seen::LogoutRequest { session: n });
             let mut r = LogoutReply::default();
@@ -164,6 +186,108 @@ impl Region {
         m.data.look_at = Vec3::X;
         m.data.region_handle = (u64::from(REGION_X) << 32) | u64::from(REGION_Y);
         m.sim_data.channel_version = str_field("Ferrobot Test Grid 1.0");
+        self.send(to, &m, true);
+    }
+
+    /// LLAgent's AgentDataUpdateRequest: AgentDataUpdate (the active group) on UDP, and the
+    /// group list as AgentGroupDataUpdate on the event queue, as the grid sends them.
+    fn agent_data(&mut self, to: SocketAddr, n: u32) {
+        let cfg = &self.shared.cfg;
+        let active = cfg
+            .active_group
+            .and_then(|id| cfg.groups.iter().find(|g| g.id == id));
+        let mut m = AgentDataUpdate::default();
+        m.agent_data.agent_id = self.shared.agent_id;
+        m.agent_data.first_name = str_field(&cfg.first);
+        m.agent_data.last_name = str_field(&cfg.last);
+        if let Some(g) = active {
+            m.agent_data.active_group_id = g.id;
+            m.agent_data.group_name = str_field(&g.name);
+            m.agent_data.group_title = str_field(&g.title);
+            m.agent_data.group_powers = g.powers;
+        }
+        let groups: Vec<Llsd> = cfg
+            .groups
+            .iter()
+            .map(|g| {
+                let mut e = Map::new();
+                e.insert("GroupID".into(), g.id.into());
+                e.insert("GroupName".into(), g.name.clone().into());
+                e.insert("GroupInsigniaID".into(), Uuid::nil().into());
+                // U64 travels as 8 big-endian bytes in LLSD
+                e.insert("GroupPowers".into(), g.powers.to_be_bytes().to_vec().into());
+                e.insert("AcceptNotices".into(), true.into());
+                e.insert("Contribution".into(), 0.into());
+                Llsd::Map(e)
+            })
+            .collect();
+        let mut body = Map::new();
+        let mut agent = Map::new();
+        agent.insert("AgentID".into(), self.shared.agent_id.into());
+        body.insert("AgentData".into(), Llsd::Array(vec![Llsd::Map(agent)]));
+        body.insert("GroupData".into(), Llsd::Array(groups));
+        self.send(to, &m, true);
+        self.shared
+            .queue_event(n, "AgentGroupDataUpdate", Llsd::Map(body));
+    }
+
+    /// UUIDNameReply with the residents the grid knows; unknown ids get no answer.
+    fn names(&mut self, to: SocketAddr, ids: &[Uuid]) {
+        let mut agent = None;
+        if ids.contains(&self.shared.agent_id) {
+            agent = Some((self.shared.cfg.first.clone(), self.shared.cfg.last.clone()));
+        }
+        let blocks: Vec<uuid_name_reply::UUIDNameBlock> = self
+            .shared
+            .cfg
+            .residents
+            .iter()
+            .filter(|r| ids.contains(&r.id))
+            .map(|r| (r.id, r.first.clone(), r.last.clone()))
+            .chain(agent.map(|(f, l)| (self.shared.agent_id, f, l)))
+            .map(|(id, first, last)| uuid_name_reply::UUIDNameBlock {
+                id,
+                first_name: str_field(&first),
+                last_name: str_field(&last),
+            })
+            .collect();
+        if !blocks.is_empty() {
+            self.send(
+                to,
+                &UUIDNameReply {
+                    uuid_name_block: blocks,
+                },
+                true,
+            );
+        }
+    }
+
+    /// AvatarPickerReply: residents whose name holds every word searched for; one empty block
+    /// when nobody matches, as the grid answers.
+    fn avatar_picker(&mut self, to: SocketAddr, query: Uuid, name: &str) {
+        let words: Vec<String> = name.split_whitespace().map(str::to_lowercase).collect();
+        let mut data: Vec<avatar_picker_reply::Data> = self
+            .shared
+            .cfg
+            .residents
+            .iter()
+            .filter(|r| {
+                let full = format!("{} {}", r.first, r.last).to_lowercase();
+                words.iter().all(|w| full.contains(w.as_str()))
+            })
+            .map(|r| avatar_picker_reply::Data {
+                avatar_id: r.id,
+                first_name: str_field(&r.first),
+                last_name: str_field(&r.last),
+            })
+            .collect();
+        if data.is_empty() {
+            data.push(avatar_picker_reply::Data::default());
+        }
+        let mut m = AvatarPickerReply::default();
+        m.agent_data.agent_id = self.shared.agent_id;
+        m.agent_data.query_id = query;
+        m.data = data;
         self.send(to, &m, true);
     }
 

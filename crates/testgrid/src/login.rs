@@ -66,6 +66,9 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
     r.insert("look_at".into(), "[r1,r0,r0]".into());
     r.insert("start_location".into(), p["start"].as_str().into());
     r.insert("agent_access".into(), "M".into());
+    if !cfg.home.is_empty() {
+        r.insert("home".into(), cfg.home.clone().into());
+    }
     r.insert("message".into(), "Welcome to the test grid".into());
     let mut root = Map::new();
     root.insert("folder_id".into(), Uuid::new_v4().into());
