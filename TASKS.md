@@ -31,7 +31,8 @@
   password (exit 2), start location, a closed event queue that neither ends the session nor spins
 - ⬜ Test grid: a region that goes silent (the 100 s timeout), and an event queue that gives up;
   both need the bot's timeouts settable for tests
-- ⬜ GitHub CI: fmt, clippy, tests, Docker build
+- 🟡 GitHub CI (`.github/workflows/ci.yml`): `check.sh`, the Docker image built and started, its
+  size in the run summary; runs on the first PR
 - ✅ `scripts/check.sh`, `new-task.sh`, `end-task.sh`; AGENTS.md, ARCHITECTURE.md
 
 ## Phase 2 - The client becomes a library

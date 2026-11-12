@@ -1,0 +1,37 @@
+# fmt, clippy and the tests (the bot against the test grid included), then the Docker image:
+# built, run once (no settings: it must start and exit with code 1), and its size noted.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: ./scripts/check.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t ferrobot:ci .
+      - name: The image starts, and refuses to run without settings
+        run: |
+          set +e
+          docker run --rm ferrobot:ci
+          code=$?
+          set -e
+          test "$code" -eq 1
+      - name: Image size
+        run: docker image ls ferrobot:ci --format 'Image size - {{.Size}}' >> "$GITHUB_STEP_SUMMARY"
