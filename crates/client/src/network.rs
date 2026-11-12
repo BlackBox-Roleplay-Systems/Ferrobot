@@ -614,6 +614,10 @@ impl Session<'_> {
                     self.shared.emit(Event::RegionRestartCancelled);
                 }
                 None if !message.is_empty() => {
+                    // a leading slash marks a system message (process_alert_core)
+                    let message = message
+                        .strip_prefix('/')
+                        .map_or(message.clone(), str::to_owned);
                     log::info!("alert: {message}");
                     self.shared.emit(Event::Alert(message));
                 }
