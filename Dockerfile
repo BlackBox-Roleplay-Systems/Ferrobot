@@ -2,8 +2,8 @@
 FROM rust:1.97-slim-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-RUN cargo build --release --locked
+COPY crates ./crates
+RUN cargo build --release --locked -p ferrobot
 
 # Run
 FROM debian:bookworm-slim
