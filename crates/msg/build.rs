@@ -140,7 +140,11 @@ fn parse(src: &str) -> Vec<Message> {
             }
             assert_eq!(toks[i], "}", "expected block end for {bname}");
             i += 1;
-            blocks.push(Block { name: bname, kind, vars });
+            blocks.push(Block {
+                name: bname,
+                kind,
+                vars,
+            });
         }
         assert_eq!(toks[i], "}", "expected message end for {name}");
         i += 1;
@@ -178,10 +182,11 @@ fn snake(name: &str) -> String {
         }
     }
     const KW: &[&str] = &[
-        "type", "ref", "move", "loop", "match", "mod", "override", "self", "super", "use", "where", "as", "fn", "impl", "in", "for", "if",
-        "else", "let", "struct", "enum", "trait", "static", "const", "box", "final", "virtual", "priv", "macro", "async", "await", "dyn",
-        "abstract", "become", "do", "try", "yield", "crate", "extern", "pub", "return", "true", "false", "unsafe", "while", "break",
-        "continue", "gen",
+        "type", "ref", "move", "loop", "match", "mod", "override", "self", "super", "use", "where",
+        "as", "fn", "impl", "in", "for", "if", "else", "let", "struct", "enum", "trait", "static",
+        "const", "box", "final", "virtual", "priv", "macro", "async", "await", "dyn", "abstract",
+        "become", "do", "try", "yield", "crate", "extern", "pub", "return", "true", "false",
+        "unsafe", "while", "break", "continue", "gen",
     ];
     if KW.contains(&out.as_str()) {
         out.push('_');
@@ -205,7 +210,10 @@ fn generate(msgs: &[Message]) -> String {
 
         // block structs
         let _ = writeln!(s, "pub mod {modname} {{");
-        let _ = writeln!(s, "    #[allow(unused_imports)] use crate::{{Reader, Writer, DecodeError}};");
+        let _ = writeln!(
+            s,
+            "    #[allow(unused_imports)] use crate::{{Reader, Writer, DecodeError}};"
+        );
         for b in &m.blocks {
             let _ = writeln!(s, "    #[derive(Debug, Clone, Default, PartialEq)]");
             let _ = writeln!(s, "    pub struct {} {{", b.name);
@@ -218,7 +226,10 @@ fn generate(msgs: &[Message]) -> String {
             }
             let _ = writeln!(s, "    }}");
             let _ = writeln!(s, "    impl {} {{", b.name);
-            let _ = writeln!(s, "        #[inline] pub fn encode(&self, w: &mut Writer) {{");
+            let _ = writeln!(
+                s,
+                "        #[inline] pub fn encode(&self, w: &mut Writer) {{"
+            );
             for v in &b.vars {
                 let f = snake(&v.name);
                 match &v.ty {
@@ -237,7 +248,10 @@ fn generate(msgs: &[Message]) -> String {
                 }
             }
             let _ = writeln!(s, "        }}");
-            let _ = writeln!(s, "        #[inline] pub fn decode(r: &mut Reader) -> Result<Self, DecodeError> {{");
+            let _ = writeln!(
+                s,
+                "        #[inline] pub fn decode(r: &mut Reader) -> Result<Self, DecodeError> {{"
+            );
             let _ = writeln!(s, "            Ok(Self {{");
             for v in &b.vars {
                 let f = snake(&v.name);
@@ -305,7 +319,10 @@ fn generate(msgs: &[Message]) -> String {
             }
         }
         let _ = writeln!(s, "    }}");
-        let _ = writeln!(s, "    fn decode_body(r: &mut Reader) -> Result<Self, DecodeError> {{");
+        let _ = writeln!(
+            s,
+            "    fn decode_body(r: &mut Reader) -> Result<Self, DecodeError> {{"
+        );
         let _ = writeln!(s, "        Ok(Self {{");
         for b in &m.blocks {
             let f = snake(&b.name);

@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 pub use binary::{from_binary, from_binary_local, to_binary};
 pub use notation::{from_notation, to_notation};
-pub use xml_llsd::{from_xml, from_xml_element, to_pretty_xml_string, to_serialized_xml, to_xml, to_xml_string};
+pub use xml_llsd::{
+    from_xml, from_xml_element, to_pretty_xml_string, to_serialized_xml, to_xml, to_xml_string,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LlsdError {
@@ -61,7 +63,9 @@ impl Budget {
 
     /// The per-byte rule alone, for files the viewer wrote itself.
     pub(crate) fn for_local_input(len: usize) -> Self {
-        let left = len.saturating_mul(PARSED_BYTES_PER_INPUT_BYTE).saturating_add(PARSED_BYTES_FLOOR);
+        let left = len
+            .saturating_mul(PARSED_BYTES_PER_INPUT_BYTE)
+            .saturating_add(PARSED_BYTES_FLOOR);
         Budget { left }
     }
 
@@ -88,11 +92,17 @@ mod budget_tests {
         assert_eq!(Budget::for_input(32 << 20).left, MAX_PARSED_BYTES);
         assert_eq!(Budget::for_input(usize::MAX).left, MAX_PARSED_BYTES);
         // the viewer's own files keep the per-byte rule only
-        assert_eq!(Budget::for_local_input(32 << 20).left, (512 << 20) + PARSED_BYTES_FLOOR);
+        assert_eq!(
+            Budget::for_local_input(32 << 20).left,
+            (512 << 20) + PARSED_BYTES_FLOOR
+        );
         let mut b = Budget::for_input(0);
         assert!(b.charge_values(PARSED_BYTES_FLOOR / VALUE_COST).is_ok());
         assert!(matches!(b.charge(1), Err(LlsdError::TooLarge)));
-        assert!(matches!(Budget::for_input(0).charge_values(usize::MAX), Err(LlsdError::TooLarge)));
+        assert!(matches!(
+            Budget::for_input(0).charge_values(usize::MAX),
+            Err(LlsdError::TooLarge)
+        ));
     }
 }
 
@@ -240,7 +250,9 @@ impl Llsd {
     /// U64 values are transported as 8-byte binaries by convention.
     pub fn as_u64(&self) -> u64 {
         match self {
-            Llsd::Binary(b) if b.len() >= 8 => u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            Llsd::Binary(b) if b.len() >= 8 => {
+                u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+            }
             Llsd::String(s) => s.trim().parse().unwrap_or(0),
             Llsd::Real(r) => *r as u64,
             other => other.as_i32() as u32 as u64,
@@ -303,11 +315,20 @@ impl Llsd {
 
     /// Interpret an LLSD array of 3 reals as a vector.
     pub fn as_vec3(&self) -> [f32; 3] {
-        [self.at(0).as_f32(), self.at(1).as_f32(), self.at(2).as_f32()]
+        [
+            self.at(0).as_f32(),
+            self.at(1).as_f32(),
+            self.at(2).as_f32(),
+        ]
     }
 
     pub fn as_vec4(&self) -> [f32; 4] {
-        [self.at(0).as_f32(), self.at(1).as_f32(), self.at(2).as_f32(), self.at(3).as_f32()]
+        [
+            self.at(0).as_f32(),
+            self.at(1).as_f32(),
+            self.at(2).as_f32(),
+            self.at(3).as_f32(),
+        ]
     }
 }
 

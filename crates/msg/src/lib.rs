@@ -173,7 +173,12 @@ impl<'a> Reader<'a> {
     }
     #[inline]
     pub fn vec4(&mut self) -> Result<Vec4, DecodeError> {
-        Ok(Vec4::new(self.f32()?, self.f32()?, self.f32()?, self.f32()?))
+        Ok(Vec4::new(
+            self.f32()?,
+            self.f32()?,
+            self.f32()?,
+            self.f32()?,
+        ))
     }
     /// LLQuaternion is packed as x,y,z with w reconstructed.
     #[inline]

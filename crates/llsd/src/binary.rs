@@ -52,7 +52,10 @@ impl<'a> Reader<'a> {
     /// refused before anything is reserved for it.
     fn count(&mut self, min_bytes: usize) -> Result<usize, LlsdError> {
         let n = self.u32_be()? as usize;
-        let needed = n.checked_mul(min_bytes).and_then(|b| b.checked_add(1)).ok_or(LlsdError::Eof)?;
+        let needed = n
+            .checked_mul(min_bytes)
+            .and_then(|b| b.checked_add(1))
+            .ok_or(LlsdError::Eof)?;
         if needed > self.remaining() {
             return Err(LlsdError::Eof);
         }
@@ -156,7 +159,11 @@ pub fn from_binary_local(data: &[u8]) -> Result<(Llsd, usize), LlsdError> {
 
 /// The value, the bytes consumed and the budget left.
 fn parse(data: &[u8], budget: Budget) -> Result<(Llsd, usize, Budget), LlsdError> {
-    let mut r = Reader { data, pos: 0, budget };
+    let mut r = Reader {
+        data,
+        pos: 0,
+        budget,
+    };
     r.budget.charge(VALUE_COST)?;
     if data.starts_with(HEADER) {
         r.pos = HEADER.len();
@@ -262,8 +269,14 @@ mod tests {
         let (v, _) = from_binary(&array_of(1000, b"!")).unwrap();
         assert_eq!(v.len(), 1000);
         // ...a megabyte of them is twice the per-byte allowance
-        assert!(matches!(from_binary(&array_of(1 << 20, b"!")), Err(LlsdError::TooLarge)));
-        assert!(matches!(from_binary(&array_of(1 << 20, b"1")), Err(LlsdError::TooLarge)));
+        assert!(matches!(
+            from_binary(&array_of(1 << 20, b"!")),
+            Err(LlsdError::TooLarge)
+        ));
+        assert!(matches!(
+            from_binary(&array_of(1 << 20, b"1")),
+            Err(LlsdError::TooLarge)
+        ));
     }
 
     #[test]
@@ -295,7 +308,10 @@ mod tests {
         let rows = (0..20_000)
             .map(|i| llsd_map! {"offset" => i, "size" => i * 2, "name" => format!("joint{i}")})
             .collect::<Vec<_>>();
-        assert_eq!(from_binary(&to_binary(&Llsd::Array(rows))).unwrap().0.len(), 20_000);
+        assert_eq!(
+            from_binary(&to_binary(&Llsd::Array(rows))).unwrap().0.len(),
+            20_000
+        );
     }
 
     /// A document shaped like the viewer's inventory cache
@@ -352,7 +368,10 @@ mod tests {
         assert_eq!(used, doc.len());
         assert_eq!(v["items"].len(), 100_000);
         // the per-byte rule still holds there
-        assert!(matches!(from_binary_local(&array_of(1 << 20, b"!")), Err(LlsdError::TooLarge)));
+        assert!(matches!(
+            from_binary_local(&array_of(1 << 20, b"!")),
+            Err(LlsdError::TooLarge)
+        ));
     }
 
     #[test]

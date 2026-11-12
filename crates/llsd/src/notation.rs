@@ -91,7 +91,8 @@ impl<'a> Parser<'a> {
             }
             b'r' => {
                 self.pos += 1;
-                let s = self.take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'+' | b'.'));
+                let s = self
+                    .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'+' | b'.'));
                 let v = std::str::from_utf8(s)
                     .ok()
                     .and_then(|s| s.parse::<f64>().ok())
@@ -135,7 +136,10 @@ impl<'a> Parser<'a> {
         let mut m = Map::new();
         loop {
             // keys and values may be separated by spaces, ':' and ','
-            while self.peek().is_some_and(|c| c.is_ascii_whitespace() || c == b',') {
+            while self
+                .peek()
+                .is_some_and(|c| c.is_ascii_whitespace() || c == b',')
+            {
                 self.pos += 1;
             }
             match self.peek().ok_or(LlsdError::Eof)? {
@@ -146,7 +150,10 @@ impl<'a> Parser<'a> {
                 b'"' | b'\'' | b's' => {
                     self.budget.charge(MAP_ENTRY_COST)?;
                     let key = self.string()?;
-                    while self.peek().is_some_and(|c| c.is_ascii_whitespace() || c == b':') {
+                    while self
+                        .peek()
+                        .is_some_and(|c| c.is_ascii_whitespace() || c == b':')
+                    {
                         self.pos += 1;
                     }
                     let v = self.value(depth)?;
@@ -161,7 +168,10 @@ impl<'a> Parser<'a> {
         self.next()?; // '['
         let mut a = Vec::new();
         loop {
-            while self.peek().is_some_and(|c| c.is_ascii_whitespace() || c == b',') {
+            while self
+                .peek()
+                .is_some_and(|c| c.is_ascii_whitespace() || c == b',')
+            {
                 self.pos += 1;
             }
             if self.peek().ok_or(LlsdError::Eof)? == b']' {
@@ -361,7 +371,10 @@ fn write_value(v: &Llsd, out: &mut String) {
             out.push('l');
             write_string(u, out);
         }
-        Llsd::Binary(b) => out.push_str(&format!("b64\"{}\"", base64::engine::general_purpose::STANDARD.encode(b))),
+        Llsd::Binary(b) => out.push_str(&format!(
+            "b64\"{}\"",
+            base64::engine::general_purpose::STANDARD.encode(b)
+        )),
         Llsd::Array(a) => {
             out.push('[');
             for (i, x) in a.iter().enumerate() {
@@ -400,7 +413,10 @@ mod tests {
         let od = v.get("od");
         assert_eq!(od.at(0).get("bc").at(1), &Llsd::Real(0.5));
         assert!(od.at(0).get("tex").at(0).is_undef());
-        assert_eq!(od.at(0).get("tex").at(3), &Llsd::Uuid(Uuid::from_u128(u128::MAX)));
+        assert_eq!(
+            od.at(0).get("tex").at(3),
+            &Llsd::Uuid(Uuid::from_u128(u128::MAX))
+        );
         assert_eq!(od.at(0).get("ti").at(0).get("s").at(1), &Llsd::Real(2.0));
         assert_eq!(od.at(1).get("mf"), &Llsd::Real(0.0));
         assert_eq!(od.at(1).get("ds"), &Llsd::Boolean(true));
@@ -410,14 +426,24 @@ mod tests {
     fn writes_what_it_reads() {
         // a teleport history line (LLTeleportHistoryPersistentItem::toLLSD)
         let mut m = Map::new();
-        m.insert("title".into(), Llsd::String("Place d'Aurora, Aurora \\ Démo\n".into()));
+        m.insert(
+            "title".into(),
+            Llsd::String("Place d'Aurora, Aurora \\ Démo\n".into()),
+        );
         m.insert(
             "global_pos".into(),
-            Llsd::Array(vec![Llsd::Real(256140.5), Llsd::Real(256120.0), Llsd::Real(25.0)]),
+            Llsd::Array(vec![
+                Llsd::Real(256140.5),
+                Llsd::Real(256120.0),
+                Llsd::Real(25.0),
+            ]),
         );
         m.insert("date".into(), Llsd::Date(1_760_000_000.25));
         m.insert("slurl".into(), Llsd::String(String::new()));
-        m.insert("n".into(), Llsd::Array(vec![Llsd::Undef, Llsd::Boolean(true), Llsd::Integer(-3)]));
+        m.insert(
+            "n".into(),
+            Llsd::Array(vec![Llsd::Undef, Llsd::Boolean(true), Llsd::Integer(-3)]),
+        );
         m.insert("id".into(), Llsd::Uuid(Uuid::from_u128(7)));
         m.insert("bin".into(), Llsd::Binary(vec![0, 255, 7]));
         let v = Llsd::Map(m);
@@ -432,13 +458,30 @@ mod tests {
         assert_eq!(from_notation(b"r-1.5e2").unwrap(), Llsd::Real(-150.0));
         assert_eq!(from_notation(b"true").unwrap(), Llsd::Boolean(true));
         assert_eq!(from_notation(b"F").unwrap(), Llsd::Boolean(false));
-        assert_eq!(from_notation(b"\"a\\\"b\\x41\\n\"").unwrap(), Llsd::String("a\"bA\n".into()));
-        assert_eq!(from_notation(b"s(3)\"x'y\"").unwrap(), Llsd::String("x'y".into()));
-        assert_eq!(from_notation(b"b(2)\"\x01\x02\"").unwrap(), Llsd::Binary(vec![1, 2]));
-        assert_eq!(from_notation(b"b16\"0aFF\"").unwrap(), Llsd::Binary(vec![10, 255]));
-        assert_eq!(from_notation(b"b64\"AQID\"").unwrap(), Llsd::Binary(vec![1, 2, 3]));
         assert_eq!(
-            from_notation(b"{ \"k\" : [ ] , s(1)\"z\":! }").unwrap().get("k"),
+            from_notation(b"\"a\\\"b\\x41\\n\"").unwrap(),
+            Llsd::String("a\"bA\n".into())
+        );
+        assert_eq!(
+            from_notation(b"s(3)\"x'y\"").unwrap(),
+            Llsd::String("x'y".into())
+        );
+        assert_eq!(
+            from_notation(b"b(2)\"\x01\x02\"").unwrap(),
+            Llsd::Binary(vec![1, 2])
+        );
+        assert_eq!(
+            from_notation(b"b16\"0aFF\"").unwrap(),
+            Llsd::Binary(vec![10, 255])
+        );
+        assert_eq!(
+            from_notation(b"b64\"AQID\"").unwrap(),
+            Llsd::Binary(vec![1, 2, 3])
+        );
+        assert_eq!(
+            from_notation(b"{ \"k\" : [ ] , s(1)\"z\":! }")
+                .unwrap()
+                .get("k"),
             &Llsd::Array(vec![])
         );
     }
@@ -452,10 +495,21 @@ mod tests {
             t
         };
         assert_eq!(from_notation(&run(1000)).unwrap().len(), 1000);
-        assert!(matches!(from_notation(&run(1 << 20)), Err(LlsdError::TooLarge)));
+        assert!(matches!(
+            from_notation(&run(1 << 20)),
+            Err(LlsdError::TooLarge)
+        ));
         // named keys and real values stay well inside it
-        let doc = (0..20_000).map(|i| format!("'k{i}':r{i}.5")).collect::<Vec<_>>().join(",");
-        assert_eq!(from_notation(format!("{{{doc}}}").as_bytes()).unwrap().len(), 20_000);
+        let doc = (0..20_000)
+            .map(|i| format!("'k{i}':r{i}.5"))
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(
+            from_notation(format!("{{{doc}}}").as_bytes())
+                .unwrap()
+                .len(),
+            20_000
+        );
     }
 
     #[test]

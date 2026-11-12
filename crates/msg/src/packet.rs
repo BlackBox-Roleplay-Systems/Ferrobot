@@ -147,15 +147,38 @@ pub fn parse_packet(data: &[u8]) -> Result<IncomingPacket, DecodeError> {
 
 /// Serialize a message into a datagram. `acks` are appended (as many as fit
 /// in the MTU); returns how many acks were appended.
-pub fn build_packet<M: Msg>(msg: &M, sequence: u32, reliable: bool, resent: bool, acks: &[u32], out: &mut Vec<u8>) -> usize {
+pub fn build_packet<M: Msg>(
+    msg: &M,
+    sequence: u32,
+    reliable: bool,
+    resent: bool,
+    acks: &[u32],
+    out: &mut Vec<u8>,
+) -> usize {
     let mut body = Writer::new();
     M::ID.encode(&mut body.buf);
     msg.encode_body(&mut body);
-    build_raw(&body.buf, M::ZEROCODED, sequence, reliable, resent, acks, out)
+    build_raw(
+        &body.buf,
+        M::ZEROCODED,
+        sequence,
+        reliable,
+        resent,
+        acks,
+        out,
+    )
 }
 
 /// Frame an already-encoded message (number + body).
-pub fn build_raw(payload: &[u8], zerocoded: bool, sequence: u32, reliable: bool, resent: bool, acks: &[u32], out: &mut Vec<u8>) -> usize {
+pub fn build_raw(
+    payload: &[u8],
+    zerocoded: bool,
+    sequence: u32,
+    reliable: bool,
+    resent: bool,
+    acks: &[u32],
+    out: &mut Vec<u8>,
+) -> usize {
     out.clear();
     let mut flags = 0u8;
     if reliable {
@@ -226,7 +249,10 @@ mod tests {
             type_: 0,
         });
         build_packet(&o, 7, false, false, &[], &mut buf);
-        assert_eq!(buf[0] & PacketFlags::ZEROCODED != 0, RequestImage::ZEROCODED);
+        assert_eq!(
+            buf[0] & PacketFlags::ZEROCODED != 0,
+            RequestImage::ZEROCODED
+        );
         let p = parse_packet(&buf).unwrap();
         let back: RequestImage = p.decode().unwrap();
         assert_eq!(back, o);
@@ -255,7 +281,10 @@ mod tests {
         build_packet(&m, 3, true, false, &[1, 2], &mut buf);
         assert_ne!(buf[0] & PacketFlags::ZEROCODED, 0);
         let p = parse_packet(&buf).unwrap();
-        assert_eq!((p.id, p.acks.as_slice()), (RegionHandshake::ID, &[1, 2][..]));
+        assert_eq!(
+            (p.id, p.acks.as_slice()),
+            (RegionHandshake::ID, &[1, 2][..])
+        );
         assert_eq!(p.decode::<RegionHandshake>().unwrap(), m);
 
         // an older simulator: no RegionInfo4 block count at all

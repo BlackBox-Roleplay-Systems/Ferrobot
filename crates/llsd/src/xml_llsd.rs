@@ -68,7 +68,11 @@ pub fn from_xml_element(el: &Element) -> Result<Llsd, LlsdError> {
         "integer" => {
             let t = text();
             let t = t.trim();
-            Llsd::Integer(t.parse::<i32>().or_else(|_| t.parse::<f64>().map(|f| f as i32)).unwrap_or(0))
+            Llsd::Integer(
+                t.parse::<i32>()
+                    .or_else(|_| t.parse::<f64>().map(|f| f as i32))
+                    .unwrap_or(0),
+            )
         }
         "real" => {
             let t = text();
@@ -120,7 +124,11 @@ fn write_value(v: &Llsd, out: &mut String) {
     match v {
         Llsd::Undef => out.push_str("<undef />"),
         Llsd::Boolean(b) => {
-            out.push_str(if *b { "<boolean>1</boolean>" } else { "<boolean>0</boolean>" });
+            out.push_str(if *b {
+                "<boolean>1</boolean>"
+            } else {
+                "<boolean>0</boolean>"
+            });
         }
         Llsd::Integer(i) => {
             out.push_str("<integer>");
@@ -287,7 +295,10 @@ mod tests {
     #[test]
     fn pretty_matches_ll_and_reads_back() {
         let mut v = llsd_map! { "version" => 1, "name" => "" };
-        v.insert("list", Llsd::Array(vec![Llsd::from("a&b"), Llsd::new_map()]));
+        v.insert(
+            "list",
+            Llsd::Array(vec![Llsd::from("a&b"), Llsd::new_map()]),
+        );
         let xml = to_pretty_xml_string(&v);
         let expected = "<?xml version=\"1.0\" ?>\n<llsd>\n    <map>\n    <key>list</key>\n        <array>\n            <string>a&amp;b</string>\n            <map />\n        </array>\n    <key>name</key>\n        <string />\n    <key>version</key>\n        <integer>1</integer>\n    </map>\n</llsd>\n";
         assert_eq!(xml, expected);
