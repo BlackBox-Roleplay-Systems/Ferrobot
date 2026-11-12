@@ -24,6 +24,15 @@ Exit codes: `0` logged out on request, `1` bad settings, `2` a login refusal ret
 
 ## Build and run
 
+The image is published for amd64 and arm64:
+
+```
+docker run -d --name ferrobot --restart unless-stopped \
+  -e FERRO_USERNAME='Bot Name' -e FERRO_PASSWORD='…' ghcr.io/kanikabreed/ferrobot:latest
+```
+
+Or build it yourself:
+
 ```
 cargo build --release
 docker build -t ferrobot .

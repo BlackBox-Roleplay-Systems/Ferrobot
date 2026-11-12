@@ -33,6 +33,9 @@
   both need the bot's timeouts settable for tests
 - 🟡 GitHub CI (`.github/workflows/ci.yml`): `check.sh`, the Docker image built and started, its
   size in the run summary; runs on the first PR
+- 🟡 Published image (`.github/workflows/publish.yml`): `ghcr.io/kanikabreed/ferrobot`, amd64 and
+  arm64, `latest` from main and versions from `v*` tags; runs on the first merge
+- ⬜ Make the repository public (human)
 - ✅ `scripts/check.sh`, `new-task.sh`, `end-task.sh`; AGENTS.md, ARCHITECTURE.md
 
 ## Phase 2 - The client becomes a library
@@ -87,4 +90,4 @@
 
 - ⬜ Status endpoint and metrics
 - ⬜ Rate limits on commands that change things
-- ⬜ Published image with versioned tags
+- 🟡 Published image with versioned tags (done in phase 1, see there)
