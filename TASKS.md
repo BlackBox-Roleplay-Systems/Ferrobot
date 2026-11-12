@@ -22,10 +22,15 @@
 
 - ⬜ First login on the grid (human): arrival, chat and IM in the log, logout, relog
 - ⬜ Docker image built and run; `docker stop` logs out; image size noted
-- ⬜ `crates/testgrid`: fake login server
-- ⬜ `crates/testgrid`: fake region (circuit, handshake, pings, logout, kick)
-- ⬜ `crates/testgrid`: seed capability and event queue
-- ⬜ Tests: full login, logout, kick, lost connection and relog against the test grid
+- ✅ `crates/testgrid`: fake login server (`login_to_simulator`, wrong password refused)
+- ✅ `crates/testgrid`: fake region (circuit, handshake, arrival, pings both ways, logout, kick,
+  DisableSimulator, local chat and IMs)
+- ✅ `crates/testgrid`: seed capability and the held event queue (events, 502 when idle, 404 closed)
+- ✅ Tests (`crates/ferrobot/tests/testgrid.rs`, the real binary): login, arrival, chat, IM, events,
+  pings, SIGTERM logout (exit 0), kick and closed circuit then relog, no relog (exit 1), wrong
+  password (exit 2), start location, a closed event queue that neither ends the session nor spins
+- ⬜ Test grid: a region that goes silent (the 100 s timeout), and an event queue that gives up;
+  both need the bot's timeouts settable for tests
 - ⬜ GitHub CI: fmt, clippy, tests, Docker build
 - ✅ `scripts/check.sh`, `new-task.sh`, `end-task.sh`; AGENTS.md, ARCHITECTURE.md
 

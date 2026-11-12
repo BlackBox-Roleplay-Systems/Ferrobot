@@ -18,6 +18,13 @@ crates/
     src/circuit.rs         reliable UDP circuit: sequence numbers, acks, resends, duplicates
     src/caps.rs            the seed capability and the EventQueueGet long poll
     src/session.rs         one region: connect sequence, keep-alive, incoming messages, logout
+    tests/testgrid.rs      the real bot, run as a process against the test grid
+  testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
+    src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it
+    src/login.rs           login_to_simulator, answered or refused as the grid does
+    src/region.rs          the region's UDP side: circuits, handshake, arrival, pings, logout, kicks
+    src/caps.rs            the seed capability and the held EventQueueGet poll
+    src/http.rs, xmlrpc.rs a minimal HTTP/1.1 server and the grid's side of XML-RPC
 ```
 
 One tokio runtime. `session::run` owns the UDP socket and the circuit, and `select!`s over the
@@ -39,7 +46,7 @@ crates/
     chat.rs, im.rs              local chat, IMs, group sessions
     friends.rs, inventory.rs, appearance.rs, parcels.rs, estate.rs …
     events.rs                   everything the client reports (a broadcast channel)
-  testgrid/    ferro-testgrid  a fake login server and region on localhost, for tests
+  testgrid/    ferro-testgrid  a fake grid on localhost, for tests (each feature adds its replies)
   ferrobot/    ferrobot        the bot: settings, services, the HTTP API
     api/                        /api/Run, SecondBot-compatible signed commands
     commands/                   one module per command area, like SecondBot's Commands/

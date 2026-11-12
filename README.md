@@ -35,6 +35,8 @@ docker run --rm -e FERRO_USERNAME='Bot Name' -e FERRO_PASSWORD='…' ferrobot
 - `crates/ferrobot` - the bot: login, the region circuit, capabilities and the event queue, the session
 - `crates/llsd` - LLSD, Second Life's structured data (from Aurora Viewer)
 - `crates/msg` - the UDP message system, generated from `message_template.msg` (from Aurora Viewer)
+- `crates/testgrid` - a fake grid on localhost (login server, region, event queue) that the tests
+  run the bot against
 
 See `NOTICE.md` for what comes from where.
 
