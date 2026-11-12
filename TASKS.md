@@ -40,6 +40,9 @@
 
 ## Phase 2 - The client becomes a library
 
+Run on NGC (the local OpenSim server, 2026-11-12): login, arrival, event queue, an alert, a kick
+then the relog, SIGTERM then the logout (exit 0), the health file. Teleports not yet (one region).
+
 - ✅ `crates/client` (ferro-client): the protocol code moved out of the bot; `Client` (requests with
   replies and a timeout, a broadcast of events, the state) and `Network` (the network task, one
   session at a time); the bot's chat and IM log is now a service on the events

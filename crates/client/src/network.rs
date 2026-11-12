@@ -572,7 +572,8 @@ impl Session<'_> {
             }));
         } else if id == AlertMessage::ID {
             let m: AlertMessage = pkt.decode()?;
-            let message = field_str(&m.alert_data.message);
+            // OpenSim pads its messages with spaces and newlines
+            let message = field_str(&m.alert_data.message).trim().to_owned();
             log::info!("alert: {message}");
             self.shared.emit(Event::Alert(message));
         } else if id == AgentDataUpdate::ID {
@@ -660,7 +661,8 @@ impl Session<'_> {
             self.send_agent_update();
         } else if id == KickUser::ID {
             let m: KickUser = pkt.decode()?;
-            return Ok(Some(End::Kicked(field_str(&m.user_info.reason))));
+            let reason = field_str(&m.user_info.reason).trim().to_owned();
+            return Ok(Some(End::Kicked(reason)));
         } else if id == LogoutReply::ID {
             return Ok(Some(End::LoggedOut));
         } else if id == DisableSimulator::ID {

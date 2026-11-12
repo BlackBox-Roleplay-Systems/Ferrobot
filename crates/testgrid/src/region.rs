@@ -514,7 +514,8 @@ impl Region {
                 let mut m = KickUser::default();
                 m.user_info.agent_id = self.shared.agent_id;
                 m.user_info.session_id = session_id;
-                m.user_info.reason = str_field(&reason);
+                // padded as OpenSim pads it (NGC's KickUser)
+                m.user_info.reason = str_field(&format!("\n    {reason}\n    "));
                 self.send(to, &m, false);
                 self.drop_client(to);
             }
