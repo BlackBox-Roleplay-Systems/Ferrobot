@@ -54,8 +54,9 @@ then the relog, SIGTERM then the logout (exit 0), the health file. Teleports not
   BotTeleportOffer); others ignored
 - ✅ Neighbour regions: not connected, like LibreMetaverse's bots (`MultipleSims = false`); a
   bot that stays put needs no child agents. Revisit with movement (phase 7)
-- ⬜ Region restarts: today the bot logs in again once the region goes down; to do: leave
-  before the restart (teleport home or elsewhere), Aurora's region_restart.rs
+- 🟡 Region restarts: notices read as Aurora's region_restart.rs (Second Life's named alerts,
+  OpenSim's `/RESTART_X_…` texts, the cancellation); the bot goes home at once when home is in
+  another region (services/restart.rs), else logs in again after the restart
 - 🟡 The bot's state (`ferro_client::State`): online, region, position, home (login reply), active
   group (AgentDataUpdate, as LLAgent asks for it), groups (AgentGroupDataUpdate on the event queue
   or UDP, AgentDropGroup), as Aurora's session_social.rs; tested on the test grid

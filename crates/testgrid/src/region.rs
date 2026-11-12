@@ -519,6 +519,27 @@ impl Region {
                 self.send(to, &m, false);
                 self.drop_client(to);
             }
+            RegionCommand::RestartNotice { seconds } => {
+                let name = &self.shared.regions[self.index].name;
+                let (notice, extra) = if seconds >= 60 && seconds % 60 == 0 {
+                    (
+                        "RegionRestartMinutes",
+                        format!("{{'MINUTES':i{},'NAME':'{name}'}}", seconds / 60),
+                    )
+                } else {
+                    (
+                        "RegionRestartSeconds",
+                        format!("{{'SECONDS':i{seconds},'NAME':'{name}'}}"),
+                    )
+                };
+                let mut m = AlertMessage::default();
+                m.alert_data.message = str_field("The region you are in now is about to restart.");
+                m.alert_info.push(alert_message::AlertInfo {
+                    message: str_field(notice),
+                    extra_params: str_field(&extra),
+                });
+                self.send(to, &m, true);
+            }
             RegionCommand::DisableSimulator => {
                 self.send(to, &DisableSimulator::default(), false);
                 self.drop_client(to);

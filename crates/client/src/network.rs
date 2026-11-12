@@ -16,6 +16,7 @@ use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::events::{ChatMessage, Event, InstantMessage};
 use crate::login::LoginResponse;
+use crate::region_restart::{self, Restart};
 use crate::state::{ActiveGroup, Group, Region};
 use crate::{Request, Shared, TeleportTo};
 use ferro_llsd::Llsd;
@@ -573,6 +574,35 @@ impl Session<'_> {
         } else if id == AlertMessage::ID {
             let m: AlertMessage = pkt.decode()?;
             // OpenSim pads its messages with spaces and newlines
+            let message = field_str(&m.alert_data.message).trim().to_owned();
+            // a named notification (AlertInfo) first, then OpenSim's system messages
+            // (attempt_standard_notification, process_alert_core; Aurora's session)
+            let named = m.alert_info.first().and_then(|info| {
+                region_restart::from_alert_info(&field_str(&info.message), &info.extra_params)
+            });
+            match named
+                .map(Restart::Notice)
+                .or_else(|| region_restart::from_text(&message))
+            {
+                Some(Restart::Notice(n)) => {
+                    log::warn!("the region restarts in {} s", n.seconds);
+                    self.shared.emit(Event::RegionRestart {
+                        seconds: n.seconds,
+                        region: n.region,
+                    });
+                }
+                Some(Restart::Cancelled) => {
+                    log::info!("the region restart was cancelled");
+                    self.shared.emit(Event::RegionRestartCancelled);
+                }
+                None if !message.is_empty() => {
+                    log::info!("alert: {message}");
+                    self.shared.emit(Event::Alert(message));
+                }
+                None => {}
+            }
+        } else if id == AgentAlertMessage::ID {
+            let m: AgentAlertMessage = pkt.decode()?;
             let message = field_str(&m.alert_data.message).trim().to_owned();
             log::info!("alert: {message}");
             self.shared.emit(Event::Alert(message));

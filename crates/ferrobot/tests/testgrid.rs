@@ -401,3 +401,25 @@ async fn a_master_teleports_the_bot_and_others_cannot() {
 fn uuid_from(n: u128) -> uuid::Uuid {
     uuid::Uuid::from_u128(n)
 }
+
+/// A restart announced: home is in the other region, so the bot goes there at once.
+#[tokio::test]
+async fn before_a_region_restart_the_bot_goes_home() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[]);
+    arrived(&grid, &bot, 1).await;
+    grid.announce_restart(300);
+    bot.wait_log("the region restarts in 300 s: going home")
+        .await;
+    wait_for(
+        &grid,
+        &bot,
+        "the home teleport",
+        |s| matches!(s, Seen::TeleportLandmarkRequest { landmark, .. } if landmark.is_nil()),
+    )
+    .await;
+    bot.wait_log("home, in Second Region, before the restart")
+        .await;
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}

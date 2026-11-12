@@ -278,6 +278,7 @@ enum RegionCommand {
     OfferTeleport { from: Resident, lure: Uuid },
     Kick { reason: String },
     DisableSimulator,
+    RestartNotice { seconds: i32 },
 }
 
 /// A running fake grid. Dropping it stops it.
@@ -440,6 +441,12 @@ impl TestGrid {
         self.command(RegionCommand::Kick {
             reason: reason.into(),
         });
+    }
+
+    /// The region announces a restart in `seconds`, as Second Life does (AlertMessage with a
+    /// RegionRestartSeconds or RegionRestartMinutes notification).
+    pub fn announce_restart(&self, seconds: i32) {
+        self.command(RegionCommand::RestartNotice { seconds });
     }
 
     /// The region closes the circuit (DisableSimulator), as when it shuts down.

@@ -15,6 +15,7 @@ pub mod events;
 pub mod login;
 mod names;
 mod network;
+pub mod region_restart;
 pub mod state;
 mod xmlrpc;
 

@@ -11,8 +11,16 @@ pub enum Event {
     Chat(ChatMessage),
     /// An instant message of any kind: `dialog` says which (ImprovedInstantMessage).
     InstantMessage(InstantMessage),
-    /// A message from the grid for the user (AlertMessage).
+    /// A message from the grid for the user (AlertMessage, AgentAlertMessage).
     Alert(String),
+    /// The region announced a restart (AlertMessage): `seconds` left; `region` when the grid
+    /// names it (Second Life does, OpenSim does not).
+    RegionRestart {
+        seconds: i32,
+        region: Option<String>,
+    },
+    /// The announced restart was cancelled.
+    RegionRestartCancelled,
     /// The groups the bot is in changed (AgentGroupDataUpdate, AgentDropGroup).
     GroupsChanged,
     /// A teleport failed; the bot stays where it is (TeleportFailed).
