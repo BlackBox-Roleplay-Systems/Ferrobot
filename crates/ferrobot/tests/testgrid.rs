@@ -4252,8 +4252,12 @@ mod api {
     #[tokio::test]
     async fn a_rabbitmq_broker_that_is_down_blocks_nothing() {
         let grid = grid().await;
-        // nothing listens there
-        let broker = free_port().to_string();
+        // a port nothing listens on: bound by the system, then closed
+        let broker = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("a free port")
+            .port()
+            .to_string();
         let (mut bot, api) = bot_with_settings(
             &grid,
             &[
