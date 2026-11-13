@@ -13,6 +13,7 @@ mod info;
 mod inventory;
 mod movement;
 mod notecard;
+mod objects;
 mod parcel;
 pub mod reply;
 mod world;
@@ -120,6 +121,16 @@ const CHANGING: &[&str] = &[
     "AddToAllowAnimations",
     "SetProfileAbout",
     "SetProfileImage",
+    "RezObject",
+    "RezObjectOnPos",
+    "RezObjectParcelCenter",
+    "AsyncRezObject",
+    "AsyncRezObjectOnPos",
+    "AsyncRezObjectParcelCenter",
+    "ClickObject",
+    "UnRezObject",
+    "TransferInventoryToObject",
+    "AsyncTransferInventoryToObject",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -238,6 +249,17 @@ const COMMANDS: &[(&str, usize)] = &[
     ("SetRegionFlags", 10),
     ("SetEstateConfig", 10),
     ("AddToAllowAnimations", 1),
+    ("RezObject", 1),
+    ("RezObjectOnPos", 4),
+    ("RezObjectParcelCenter", 2),
+    ("AsyncRezObject", 2),
+    ("AsyncRezObjectOnPos", 5),
+    ("AsyncRezObjectParcelCenter", 3),
+    ("ClickObject", 1),
+    ("UnRezObject", 1),
+    ("GetObjectsInParcel", 0),
+    ("TransferInventoryToObject", 3),
+    ("AsyncTransferInventoryToObject", 4),
     ("GetProfileAbout", 1),
     ("GetProfileImage", 1),
     ("SetProfileAbout", 1),
@@ -449,6 +471,23 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
                 estate::RegionValues { values },
             )
             .await
+        }
+        "RezObject" => objects::rez_object(ctx, a(0)).await,
+        "RezObjectOnPos" => objects::rez_object_on_pos(ctx, a(0), a(1), a(2), a(3)).await,
+        "RezObjectParcelCenter" => objects::rez_object_parcel_center(ctx, a(0), a(1)).await,
+        "AsyncRezObject" => objects::async_rez_object(ctx, a(0), a(1)).await,
+        "AsyncRezObjectOnPos" => {
+            objects::async_rez_object_on_pos(ctx, a(0), a(1), a(2), a(3), a(4)).await
+        }
+        "AsyncRezObjectParcelCenter" => {
+            objects::async_rez_object_parcel_center(ctx, a(0), a(1), a(2)).await
+        }
+        "ClickObject" => objects::click(ctx, a(0)).await,
+        "UnRezObject" => objects::unrez(ctx, a(0)).await,
+        "GetObjectsInParcel" => objects::objects_in_parcel(ctx).await,
+        "TransferInventoryToObject" => objects::transfer_to_object(ctx, a(0), a(1), a(2)).await,
+        "AsyncTransferInventoryToObject" => {
+            objects::async_transfer_to_object(ctx, a(0), a(1), a(2), a(3)).await
         }
         "GetProfileAbout" => avatars::profile_about(client, a(0)).await,
         "GetProfileImage" => avatars::profile_image(client, a(0)).await,

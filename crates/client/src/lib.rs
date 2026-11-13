@@ -111,6 +111,7 @@ pub(crate) enum Request {
     Parcel(network::ParcelRequest),
     Estate(network::EstateRequest),
     Profile(network::ProfileRequest),
+    Object(network::ObjectRequest),
     /// An asset from the ViewerAsset capability (`kind` its query key, gesture_id…).
     ViewerAsset {
         kind: &'static str,
@@ -747,6 +748,62 @@ impl Client {
     /// lands in the state's `friend_locations`.
     pub async fn map_friend(&self, friend: Uuid) -> Result<(), ClientError> {
         self.interact(Interaction::FindAgent { prey: friend }).await
+    }
+
+    /// An object the region told of, by its key (a prim of a linkset, an attachment…).
+    pub async fn find_object(&self, key: Uuid) -> Result<Option<objects::Known>, ClientError> {
+        self.ask(|reply| Request::Object(network::ObjectRequest::Find { key, reply }))
+            .await
+    }
+
+    /// The region's root objects the bot knows of, and where they stand.
+    pub async fn root_objects(&self) -> Result<Vec<objects::Root>, ClientError> {
+        self.ask(|reply| Request::Object(network::ObjectRequest::Roots { reply }))
+            .await
+    }
+
+    /// Click (touch) an object.
+    pub async fn click_object(&self, local_id: u32) -> Result<(), ClientError> {
+        self.ask(|reply| Request::Object(network::ObjectRequest::Click { local_id, reply }))
+            .await
+    }
+
+    /// Rez an item of the bot's at a place in its region; answers the request's id.
+    pub async fn rez(&self, item: inventory::InvItem, at: glam::Vec3) -> Result<Uuid, ClientError> {
+        let item = Box::new(item);
+        self.ask(|reply| Request::Object(network::ObjectRequest::Rez { item, at, reply }))
+            .await
+    }
+
+    /// Take an object into a folder of the bot's.
+    pub async fn derez(&self, local_id: u32, folder: Uuid) -> Result<(), ClientError> {
+        self.ask(|reply| {
+            Request::Object(network::ObjectRequest::DeRez {
+                local_id,
+                folder,
+                reply,
+            })
+        })
+        .await
+    }
+
+    /// Put an item of the bot's into an object (a script, running or not).
+    pub async fn give_to_object(
+        &self,
+        local_id: u32,
+        item: inventory::InvItem,
+        running: bool,
+    ) -> Result<(), ClientError> {
+        let item = Box::new(item);
+        self.ask(|reply| {
+            Request::Object(network::ObjectRequest::ToTask {
+                local_id,
+                item,
+                running,
+                reply,
+            })
+        })
+        .await
     }
 
     /// An avatar's profile.

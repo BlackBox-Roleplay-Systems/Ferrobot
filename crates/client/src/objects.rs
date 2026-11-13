@@ -22,6 +22,8 @@ pub struct Placed {
     pub rotation: Quat,
     /// An avatar (LL_PCODE_LEGACY_AVATAR, or a terse update's avatar flag).
     pub avatar: bool,
+    /// Its owner (full and compressed updates).
+    pub owner: Option<Uuid>,
 }
 
 /// LL_PCODE_LEGACY_AVATAR (llprimitive/object_flags.h)
@@ -107,6 +109,7 @@ pub fn from_full(b: &object_update::ObjectData) -> Option<Placed> {
         position: sane_vec(position),
         rotation: sane_quat(rotation),
         avatar: b.p_code == PCODE_AVATAR,
+        owner: Some(b.owner_id),
     })
 }
 
@@ -125,7 +128,7 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
     let position = r.vec3()?;
     let rotation = ferro_msg::unpack_quat(r.vec3()?);
     let flags = r.u32()?;
-    let _owner = r.uuid()?;
+    let owner = r.uuid()?;
     if flags & 0x80 != 0 {
         let _angular_velocity = r.vec3()?;
     }
@@ -137,6 +140,7 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
         position: sane_vec(position),
         rotation: sane_quat(rotation),
         avatar: pcode == PCODE_AVATAR,
+        owner: Some(owner),
     })
 }
 
@@ -164,6 +168,7 @@ pub fn from_terse(b: &improved_terse_object_update::ObjectData) -> Option<Placed
         position: sane_vec(position),
         rotation: sane_quat(Quat::from_xyzw(q(6), q(7), q(8), q(9))),
         avatar,
+        owner: None,
     })
 }
 
@@ -175,10 +180,31 @@ struct Place {
     rotation: Quat,
 }
 
-/// The places the bot keeps: the region's root objects and the avatars.
+/// Any object the region told of: its key, what it is linked to or sits on, its owner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Known {
+    pub local_id: u32,
+    pub full_id: Uuid,
+    pub parent: u32,
+    pub owner: Uuid,
+}
+
+/// A root object and where it stands (GetObjectsInParcel).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Root {
+    pub full_id: Uuid,
+    pub local_id: u32,
+    pub owner: Uuid,
+    pub position: Vec3,
+}
+
+/// The places the bot keeps: the region's root objects and the avatars; and every object by its
+/// key, children and attachments too.
 #[derive(Debug, Default)]
 pub struct Places {
     objects: HashMap<u32, Place>,
+    known: HashMap<u32, Known>,
+    by_key: HashMap<Uuid, u32>,
     /// The avatars among them, the bot's own too.
     avatars: HashSet<u32>,
     /// The bot's avatar in this region, once a full update has named it.
@@ -194,6 +220,23 @@ impl Places {
         }
         if p.avatar && p.parent_id.is_some() {
             self.avatars.insert(p.local_id);
+        }
+        if let (Some(full_id), Some(parent)) = (p.full_id, p.parent_id) {
+            if let Some(old) = self.known.get(&p.local_id)
+                && old.full_id != full_id
+            {
+                self.by_key.remove(&old.full_id);
+            }
+            self.known.insert(
+                p.local_id,
+                Known {
+                    local_id: p.local_id,
+                    full_id,
+                    parent,
+                    owner: p.owner.unwrap_or_default(),
+                },
+            );
+            self.by_key.insert(full_id, p.local_id);
         }
         let avatar = self.avatars.contains(&p.local_id);
         match p.parent_id {
@@ -225,12 +268,39 @@ impl Places {
     pub fn kill(&mut self, local_id: u32) {
         self.objects.remove(&local_id);
         self.avatars.remove(&local_id);
+        if let Some(k) = self.known.remove(&local_id) {
+            self.by_key.remove(&k.full_id);
+        }
     }
 
     pub fn clear(&mut self) {
         self.objects.clear();
         self.avatars.clear();
+        self.known.clear();
+        self.by_key.clear();
         self.own = None;
+    }
+
+    /// An object by its key: a prim of a linkset, an attachment, anything the region sent.
+    pub fn find(&self, key: Uuid) -> Option<Known> {
+        self.known.get(self.by_key.get(&key)?).copied()
+    }
+
+    /// The root objects (not avatars) and where they stand.
+    pub fn roots(&self) -> Vec<Root> {
+        self.objects
+            .iter()
+            .filter(|(id, _)| !self.avatars.contains(id))
+            .filter_map(|(id, o)| {
+                let k = self.known.get(id)?;
+                (o.parent == 0).then_some(Root {
+                    full_id: k.full_id,
+                    local_id: *id,
+                    owner: k.owner,
+                    position: o.position,
+                })
+            })
+            .collect()
     }
 
     /// Where something kept stands in the region: its own place, or on what it sits on (the
@@ -372,9 +442,34 @@ mod tests {
         // the seat gone, the place is unknown until the next update
         places.kill(3);
         assert_eq!(places.own_position(), None);
-        // a child prim is not kept
+        // a child prim is not kept as a place, but known by its key
         places.update(&full(9, Uuid::from_u128(9), 3, false, Vec3::ONE), AGENT);
         assert!(!places.objects.contains_key(&9));
+        assert_eq!(
+            places
+                .find(Uuid::from_u128(9))
+                .map(|k| (k.local_id, k.parent)),
+            Some((9, 3))
+        );
+        assert!(places.find(Uuid::from_u128(10)).is_none());
+    }
+
+    #[test]
+    fn roots_are_objects_not_avatars() {
+        let mut places = Places::default();
+        places.update(
+            &full(3, Uuid::from_u128(3), 0, false, Vec3::new(5.0, 6.0, 7.0)),
+            AGENT,
+        );
+        places.update(&full(7, AGENT, 0, true, Vec3::ONE), AGENT);
+        let roots = places.roots();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(
+            (roots[0].full_id, roots[0].position),
+            (Uuid::from_u128(3), Vec3::new(5.0, 6.0, 7.0))
+        );
+        places.kill(3);
+        assert!(places.roots().is_empty() && places.find(Uuid::from_u128(3)).is_none());
     }
 
     #[test]

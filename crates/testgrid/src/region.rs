@@ -306,6 +306,26 @@ impl Region {
             .parcel
             .properties(0, self.shared.agent_id);
         self.shared.queue_event(n, "ParcelProperties", body);
+        // a linkset of two prims on the parcel, owned by a resident
+        let owner = Uuid::from_u128(0x5eed_0001);
+        let mut root = object_block(OBJECT_LOCAL_ID, OBJECT, 0, LL_PCODE_VOLUME, OBJECT_POSITION);
+        root.owner_id = owner;
+        let mut child = object_block(
+            OBJECT_LOCAL_ID + 1,
+            OBJECT_CHILD,
+            OBJECT_LOCAL_ID,
+            LL_PCODE_VOLUME,
+            Vec3::Z,
+        );
+        child.owner_id = owner;
+        let m = ObjectUpdate {
+            region_data: object_update::RegionData {
+                region_handle: self.shared.regions[self.index].handle(),
+                time_dilation: u16::MAX,
+            },
+            object_data: vec![root, child],
+        };
+        self.send(to, &m, true);
         // the residents, standing in a row to the west, as the coarse updates place them
         let residents: Vec<Uuid> = self.shared.cfg.residents.iter().map(|r| r.id).collect();
         let blocks = residents
@@ -774,6 +794,68 @@ impl Region {
                     physical_avatar_event_list: vec![],
                 };
                 self.send(from, &r, true);
+            }
+        } else if id == RezObject::ID {
+            if let Ok(m) = pkt.decode::<RezObject>() {
+                let r = &m.rez_data;
+                self.shared.saw(Seen::Object {
+                    what: format!(
+                        "rez {} at {:.0},{:.0},{:.0} bypass {}",
+                        m.inventory_data.item_id,
+                        r.ray_end.x,
+                        r.ray_end.y,
+                        r.ray_end.z,
+                        r.bypass_raycast
+                    ),
+                });
+            }
+        } else if id == DeRezObject::ID {
+            if let Ok(m) = pkt.decode::<DeRezObject>() {
+                let ids: Vec<String> = m
+                    .object_data
+                    .iter()
+                    .map(|o| o.object_local_id.to_string())
+                    .collect();
+                self.shared.saw(Seen::Object {
+                    what: format!(
+                        "derez {} to {} in {}",
+                        ids.join(","),
+                        m.agent_block.destination,
+                        m.agent_block.destination_id
+                    ),
+                });
+            }
+        } else if id == ObjectGrab::ID {
+            if let Ok(m) = pkt.decode::<ObjectGrab>() {
+                self.shared.saw(Seen::Object {
+                    what: format!("grab {}", m.object_data.local_id),
+                });
+            }
+        } else if id == ObjectDeGrab::ID {
+            if let Ok(m) = pkt.decode::<ObjectDeGrab>() {
+                self.shared.saw(Seen::Object {
+                    what: format!("degrab {}", m.object_data.local_id),
+                });
+            }
+        } else if id == UpdateTaskInventory::ID {
+            if let Ok(m) = pkt.decode::<UpdateTaskInventory>() {
+                self.shared.saw(Seen::Object {
+                    what: format!(
+                        "contents {} {}",
+                        m.update_data.local_id, m.inventory_data.item_id
+                    ),
+                });
+            }
+        } else if id == RezScript::ID {
+            if let Ok(m) = pkt.decode::<RezScript>() {
+                self.shared.saw(Seen::Object {
+                    what: format!(
+                        "script {} {} running {}",
+                        m.update_block.object_local_id,
+                        m.inventory_block.item_id,
+                        m.update_block.enabled
+                    ),
+                });
             }
         } else if id == AvatarPropertiesRequest::ID {
             if let Ok(m) = pkt.decode::<AvatarPropertiesRequest>() {
@@ -1737,6 +1819,12 @@ pub async fn run(
         }
     }
 }
+
+/// A linkset standing on the parcel: its root and a child prim.
+pub const OBJECT: Uuid = Uuid::from_u128(0x0b1e_c701);
+pub const OBJECT_CHILD: Uuid = Uuid::from_u128(0x0b1e_c702);
+pub const OBJECT_LOCAL_ID: u32 = 0x0b0c;
+pub const OBJECT_POSITION: Vec3 = Vec3::new(100.0, 120.0, 22.0);
 
 /// The bot's avatar's local id in the region.
 const AVATAR_LOCAL_ID: u32 = 0xa0a0;

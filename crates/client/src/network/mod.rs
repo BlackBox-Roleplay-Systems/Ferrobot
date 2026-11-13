@@ -15,9 +15,11 @@
 mod estate;
 mod groups;
 mod inventory;
+mod objects;
 mod parcels;
 mod profile;
 pub(crate) use estate::EstateRequest;
+pub(crate) use objects::ObjectRequest;
 pub(crate) use parcels::ParcelRequest;
 pub use parcels::{ObjectOwner, ParcelAction};
 pub(crate) use profile::ProfileRequest;
@@ -897,6 +899,7 @@ impl Session<'_> {
             Request::Parcel(r) => self.on_parcel_request(r),
             Request::Estate(r) => self.on_estate_request(r),
             Request::Profile(r) => self.on_profile_request(r),
+            Request::Object(r) => self.on_object_request(r),
             Request::Inventory(r) => self.on_inventory_request(r),
             Request::Rebake { reply } => self.request_appearance(Some(reply)),
             Request::HoverHeight { height, reply } => {

@@ -18,6 +18,8 @@ pub const LINK: Uuid = Uuid::from_u128(0x2000_0003);
 pub const NOTECARD_ASSET: Uuid = Uuid::from_u128(0x3000_0001);
 /// A gesture in the root, and what it plays.
 pub const GESTURE: Uuid = Uuid::from_u128(0x2000_0004);
+/// A script in the Objects folder.
+pub const SCRIPT: Uuid = Uuid::from_u128(0x2000_0005);
 pub const GESTURE_ASSET: Uuid = Uuid::from_u128(0x3000_0004);
 pub const GESTURE_ANIMATION: Uuid = Uuid::from_u128(0x3000_0005);
 pub const GESTURE_SOUND: Uuid = Uuid::from_u128(0x3000_0006);
@@ -109,6 +111,14 @@ impl Default for Inventory {
                     asset_type: 6,
                     inv_type: 6,
                     asset_id: Uuid::from_u128(0x3000_0002),
+                },
+                Item {
+                    id: SCRIPT,
+                    parent: ROOT,
+                    name: "Hello Script".into(),
+                    asset_type: 10,
+                    inv_type: 10,
+                    asset_id: Uuid::from_u128(0x3000_0007),
                 },
                 Item {
                     id: GESTURE,

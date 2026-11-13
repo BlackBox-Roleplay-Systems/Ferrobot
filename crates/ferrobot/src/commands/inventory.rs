@@ -94,16 +94,16 @@ async fn contents_json(ctx: &Ctx, id: uuid::Uuid) -> String {
 
 /// SecondBot's InventoryAsyncReply, its fields in their order.
 #[derive(Serialize)]
-struct AsyncReply {
+pub(super) struct AsyncReply {
     #[serde(rename = "requestUUID")]
-    request: String,
-    status: bool,
-    message: String,
-    data: String,
+    pub request: String,
+    pub status: bool,
+    pub message: String,
+    pub data: String,
 }
 
 /// The answer of an Async… command, to its reply target.
-async fn async_reply(ctx: &Ctx, target: &str, command: &str, r: AsyncReply) {
+pub(super) async fn async_reply(ctx: &Ctx, target: &str, command: &str, r: AsyncReply) {
     crate::smart_reply::send(ctx, target, &json(&r), command).await;
 }
 

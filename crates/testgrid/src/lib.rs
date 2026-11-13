@@ -17,7 +17,10 @@ mod groups;
 pub mod inventory;
 
 pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GROUP};
-pub use region::{MAPPABLE_FRIEND, SEAT_POSITION, map_tile};
+pub use region::{
+    MAPPABLE_FRIEND, OBJECT, OBJECT_CHILD, OBJECT_LOCAL_ID, OBJECT_POSITION, SEAT_POSITION,
+    map_tile,
+};
 mod http;
 mod login;
 pub mod parcels;
@@ -366,6 +369,12 @@ pub enum Seen {
     ScriptAnswer {
         task: Uuid,
         questions: i32,
+    },
+    /// Something done to an object, in words: "rez <item> at x,y,z bypass 1",
+    /// "derez <local ids> to <destination> in <folder>", "grab <local id>", "degrab …",
+    /// "contents <local id> <item>", "script <local id> <item> running <bool>".
+    Object {
+        what: String,
     },
     /// AgentAnimation: an animation started or stopped.
     Animation {

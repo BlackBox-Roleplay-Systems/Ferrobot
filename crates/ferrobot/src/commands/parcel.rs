@@ -25,7 +25,11 @@ async fn current(ctx: &Ctx, command: &str) -> Result<ParcelInfo, Answer> {
 }
 
 /// The same, the failure with the command's arguments.
-async fn current_with(ctx: &Ctx, command: &str, args: &[String]) -> Result<ParcelInfo, Answer> {
+pub(super) async fn current_with(
+    ctx: &Ctx,
+    command: &str,
+    args: &[String],
+) -> Result<ParcelInfo, Answer> {
     if !ctx.client.state().online {
         return Err(failure(command, "Error not in a sim", args));
     }

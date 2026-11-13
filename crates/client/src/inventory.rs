@@ -61,6 +61,41 @@ pub struct FolderContents {
     pub items: Vec<InvItem>,
 }
 
+/// LLInventoryItem::getCRC32, the item in `folder` (Aurora's inventory::operations
+/// checksum_in_folder): RezObject and the task inventory messages carry it.
+pub fn checksum_in_folder(it: &InvItem, folder: Uuid) -> u32 {
+    fn uuid_sum(id: Uuid) -> u32 {
+        id.as_bytes().chunks(4).fold(0u32, |sum, b| {
+            sum.wrapping_add(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        })
+    }
+    [
+        it.id,
+        folder,
+        it.creator,
+        it.owner,
+        it.last_owner,
+        it.group_id,
+        it.asset_id,
+        it.thumbnail,
+    ]
+    .into_iter()
+    .map(uuid_sum)
+    .chain([
+        it.base_mask,
+        it.owner_mask,
+        it.everyone_mask,
+        it.group_mask,
+        it.asset_type as u32,
+        it.inv_type as u32,
+        it.flags,
+        it.sale_price as u32,
+        u32::from(it.sale_type).wrapping_mul(0x0707_3096),
+        it.created_at as u32,
+    ])
+    .fold(0u32, u32::wrapping_add)
+}
+
 /// LLAssetType names (llassettype.cpp) -> numeric type.
 pub fn asset_type_from_name(s: &str) -> i32 {
     match s {

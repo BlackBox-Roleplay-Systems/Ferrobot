@@ -246,7 +246,17 @@ baking: the bot says so and goes on.
   estate manager (human)
 - ⬜ SetEstateTerrainRaw (a terrain upload by xfer), QueryLandSaleData, the region's parcel list
   (GetListOfParcels, UpdateListOfParcels, GetParcelListSnapshots, GetSimParcelLayers)
-- ⬜ GetObjectsInParcel, UnRezObject (with the objects)
+- 🟡 Objects (every object the region tells of kept by key, crates/client/src/objects.rs; RezObject
+  as LLToolDragAndDrop::dropObject and Aurora's inventory/rez.rs, with the item's CRC; a click as
+  LLToolGrab's; DeRezObject; UpdateTaskInventory and RezScript as dropInventory): SecondBot's
+  RezObject, RezObjectOnPos, RezObjectParcelCenter and their Async… forms, ClickObject, UnRezObject,
+  GetObjectsInParcel, TransferInventoryToObject and its Async… form; tested on the test grid.
+  Deliberate differences: ClickObject answers "ok" or fails when it cannot see the object
+  (SecondBot prints a C# pair), GetObjectsInParcel lists ID, LocalID, OwnerID and Position of each
+  root object by the parcel's x and y (SecondBot serialises LibreMetaverse's whole Primitive and
+  also compares the height with the parcel's 0, so finds nothing)
+- ⬜ Attach, Detach, the outfits (Outfit, SwapOutfit, SwapOutfitByPath: the Current Outfit
+  Folder's links, then a rebake)
 - 🟡 Animations and gestures: PlayGesture and PlayGestureDirect (the asset by ViewerAsset, decoded
   as Aurora's gesture.rs, its steps played as LLGestureMgr: animations, sounds by SoundTrigger,
   chat with its channel, waits; its animations stopped at its end), ResetAnimations (what

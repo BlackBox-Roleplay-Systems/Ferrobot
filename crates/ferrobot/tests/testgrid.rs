@@ -2305,6 +2305,161 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// Objects: rezzing items, clicking, taking back, listing, and putting items in them.
+    #[tokio::test]
+    async fn object_commands() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let did =
+            |what: String| move |s: &Seen| matches!(s, Seen::Object { what: w } if *w == what);
+        let (object, local) = (ferro_testgrid::OBJECT, ferro_testgrid::OBJECT_LOCAL_ID);
+        let boxed = inv::BOX.to_string();
+
+        // rezzing: where the bot stands, at a place, at the parcel's centre
+        let id = api.reply("RezObject", &[&boxed]).await;
+        assert!(uuid::Uuid::parse_str(&id).is_ok(), "{id}");
+        assert!(
+            grid.wait_for(
+                WAIT,
+                did(format!("rez {} at 128,128,25 bypass 1", inv::BOX))
+            )
+            .await
+        );
+        api.reply("RezObjectOnPos", &[&boxed, "10", "20", "30"])
+            .await;
+        assert!(
+            grid.wait_for(WAIT, did(format!("rez {} at 10,20,30 bypass 1", inv::BOX)))
+                .await
+        );
+        api.reply("RezObjectParcelCenter", &[&boxed, "1"]).await;
+        assert!(
+            grid.wait_for(
+                WAIT,
+                did(format!("rez {} at 128,128,26 bypass 1", inv::BOX))
+            )
+            .await
+        );
+        assert_eq!(
+            api.failure("RezObjectOnPos", &[&boxed, "here", "20", "30"])
+                .await
+                .0,
+            "Unable to unpack X cord"
+        );
+        assert_eq!(
+            api.failure("RezObjectParcelCenter", &[&boxed, "5"]).await.0,
+            "Z offset must be between -2 and 2"
+        );
+        assert_eq!(
+            api.failure("RezObject", &["nothing"]).await.0,
+            "Invaild item UUID: nothing"
+        );
+        let missing = uuid_from(0x404);
+        assert_eq!(
+            api.failure("RezObject", &[&missing.to_string()]).await.0,
+            format!("Unable to find item: {missing}")
+        );
+        let request = api.reply("AsyncRezObject", &[&boxed, "7"]).await;
+        assert!(
+            grid.wait_for(WAIT, |s| matches!(s, Seen::Chat { message, channel: 7, .. }
+                if message.contains(&format!(r#""requestUUID":"{request}","status":true"#))))
+                .await
+        );
+
+        // clicking a prim of the linkset
+        assert_eq!(
+            api.reply("ClickObject", &[&ferro_testgrid::OBJECT_CHILD.to_string()])
+                .await,
+            "ok"
+        );
+        assert!(
+            grid.wait_for(WAIT, did(format!("grab {}", local + 1)))
+                .await
+        );
+        assert!(
+            grid.wait_for(WAIT, did(format!("degrab {}", local + 1)))
+                .await
+        );
+        assert_eq!(
+            api.failure("ClickObject", &[&missing.to_string()]).await.0,
+            "Unable to see object"
+        );
+
+        // the objects on the parcel: the linkset's root
+        let listed: Value =
+            serde_json::from_str(&api.reply("GetObjectsInParcel", &[]).await).expect("json");
+        assert_eq!(
+            listed,
+            serde_json::json!([{
+                "ID": object.to_string(),
+                "LocalID": local,
+                "OwnerID": uuid_from(0x5eed_0001).to_string(),
+                "Position": {"X": 100, "Y": 120, "Z": 22},
+            }])
+        );
+
+        // items into it: a script by RezScript, anything else into its contents
+        assert_eq!(
+            api.reply(
+                "TransferInventoryToObject",
+                &[&inv::SCRIPT.to_string(), &object.to_string(), "true"]
+            )
+            .await,
+            "Transfering script [state: True]"
+        );
+        assert!(
+            grid.wait_for(
+                WAIT,
+                did(format!("script {local} {} running true", inv::SCRIPT))
+            )
+            .await
+        );
+        assert_eq!(
+            api.reply(
+                "TransferInventoryToObject",
+                &[&boxed, &object.to_string(), "true"]
+            )
+            .await,
+            "Transfering inventory"
+        );
+        assert!(
+            grid.wait_for(WAIT, did(format!("contents {local} {}", inv::BOX)))
+                .await
+        );
+        assert_eq!(
+            api.failure(
+                "TransferInventoryToObject",
+                &[&boxed, &object.to_string(), "yes"]
+            )
+            .await
+            .0,
+            "Invaild running"
+        );
+        let request = api
+            .reply(
+                "AsyncTransferInventoryToObject",
+                &[&boxed, &missing.to_string(), "false", "7"],
+            )
+            .await;
+        assert!(
+            grid.wait_for(WAIT, |s| matches!(s, Seen::Chat { message, channel: 7, .. }
+                if message.contains(&request) && message.contains("Unable to find object")))
+                .await
+        );
+
+        // taken back into the Objects folder
+        assert_eq!(api.reply("UnRezObject", &[&object.to_string()]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, did(format!("derez {local} to 4 in {}", inv::OBJECTS)))
+                .await
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {
