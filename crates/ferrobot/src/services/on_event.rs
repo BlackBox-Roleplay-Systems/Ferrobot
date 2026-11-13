@@ -339,6 +339,8 @@ async fn timed(svc: Arc<Service>) {
     loop {
         tick.tick().await;
         if !svc.ready() {
+            // a new login learns the avatars again, after the wait
+            guests.reset();
             continue;
         }
         let client = &svc.ctx.client;

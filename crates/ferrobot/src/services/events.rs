@@ -227,8 +227,14 @@ async fn watch_place(client: Client, s: Arc<Settings>, out: Out) {
                 avatars,
             )
         };
+        if !online {
+            // a new login learns the avatars again, once they had time to show
+            guests.reset();
+            guests_checked = Some(Instant::now());
+            continue;
+        }
         // the parcel is known once the region told it
-        let (true, Some(region), Some(parcel)) = (online, region, parcel) else {
+        let (Some(region), Some(parcel)) = (region, parcel) else {
             continue;
         };
         if parcel != last_parcel {
