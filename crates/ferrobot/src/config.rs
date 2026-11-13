@@ -1509,6 +1509,32 @@ mod tests {
     }
 
     #[test]
+    fn runtime_changes_win_over_the_environment() {
+        let mut s = Source::default();
+        s.change("homebound_Enabled".into(), "true".into());
+        s.change(
+            "homebound_HomeSimSlUrl".into(),
+            "Some%20Region/1/2/3".into(),
+        );
+        let hb = homebound(&s).expect("valid").expect("on");
+        assert_eq!(hb.home.region, "Some Region");
+        s.change("homebound_Enabled".into(), "false".into());
+        assert!(homebound(&s).expect("valid").is_none(), "turned off");
+        s.change("homebound_Enabled".into(), "true".into());
+        s.change("homebound_HomeSimSlUrl".into(), " ".into());
+        assert!(homebound(&s).expect("valid").is_none(), "unset");
+        s.change("homebound_ReturnToHomeSimAfterMins".into(), "soon".into());
+        s.change("homebound_HomeSimSlUrl".into(), "Some Region".into());
+        assert!(matches!(
+            homebound(&s),
+            Err(ConfigError::Invalid(
+                "homebound_ReturnToHomeSimAfterMins",
+                _
+            ))
+        ));
+    }
+
+    #[test]
     fn start_locations() {
         assert!(matches!(parse_start("last"), Some(StartLocation::Last)));
         assert!(matches!(parse_start("HOME"), Some(StartLocation::Home)));
