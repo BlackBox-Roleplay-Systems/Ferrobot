@@ -546,8 +546,9 @@ impl Session<'_> {
         const STOP: u32 = 0x0000_4000;
         const STAND_UP: u32 = 0x0001_0000;
         const SIT_ON_GROUND: u32 = 0x0002_0000;
-        // AGENT_CONTROL_AWAY; ANIM_AGENT_AWAY (llanimationstates.h)
-        const AWAY: u32 = 0x0200_0000;
+        // AGENT_CONTROL_AWAY, bit 27 (0x0200_0000 is TURN_LEFT); ANIM_AGENT_AWAY
+        // (llanimationstates.h)
+        const AWAY: u32 = 0x0800_0000;
         const AWAY_ANIMATION: Uuid = Uuid::from_u128(0xfd037134_85d4_f241_72c6_4f42164fedee);
         let (agent, session) = (self.login.agent_id, self.login.session_id);
         match mv {

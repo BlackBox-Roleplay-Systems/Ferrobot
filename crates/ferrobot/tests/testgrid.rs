@@ -1982,7 +1982,7 @@ mod api {
         assert!(
             grid.wait_for(
                 WAIT,
-                |s| matches!(s, Seen::Controls { flags } if flags & 0x0200_0000 != 0)
+                |s| matches!(s, Seen::Controls { flags } if flags & 0x0800_0000 != 0)
             )
             .await
         );
