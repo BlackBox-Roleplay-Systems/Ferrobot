@@ -7,9 +7,9 @@
 
 - ✅ Workspace, GPL-3.0-or-later, NOTICE.md
 - ✅ `crates/llsd` and `crates/msg` from Aurora Viewer b8cf1f047
-- 🟡 Login (XML-RPC), from aurora-net/src/login.rs: same-server redirects only, device ids derived
+- ✅ Login (XML-RPC), from aurora-net/src/login.rs: same-server redirects only, device ids derived
   from the account, permanent refusals (password, ToS, 2FA) end with exit code 2
-- 🟡 Region session: UseCircuitCode, CompleteAgentMovement, AgentThrottle, RegionHandshakeReply
+- ✅ Region session: UseCircuitCode, CompleteAgentMovement, AgentThrottle, RegionHandshakeReply
   (flags 0x7, as Aurora and LibreMetaverse), pings, AgentUpdate every second, seed capability,
   EventQueueGet
 - 🟡 Chat and IMs received are logged
@@ -20,7 +20,9 @@
 
 ## Phase 1 - First login, and a test grid
 
-- ⬜ First login on the grid (human): arrival, chat and IM in the log, logout, relog
+- 🔧 First login on the grid (human, 2026-11-12): login and arrival verified, the HTTP API
+  answering a signed SimName, a master's teleport offer accepted; still to check: chat and IM in
+  the log, logout, relog
 - ⬜ Docker image built and run; `docker stop` logs out; image size noted
 - ✅ `crates/testgrid`: fake login server (`login_to_simulator`, wrong password refused)
 - ✅ `crates/testgrid`: fake region (circuit, handshake, arrival, pings both ways, logout, kick,
@@ -48,12 +50,13 @@ region).
 - ✅ `crates/client` (ferro-client): the protocol code moved out of the bot; `Client` (requests with
   replies and a timeout, a broadcast of events, the state) and `Network` (the network task, one
   session at a time); the bot's chat and IM log is now a service on the events
-- 🟡 Teleports (`Client::accept_lure`, `teleport_home`, `teleport_to`): TeleportLureRequest,
+- ✅ Teleports (`Client::accept_lure`, `teleport_home`, `teleport_to`): TeleportLureRequest,
   TeleportLandmarkRequest, TeleportLocationRequest; TeleportFinish and CrossedRegion move the
   circuit and the event queue to the new region (Aurora's switch_region), TeleportFailed and
-  TeleportLocal handled; tested on the test grid's two regions
-- 🟡 Masters' teleport offers accepted (`FERRO_MASTERS`, now services/interactions.rs, SecondBot's
-  BotTeleportOffer); others ignored
+  TeleportLocal handled; tested on the test grid's two regions; a master's lure verified on the
+  grid 2026-11-12
+- ✅ Masters' teleport offers accepted (`FERRO_MASTERS`, now services/interactions.rs, SecondBot's
+  BotTeleportOffer); others ignored; verified on the grid 2026-11-12
 - ✅ Neighbour regions: not connected, like LibreMetaverse's bots (`MultipleSims = false`); a
   bot that stays put needs no child agents. Revisit with movement (phase 7)
 - 🟡 Region restarts: notices read as Aurora's region_restart.rs (Second Life's named alerts,
