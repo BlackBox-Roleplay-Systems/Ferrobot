@@ -608,10 +608,25 @@ impl Client {
 
     /// Change a parcel: `parcel` is what it should be, from a ParcelInfo the region sent.
     pub async fn update_parcel(&self, parcel: parcels::ParcelInfo) -> Result<(), ClientError> {
-        let parcel = Box::new(parcel);
-        self.ask(|reply| Request::Parcel(network::ParcelRequest::Update { parcel, reply }))
-            .await?
-            .map_err(ClientError::Refused)
+        let sent = Box::new(parcel.clone());
+        self.ask(|reply| {
+            Request::Parcel(network::ParcelRequest::Update {
+                parcel: sent,
+                reply,
+            })
+        })
+        .await?
+        .map_err(ClientError::Refused)?;
+        // kept as changed at once: a next change starts from it, before the region's answer
+        let mut st = self.shared.state_mut();
+        if st
+            .parcel
+            .as_ref()
+            .is_some_and(|p| p.local_id == parcel.local_id)
+        {
+            st.parcel = Some(parcel);
+        }
+        Ok(())
     }
 
     /// Ask where a friend is, when they let the bot see them on the map (FindAgent); the answer

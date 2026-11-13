@@ -88,7 +88,10 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GetSimTexture`, `GetMuteList`, `SetAway`, `AsyncSendItem`, `AsyncSendItemByPath`,
 `AsyncInventoryContents`, `Balance`, `PayAvatar`, `PayObject`; the parcel the bot stands on:
 `GetCurrentParcelId`, `GetCurrentParcelUUID`, `GetCurrentParcelSize`, `GetParcelDesc`,
-`GetParcelFlags`, `GetParcelPrimCounts`, `GetParcelSaleDetails`, `GetParcelTraffic`; movement: `Fly`,
+`GetParcelFlags`, `GetParcelPrimCounts`, `GetParcelSaleDetails`, `GetParcelTraffic`,
+`SetParcelName`, `SetParcelDesc`, `SetParcelLandingZone`, `SetParcelMusic`, `SetParcelSale`,
+`CancelParcelSale`, `SetParcelSnapshot`, `SetParcelAudioControls`, `SetParcelFlag`,
+`ParcelSetMedia`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
 `RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`

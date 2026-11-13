@@ -1657,6 +1657,115 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's parcel setters: each sends the parcel back changed, the rest kept.
+    #[tokio::test]
+    async fn parcel_setters() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let snapshot = uuid_from(0x5a95);
+
+        assert_eq!(api.reply("SetParcelName", &["New Plaza"]).await, "ok");
+        assert_eq!(api.reply("SetParcelDesc", &["All are welcome"]).await, "ok");
+        assert_eq!(
+            api.reply("SetParcelLandingZone", &["100", "110", "25"])
+                .await,
+            "ok"
+        );
+        assert_eq!(
+            api.reply("SetParcelMusic", &["http://music.example/stream"])
+                .await,
+            "True"
+        );
+        assert_eq!(api.reply("SetParcelSale", &["500", "none"]).await, "ok");
+        assert_eq!(
+            api.reply("SetParcelSnapshot", &[&snapshot.to_string()])
+                .await,
+            "ok"
+        );
+        assert_eq!(
+            api.reply("SetParcelAudioControls", &["true", "true"]).await,
+            "ok"
+        );
+        assert_eq!(
+            api.reply(
+                "SetParcelFlag",
+                &["AllowFly=False:::AllowDamage=True:::Nonsense=True"]
+            )
+            .await,
+            "true"
+        );
+        assert_eq!(
+            api.reply(
+                "ParcelSetMedia",
+                &["MediaURL=http://media.example/:::MediaType=IMG-PNG:::MediaWidth=5000"]
+            )
+            .await,
+            "ok"
+        );
+        let p = grid.parcel();
+        assert_eq!(
+            (p.name.as_str(), p.desc.as_str()),
+            ("New Plaza", "All are welcome")
+        );
+        assert_eq!((p.landing_type, p.user_location), (1, [100.0, 110.0, 25.0]));
+        assert_eq!(p.music_url, "http://music.example/stream");
+        assert_eq!(p.sale_price, 500);
+        assert_eq!(p.snapshot_id, snapshot);
+        assert!(
+            p.any_av_sounds && !p.group_av_sounds,
+            "everyone overrides group only"
+        );
+        // ForSale and AllowDamage set, AllowFly cleared, AllowLandmark and CreateObjects kept
+        assert_eq!(p.flags, 4 | 32 | 8 | 64);
+        assert_eq!(p.media_url, "http://media.example/");
+
+        assert_eq!(api.reply("CancelParcelSale", &[]).await, "ok");
+        assert_eq!(grid.parcel().flags & 4, 0);
+        assert_eq!(
+            api.reply("GetParcelSaleDetails", &[]).await,
+            format!(
+                r#"{{"ForSale":"False","Cost":"500","SaleTarget":"{}"}}"#,
+                uuid::Uuid::nil()
+            )
+        );
+
+        // what SecondBot refuses
+        assert_eq!(
+            api.failure("SetParcelSale", &["0", "none"]).await.0,
+            "Invaild amount"
+        );
+        assert_eq!(
+            api.failure("SetParcelLandingZone", &["1", "here", "3"])
+                .await
+                .0,
+            "Unable to process landing point y value"
+        );
+        assert_eq!(
+            api.failure("SetParcelFlag", &["Fly"]).await.0,
+            "No accepted flags"
+        );
+        assert_eq!(
+            api.failure("SetParcelAudioControls", &["maybe", "true"])
+                .await
+                .0,
+            "Unable to process everyone value"
+        );
+        assert_eq!(
+            api.failure("SetParcelSnapshot", &["nothing"]).await.0,
+            "Invaild texture uuid"
+        );
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::ParcelUpdate { .. })),
+            10,
+            "one update per change"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

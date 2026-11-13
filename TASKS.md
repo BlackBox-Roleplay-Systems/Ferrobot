@@ -217,7 +217,13 @@ baking: the bot says so and goes on.
   GetCurrentParcelId, GetCurrentParcelUUID, GetCurrentParcelSize, GetParcelDesc, GetParcelFlags,
   GetParcelPrimCounts, GetParcelSaleDetails, GetParcelTraffic; tested on the test grid.
   Deliberate difference: GetParcelTraffic asks the region (SecondBot prints 0 until something did)
-- ⬜ Parcel changes, parcel access (eject, ban, freeze, return), the estate commands
+- 🟡 Parcel changes (the ParcelPropertiesUpdate capability, the whole parcel with what changed,
+  as LLParcel::packMessage): SecondBot's SetParcelName, SetParcelDesc, SetParcelLandingZone,
+  SetParcelMusic, SetParcelSale, CancelParcelSale, SetParcelSnapshot, SetParcelAudioControls,
+  SetParcelFlag, ParcelSetMedia; tested on the test grid. Deliberate differences: SetParcelFlag
+  skips a value that is not true or false (SecondBot's throws), ParcelSetMedia keeps sizes in
+  256..1024 (SecondBot's check lets any through)
+- ⬜ Parcel access (eject, ban, freeze, return), the estate commands
 - ⬜ Profiles, animations and gestures
 
 ## Phase 8 - Running it for real
