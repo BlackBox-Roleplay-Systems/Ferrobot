@@ -198,6 +198,11 @@ async fn on_im(ctx: Ctx, masters: Arc<Masters>, settings: Arc<Settings>, im: Ins
         Ok(answer) => answer,
         Err(_) => (false, "No reply from the grid [Retry later]".to_owned()),
     };
+    // a master's IM is tried as a command, as SecondBot does: plain talk is no failure
+    if !ran && value == "Unknown command" {
+        log::debug!("IM from {} is not a command", im.from_name);
+        return;
+    }
     log::info!(
         "command by IM from {}: {} ({} args): {}",
         im.from_name,
