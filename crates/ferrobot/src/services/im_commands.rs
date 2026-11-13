@@ -35,8 +35,8 @@ pub struct Settings {
     pub object_master_optout: bool,
 }
 
-/// SignedCommand.Validate, for commands that need a signature.
-fn signed(u: &Unpacked, s: &Settings, now: i64) -> bool {
+/// SignedCommand.Validate, for commands that need a signature (by IM, and from RabbitMQ).
+pub fn signed(u: &Unpacked, s: &Settings, now: i64) -> bool {
     let (Some(secret), Some(signing)) = (&s.secret, &u.signing) else {
         return false;
     };

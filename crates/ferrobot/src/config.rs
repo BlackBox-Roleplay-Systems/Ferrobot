@@ -52,6 +52,8 @@ pub struct Config {
     pub homebound: Option<crate::services::homebound::Settings>,
     /// Discord: off unless on, with a server and a token (SecondBot's DiscordConfig).
     pub discord: Option<crate::discord::Settings>,
+    /// RabbitMQ: off unless on (SecondBot's RabbitConfig).
+    pub rabbit: Option<crate::rabbit::Settings>,
 }
 
 impl std::fmt::Debug for Config {
@@ -81,6 +83,7 @@ impl std::fmt::Debug for Config {
             .field("allow_funds", &self.allow_funds)
             .field("relays", &self.relays.len())
             .field("discord", &self.discord)
+            .field("rabbit", &self.rabbit)
             .finish_non_exhaustive()
     }
 }
@@ -225,6 +228,73 @@ fn discord() -> Result<Option<crate::discord::Settings>, ConfigError> {
         )?,
         interaction,
         stand_in: var("FERRO_DISCORD_STAND_IN"),
+    }))
+}
+
+/// RabbitMQ (SecondBot's RabbitConfig): on with FERRO_RABBIT (rabbit_Enabled); the broker
+/// FERRO_RABBIT_HOST (rabbit_HostIP, 127.0.0.1), FERRO_RABBIT_PORT (rabbit_HostPort, 5672, or
+/// 5671 with TLS), FERRO_RABBIT_USERNAME (rabbit_HostUsername, guest), FERRO_RABBIT_PASSWORD
+/// (rabbit_HostPassword, guest; a secret), FERRO_RABBIT_VHOST ("/") and FERRO_RABBIT_TLS (false);
+/// the queues read FERRO_RABBIT_NOTECARD_QUEUE, _COMMAND_QUEUE, _IM_QUEUE, _GROUP_IM_QUEUE
+/// (rabbit_NotecardQueue, rabbit_CommandQueue, rabbit_ImQueue, rabbit_GroupImQueue). SecondBot's
+/// rabbit_LogDebug and rabbit_HideStatusOutput are not read: RUST_LOG sets what is logged.
+fn rabbit() -> Result<Option<crate::rabbit::Settings>, ConfigError> {
+    use crate::rabbit::{Queues, Settings, check_queue_name};
+    if !setting_flag("FERRO_RABBIT", "rabbit_Enabled", false)? {
+        return Ok(None);
+    }
+    let tls = flag("FERRO_RABBIT_TLS", false)?;
+    let queue = |ferro: &'static str, secondbot: &'static str, default: String| match setting(
+        ferro, secondbot,
+    ) {
+        None => Ok(default),
+        Some((name, v)) => check_queue_name(&v)
+            .map(|()| v)
+            .map_err(|e| ConfigError::Invalid(name, e)),
+    };
+    let defaults = Queues::default();
+    let vhost = var("FERRO_RABBIT_VHOST").unwrap_or_else(|| "/".to_owned());
+    if vhost.len() > 255 {
+        return Err(ConfigError::Invalid(
+            "FERRO_RABBIT_VHOST",
+            "at most 255 bytes".into(),
+        ));
+    }
+    Ok(Some(Settings {
+        host: setting("FERRO_RABBIT_HOST", "rabbit_HostIP")
+            .map_or_else(|| "127.0.0.1".to_owned(), |(_, v)| v),
+        port: number(
+            setting("FERRO_RABBIT_PORT", "rabbit_HostPort"),
+            if tls { 5671 } else { 5672 },
+            "a port number",
+        )?,
+        username: setting("FERRO_RABBIT_USERNAME", "rabbit_HostUsername")
+            .map_or_else(|| "guest".to_owned(), |(_, v)| v),
+        // the password is taken as it is, spaces included
+        password: ["FERRO_RABBIT_PASSWORD", "rabbit_HostPassword"]
+            .iter()
+            .find_map(|name| std::env::var(name).ok().filter(|p| !p.is_empty()))
+            .unwrap_or_else(|| "guest".to_owned()),
+        vhost,
+        tls,
+        queues: Queues {
+            notecards: queue(
+                "FERRO_RABBIT_NOTECARD_QUEUE",
+                "rabbit_NotecardQueue",
+                defaults.notecards,
+            )?,
+            commands: queue(
+                "FERRO_RABBIT_COMMAND_QUEUE",
+                "rabbit_CommandQueue",
+                defaults.commands,
+            )?,
+            ims: queue("FERRO_RABBIT_IM_QUEUE", "rabbit_ImQueue", defaults.ims)?,
+            group_ims: queue(
+                "FERRO_RABBIT_GROUP_IM_QUEUE",
+                "rabbit_GroupImQueue",
+                defaults.group_ims,
+            )?,
+        },
     }))
 }
 
@@ -487,6 +557,7 @@ impl Config {
             )?,
             homebound: homebound()?,
             discord: discord()?,
+            rabbit: rabbit()?,
             relays: relays()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
             rate_limit: number(

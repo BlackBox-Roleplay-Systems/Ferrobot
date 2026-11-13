@@ -24,6 +24,13 @@ log = "0.4.34"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip"] }
 thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "sync", "net"] }
+# RabbitMQ (SecondBot's RabbitService): AMQP 0-9-1 on tokio, small (MIT)
+amqprs = { version = "2.1.5", features = ["tls"] }
+# amqps with the same rustls, crypto provider and certificate checks as reqwest's (already in the
+# tree: Apache-2.0 / MIT / ISC)
+rustls = { version = "0.23.46", default-features = false, features = ["std", "aws_lc_rs"] }
+rustls-platform-verifier = "0.7.1"
+tokio-rustls = { version = "0.26.6", default-features = false }
 
 [dev-dependencies]
 ferro-llsd = { path = "../llsd" }

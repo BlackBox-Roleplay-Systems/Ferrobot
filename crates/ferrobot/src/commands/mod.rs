@@ -162,6 +162,12 @@ const CHANGING: &[&str] = &[
 /// How long a command that changes things may wait for the rate limit.
 const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// The rate limit, for what changes things in world without being a command (a notecard from
+/// RabbitMQ): whether it may go now.
+pub async fn admit(ctx: &Ctx) -> bool {
+    ctx.store.admit(PATIENCE).await
+}
+
 /// The commands, with their number of arguments (SecondBot checks the count first).
 const COMMANDS: &[(&str, usize)] = &[
     ("SimName", 0),
@@ -705,28 +711,34 @@ fn owned(args: &[&str]) -> Vec<String> {
     args.iter().map(|a| (*a).to_owned()).collect()
 }
 
+/// A context with a client that is not logged in, for tests.
+#[cfg(test)]
+pub fn test_ctx() -> Ctx {
+    // the client's network side is dropped: requests fail at once
+    let (client, _network) = Client::new(reqwest::Client::new());
+    Ctx {
+        client,
+        history: Arc::default(),
+        dialogs: Arc::default(),
+        store: Arc::new(Store::new(0)),
+        home: None,
+        stop: Arc::new(tokio::sync::watch::channel(false).0),
+        homebound: Arc::default(),
+        allow_funds: false,
+        http: reqwest::Client::new(),
+        grants: Arc::default(),
+        discord: None,
+        inventory_updates: Arc::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn unknown_commands_and_argument_counts() {
-        let http = reqwest::Client::new();
-        let (client, _network) = Client::new(http);
-        let client = Ctx {
-            client,
-            history: Arc::default(),
-            dialogs: Arc::default(),
-            store: Arc::new(Store::new(0)),
-            home: None,
-            stop: Arc::new(tokio::sync::watch::channel(false).0),
-            homebound: Arc::default(),
-            allow_funds: false,
-            http: reqwest::Client::new(),
-            grants: Arc::default(),
-            discord: None,
-            inventory_updates: Arc::default(),
-        };
+        let client = test_ctx();
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,
             (false, "Unknown command".to_owned())

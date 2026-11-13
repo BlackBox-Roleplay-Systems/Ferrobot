@@ -10,6 +10,7 @@ mod grants;
 mod history;
 mod inventory_updates;
 mod masters;
+mod rabbit;
 mod services;
 mod smart_reply;
 mod store;
@@ -118,11 +119,17 @@ async fn main() -> std::process::ExitCode {
         client.subscribe(),
         history.clone(),
     ));
+    // RabbitMQ's handle now, for the relays; its connection once the commands' context is made
+    let rabbit = cfg.rabbit.clone().map(|settings| {
+        let (handle, outbox) = rabbit::Rabbit::new();
+        (handle, outbox, settings)
+    });
     tokio::spawn(services::relays::run(
         client.clone(),
         client.subscribe(),
         cfg.relays.clone(),
         cfg.shared_secret.clone(),
+        rabbit.as_ref().map(|(handle, ..)| handle.clone()),
     ));
     let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));
     tokio::spawn(dialogs::run(
@@ -157,6 +164,31 @@ async fn main() -> std::process::ExitCode {
         discord: discord.clone(),
         inventory_updates,
     };
+    if let Some((_, outbox, settings)) = rabbit {
+        log::info!(
+            "RabbitMQ: {}:{}{}",
+            settings.host,
+            settings.port,
+            if settings.tls { " (TLS)" } else { "" }
+        );
+        // the queues are read only when their messages can be checked
+        let inbound = match &cfg.shared_secret {
+            Some(_) => Some(rabbit::inbound::Inbound {
+                ctx: ctx.clone(),
+                check: std::sync::Arc::new(services::im_commands::Settings {
+                    secret: cfg.shared_secret.clone(),
+                    enforce_time_window: cfg.enforce_time_window,
+                    time_window: cfg.time_window,
+                    object_master_optout: false,
+                }),
+            }),
+            None => {
+                log::warn!("RabbitMQ: its queues are not read without a shared secret");
+                None
+            }
+        };
+        tokio::spawn(rabbit::run(settings, outbox, inbound));
+    }
     if let Some(d) = &discord {
         log::info!("discord: server {}", d.settings.server);
         tokio::spawn(discord::run(ctx.clone(), d.clone()));

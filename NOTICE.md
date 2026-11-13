@@ -43,6 +43,7 @@ these files follow its behaviour closely, its commands' names, replies and check
 | `crates/ferrobot/src/api/` | `SecondBotEvents/Services/HttpService.cs`, `CommandsService.cs` (SignedCommand, RunCommand) | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/commands/` | `SecondBotEvents/Commands/` (Group, Info, Avatars, Chat, Self, Core, Inventory, Notecard, Movement, Friends, Funds, Discord, StreamAdmin, Estate) | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/discord/` | `SecondBotEvents/Services/DiscordService.cs`, `Config/DiscordConfig.cs` (no voice) | `a2377e5` (branch `update-libremetaverse`) |
+| `crates/ferrobot/src/rabbit/`, `commands/rabbit.rs` | `SecondBotEvents/Services/RabbitService.cs`, `Config/RabbitConfig.cs`, `Commands/RabbitMQ.cs` | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/inventory_updates.rs` | `SecondBotEvents/Services/EventsService.cs` (InventoryUpdateEvent, AddInventoryEvent), `InteractionService.cs` (BotInventoryAdd) | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/dialogs.rs` | `SecondBotEvents/Services/DialogService.cs`, `Commands/Dialogs.cs` | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/history.rs` | the chat history of `SecondBotEvents/Services/DataStoreService.cs` | `a2377e5` (branch `update-libremetaverse`) |
