@@ -66,6 +66,8 @@ pub struct Config {
     pub on_event: Option<crate::services::on_event::Settings>,
     /// RLV: objects drive the bot with "@" commands; off by default (SecondBot's RlvConfig).
     pub rlv: bool,
+    /// E-mail: off unless on, with a server (SecondBot's SmtpConfig).
+    pub smtp: Option<crate::services::smtp::Settings>,
 }
 
 impl std::fmt::Debug for Config {
@@ -112,6 +114,7 @@ impl std::fmt::Debug for Config {
                 &self.on_event.as_ref().map(|o| o.triggers.len()),
             )
             .field("rlv", &self.rlv)
+            .field("smtp", &self.smtp)
             .finish_non_exhaustive()
     }
 }
@@ -437,6 +440,121 @@ fn chatgpt() -> Result<Option<crate::services::chatgpt::Settings>, ConfigError> 
     if !settings.localchat && !settings.im && settings.group.is_none() {
         log::warn!(
             "AI replies on, but to nothing: turn on FERRO_CHATGPT_LOCALCHAT, FERRO_CHATGPT_IM or FERRO_CHATGPT_GROUP"
+        );
+    }
+    Ok(Some(settings))
+}
+
+/// E-mail (SecondBot's SmtpConfig): on with FERRO_SMTP (smtp_Enabled) and a server
+/// (FERRO_SMTP_HOST / smtp_Host). The password (FERRO_SMTP_PASSWORD / smtp_Token, "none" for no
+/// login) is a secret; the addresses are personal data: neither is logged.
+fn smtp() -> Result<Option<crate::services::smtp::Settings>, ConfigError> {
+    smtp_from(&|name| std::env::var(name).ok())
+}
+
+/// The same, from any variables (the tests' own).
+fn smtp_from(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<Option<crate::services::smtp::Settings>, ConfigError> {
+    use crate::services::smtp::{Security, Settings};
+    // by Ferrobot's name, else by SecondBot's, as `setting`
+    let get = |names: &[&'static str]| {
+        names.iter().find_map(|&name| {
+            env(name)
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+                .map(|v| (name, v))
+        })
+    };
+    let flag = |names: &[&'static str], default: bool| {
+        get(names).map_or(Ok(default), |(name, v)| parse_flag(name, &v))
+    };
+    if !flag(&["FERRO_SMTP", "smtp_Enabled"], false)? {
+        return Ok(None);
+    }
+    let host = get(&["FERRO_SMTP_HOST", "smtp_Host"])
+        .map(|(_, v)| v)
+        .ok_or(ConfigError::Missing("FERRO_SMTP_HOST"))?;
+    let security = match get(&["FERRO_SMTP_TLS"]) {
+        Some((name, v)) => {
+            Security::parse(&v).ok_or(ConfigError::Invalid(name, "tls, starttls or none".into()))?
+        }
+        None if flag(&["smtp_useSSL"], false)? => Security::Tls,
+        None => Security::StartTls,
+    };
+    // the password is taken as it is, spaces included; SecondBot's "none" is no login
+    let password = ["FERRO_SMTP_PASSWORD", "smtp_Token"]
+        .iter()
+        .find_map(|name| env(name).filter(|p| !p.is_empty()))
+        .filter(|p| p != "none");
+    let login = match password {
+        None => None,
+        Some(password) => Some((
+            get(&["FERRO_SMTP_USER", "smtp_User"])
+                .map(|(_, v)| v)
+                .ok_or(ConfigError::Missing("FERRO_SMTP_USER"))?,
+            password,
+        )),
+    };
+    // SecondBot's placeholders mean "not set"
+    let address = |names: &[&'static str], placeholder: &str| match get(names) {
+        Some((_, v)) if v.eq_ignore_ascii_case(placeholder) => Ok(None),
+        Some((name, v)) => v
+            .parse::<lettre::Address>()
+            .map(Some)
+            .map_err(|_| ConfigError::Invalid(name, "an e-mail address".into())),
+        None => Ok(None),
+    };
+    let allowed = match get(&["FERRO_SMTP_ALLOWED"]) {
+        Some((_, csv)) => Some(csv),
+        None if flag(&["smtp_UseAllowedRecivers"], false)? => Some(
+            get(&["smtp_AllowedReciversCSV"])
+                .map(|(_, v)| v)
+                .unwrap_or_default(),
+        ),
+        None => None,
+    }
+    .map(|csv| {
+        csv.split(',')
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    });
+    let settings = Settings {
+        host,
+        port: number(get(&["FERRO_SMTP_PORT", "smtp_Port"]), 587, "a port number")?,
+        security,
+        login,
+        from: address(
+            &["FERRO_SMTP_FROM", "smtp_MailReplyAddress"],
+            "me@myemail.tld",
+        )?,
+        command: flag(&["FERRO_SMTP_COMMAND", "smtp_AllowCommandSendMail"], false)?,
+        reply_target: flag(
+            &["FERRO_SMTP_REPLY_TARGET", "smtp_AllowEmailAsReplyTarget"],
+            false,
+        )?,
+        allowed,
+        alerts: flag(&["FERRO_SMTP_ALERTS", "smtp_AllowSendAlertStatus"], false)?,
+        login_notice: flag(
+            &["FERRO_SMTP_LOGIN_NOTICE", "smtp_AllowSendLoginNotice"],
+            false,
+        )?,
+        notify: address(
+            &["FERRO_SMTP_NOTIFY", "smtp_SendAlertsAndLoginsTo"],
+            "me@somewhere.tld",
+        )?,
+    };
+    if settings.from.is_none() {
+        log::warn!("e-mail: no reply address (FERRO_SMTP_FROM): nothing can be sent");
+    }
+    if settings.security == Security::None && settings.login.is_some() {
+        log::warn!("e-mail: FERRO_SMTP_TLS is none: the SMTP password goes out unencrypted");
+    }
+    if (settings.command || settings.reply_target) && settings.allowed.is_none() {
+        log::warn!(
+            "e-mail: commands may mail any address; FERRO_SMTP_ALLOWED limits the recipients"
         );
     }
     Ok(Some(settings))
@@ -1006,6 +1124,7 @@ impl Config {
             chatgpt: chatgpt()?,
             events: events()?,
             on_event: on_event()?,
+            smtp: smtp()?,
             relays: relays()?,
             custom_commands: custom_commands()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
@@ -1198,6 +1317,101 @@ mod tests {
             vec!["Some Resident".to_owned(), "other.avatar".to_owned()]
         );
         assert!(parse_masters("").is_empty());
+    }
+
+    fn smtp_with(
+        vars: &[(&str, &str)],
+    ) -> Result<Option<crate::services::smtp::Settings>, ConfigError> {
+        let vars: std::collections::HashMap<String, String> = vars
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        smtp_from(&move |name| vars.get(name).cloned())
+    }
+
+    #[test]
+    fn smtp_settings() {
+        use crate::services::smtp::Security;
+        assert!(smtp_with(&[]).expect("off").is_none());
+        assert!(matches!(
+            smtp_with(&[("FERRO_SMTP", "true")]),
+            Err(ConfigError::Missing("FERRO_SMTP_HOST"))
+        ));
+        // SecondBot's names, as a SecondBot container has them
+        let s = smtp_with(&[
+            ("smtp_Enabled", "true"),
+            ("smtp_Host", "smtp.example.invalid"),
+            ("smtp_Port", "465"),
+            ("smtp_useSSL", "true"),
+            ("smtp_User", "bot@example.invalid"),
+            ("smtp_Token", " pass word "),
+            ("smtp_MailReplyAddress", "bot@example.invalid"),
+            ("smtp_AllowCommandSendMail", "true"),
+            ("smtp_UseAllowedRecivers", "true"),
+            (
+                "smtp_AllowedReciversCSV",
+                "a@example.invalid, b@example.invalid",
+            ),
+            ("smtp_SendAlertsAndLoginsTo", "me@somewhere.tld"),
+        ])
+        .expect("valid")
+        .expect("on");
+        assert_eq!((s.host.as_str(), s.port), ("smtp.example.invalid", 465));
+        assert_eq!(s.security, Security::Tls);
+        assert_eq!(
+            s.login,
+            Some(("bot@example.invalid".to_owned(), " pass word ".to_owned()))
+        );
+        assert!(s.from.is_some() && s.command && !s.reply_target && !s.alerts);
+        assert_eq!(
+            s.allowed,
+            Some(vec![
+                "a@example.invalid".to_owned(),
+                "b@example.invalid".to_owned()
+            ])
+        );
+        // SecondBot's placeholder: no address
+        assert!(s.notify.is_none());
+        let shown = format!("{s:?}");
+        assert!(
+            !shown.contains("pass word") && !shown.contains("bot@"),
+            "{shown}"
+        );
+        // Ferrobot's names; "none" is no login, STARTTLS by default
+        let s = smtp_with(&[
+            ("FERRO_SMTP", "on"),
+            ("FERRO_SMTP_HOST", "smtp.example.invalid"),
+            ("FERRO_SMTP_PASSWORD", "none"),
+            ("FERRO_SMTP_FROM", "me@myemail.tld"),
+        ])
+        .expect("valid")
+        .expect("on");
+        assert_eq!((s.port, s.security), (587, Security::StartTls));
+        assert!(s.login.is_none() && s.from.is_none() && s.allowed.is_none());
+        assert!(matches!(
+            smtp_with(&[
+                ("FERRO_SMTP", "on"),
+                ("FERRO_SMTP_HOST", "smtp.example.invalid"),
+                ("FERRO_SMTP_PASSWORD", "secret"),
+            ]),
+            Err(ConfigError::Missing("FERRO_SMTP_USER"))
+        ));
+        assert!(matches!(
+            smtp_with(&[
+                ("FERRO_SMTP", "on"),
+                ("FERRO_SMTP_HOST", "smtp.example.invalid"),
+                ("FERRO_SMTP_FROM", "not an address"),
+            ]),
+            Err(ConfigError::Invalid("FERRO_SMTP_FROM", _))
+        ));
+        assert!(matches!(
+            smtp_with(&[
+                ("FERRO_SMTP", "on"),
+                ("FERRO_SMTP_HOST", "smtp.example.invalid"),
+                ("FERRO_SMTP_TLS", "maybe"),
+            ]),
+            Err(ConfigError::Invalid("FERRO_SMTP_TLS", _))
+        ));
     }
 
     #[test]

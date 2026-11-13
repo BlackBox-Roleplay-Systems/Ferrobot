@@ -64,6 +64,8 @@ pub struct Ctx {
     pub rabbit: Option<Arc<crate::rabbit::Rabbit>>,
     /// The operator's custom commands (SecondBot's CustomCommandsService).
     pub custom: Arc<custom::CustomCommands>,
+    /// E-mail (SendEmail, reply targets by e-mail); off unless configured.
+    pub smtp: Arc<crate::services::smtp::Mailer>,
 }
 
 /// Who asks for a command, for what they may run. Set by the way the command came, after it was
@@ -175,6 +177,7 @@ const CHANGING: &[&str] = &[
     "Discord_Role_UpdatePerms",
     "Discord_RoleCreate",
     "Discord_RoleRemove",
+    "SendEmail",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -233,6 +236,7 @@ const COMMANDS: &[(&str, usize)] = &[
     ("GetPosition", 0),
     ("GoHome", 0),
     ("Logoff", 0),
+    ("SendEmail", 3),
     ("GetLastCommands", 0),
     ("ReadKeyValue", 1),
     ("SetKeyValue", 2),
@@ -541,6 +545,7 @@ async fn builtin(ctx: &Ctx, caller: Caller, name: &str, args: &[String]) -> (boo
         "GetPosition" => info::get_position(client),
         "GoHome" => bot::go_home(ctx),
         "Logoff" => bot::logoff(ctx),
+        "SendEmail" => bot::send_email(ctx, a(0), a(1), a(2)).await,
         "GetLastCommands" => bot::get_last_commands(ctx),
         "ReadKeyValue" => bot::read_key_value(ctx, a(0)),
         "SetKeyValue" => bot::set_key_value(ctx, a(0), a(1)),
@@ -809,6 +814,7 @@ pub fn test_ctx() -> Ctx {
         inventory_updates: Arc::default(),
         rabbit: None,
         custom: Arc::new(custom::CustomCommands::new(Vec::new())),
+        smtp: Arc::default(),
     }
 }
 

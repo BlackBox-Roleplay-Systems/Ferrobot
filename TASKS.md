@@ -162,7 +162,7 @@ baking: the bot says so and goes on.
   interaction_EnableDebug and interaction_HideStatusOutput
 - 🟡 Commands by IM (services/im_commands.rs, SecondBot's BotImMessage and SignedCommand): from
   masters unsigned, from objects signed (FERRO_OBJECT_MASTER_OPTOUT), the text and JSON forms,
-  the reply target (channel, avatar, HTTP POST; not e-mail). Deliberate difference: a master is
+  the reply target (channel, avatar, HTTP POST; e-mail with the SMTP service, phase 7). Deliberate difference: a master is
   recognised by key, not by the name an IM carries (also for teleport offers)
 - 🟡 Script dialogs (src/dialogs.rs, SecondBot's DialogService and Dialogs commands): numbered,
   440 s, relayed as its JSON to channels, avatars and HTTP (signed); DialogResponce,
@@ -479,6 +479,19 @@ baking: the bot says so and goes on.
 - ⬜ RLV: the restrictions the bot keeps but does not obey (sendchat, tplure, fly…; SecondBot
   obeys only detach), accepttp (SecondBot's AutoAcceptTP is never called), `@clear=<part>`,
   getpath by point or layer, rlv_HideStatusOutput (no status page)
+- 🟡 E-mail (services/smtp.rs on lettre, SecondBot's SmtpService and SmtpConfig): SendEmail
+  (Self.cs: its checks, "sending", "Send was rejected because: …"), an e-mail address as a
+  command's reply target (SmartCommandReply, .NET's EmailAddressAttribute test, subject
+  "<command>##commandreply"), the grid's alerts and region restarts and the login mailed to
+  SendAlertsAndLoginsTo; the reply address, the allowed list (UseAllowedRecivers,
+  AllowedReciversCSV); SecondBot's smtp_* settings and FERRO_SMTP_*; 20 s a step, 60 s a message;
+  SendEmail under the rate limit; the password and the addresses never logged. Tested against a
+  stand-in SMTP server (crates/testgrid/src/smtp.rs), alone and through the bot on the test grid.
+  Deliberate differences: STARTTLS required unless FERRO_SMTP_TLS=none (MailKit falls back to
+  clear text), the login notice follows AllowSendLoginNotice (SecondBot reads
+  AllowSendAlertStatus for both), the allowed list ignores spaces and case, the sender is named
+  "<address> via Ferrobot", HideStatusOutput ignored (BotStatus counts the mails)
+- ⬜ E-mail: to try with a real SMTP server (human): STARTTLS on 587, TLS on 465, a refused login
 
 ## Phase 8 - Running it for real
 

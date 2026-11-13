@@ -1047,6 +1047,128 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's SMTP service, by its settings' names, through a stand-in SMTP server: the
+    /// login notice, SendEmail and its allowed list, an e-mail reply target, an alert. Neither
+    /// the password nor an address shows in the log.
+    #[tokio::test]
+    async fn sends_email_through_smtp() {
+        const PASSWORD: &str = "an smtp password";
+        let grid = grid().await;
+        let mut smtp = ferro_testgrid::smtp::FakeSmtp::start()
+            .await
+            .expect("the fake SMTP server starts");
+        let port = smtp.port.to_string();
+        let (mut bot, api) = bot_with_settings(
+            &grid,
+            &[
+                ("smtp_Enabled", "true"),
+                ("smtp_Host", "127.0.0.1"),
+                ("smtp_Port", &port),
+                ("FERRO_SMTP_TLS", "none"),
+                ("smtp_User", "bot@example.invalid"),
+                ("smtp_Token", PASSWORD),
+                ("smtp_MailReplyAddress", "bot@example.invalid"),
+                ("smtp_AllowCommandSendMail", "true"),
+                ("smtp_AllowEmailAsReplyTarget", "true"),
+                ("smtp_UseAllowedRecivers", "true"),
+                (
+                    "smtp_AllowedReciversCSV",
+                    "someone@example.invalid,owner@example.invalid",
+                ),
+                ("smtp_AllowSendAlertStatus", "true"),
+                ("smtp_AllowSendLoginNotice", "true"),
+                ("smtp_SendAlertsAndLoginsTo", "owner@example.invalid"),
+            ],
+        )
+        .await;
+        arrived(&grid, &bot, 1).await;
+        let mut next = async || {
+            smtp.next(WAIT)
+                .await
+                .unwrap_or_else(|| panic!("no e-mail; the bot's log:\n{}", bot.log()))
+        };
+
+        // the login, told once
+        let mail = next().await;
+        assert_eq!(mail.from, "bot@example.invalid");
+        assert_eq!(mail.to, vec!["owner@example.invalid".to_owned()]);
+        assert!(mail.auth.is_some(), "logged in to the server");
+        assert!(
+            mail.data.contains("Subject: Bot - Login message\r\n"),
+            "{}",
+            mail.data
+        );
+        assert!(
+            mail.data.ends_with("Test Bot has signed in\r\n"),
+            "{}",
+            mail.data
+        );
+
+        // SendEmail, as SecondBot answers it
+        assert_eq!(
+            api.reply(
+                "SendEmail",
+                &["someone@example.invalid", "A subject", "A body"]
+            )
+            .await,
+            "sending"
+        );
+        let mail = next().await;
+        assert_eq!(mail.to, vec!["someone@example.invalid".to_owned()]);
+        assert!(
+            mail.data.contains("Subject: A subject\r\n"),
+            "{}",
+            mail.data
+        );
+        assert!(mail.data.ends_with("A body\r\n"), "{}", mail.data);
+        let (why, args) = api
+            .failure("SendEmail", &["other@example.invalid", "s", "b"])
+            .await;
+        assert_eq!(
+            why,
+            "Send was rejected because: other@example.invalid is not in allowed recivers"
+        );
+        assert_eq!(args, serde_json::json!(["other@example.invalid", "s", "b"]));
+
+        // a command's answer to an e-mail reply target
+        let t = now();
+        let body = serde_json::json!({"cmd": "Name", "unixtime": t,
+            "reply": "someone@example.invalid",
+            "signing": signature("Name", &[], Some(t), SECRET)});
+        let answer = api.json(&body.to_string()).await;
+        assert!(answer.contains(r#""Key":true"#), "{answer}");
+        let mail = next().await;
+        assert_eq!(mail.to, vec!["someone@example.invalid".to_owned()]);
+        assert!(
+            mail.data.contains("Subject: Name##commandreply\r\n"),
+            "{}",
+            mail.data
+        );
+        assert!(mail.data.contains(r#""reply":"Test Bot""#), "{}", mail.data);
+
+        // an alert from the region
+        grid.alert("Something to know.", None);
+        let mail = next().await;
+        assert_eq!(mail.to, vec!["owner@example.invalid".to_owned()]);
+        assert!(
+            mail.data.contains("Subject: Bot - Alert message\r\n"),
+            "{}",
+            mail.data
+        );
+        assert!(
+            mail.data.ends_with("Something to know.\r\n"),
+            "{}",
+            mail.data
+        );
+
+        bot.wait_log_count("e-mail sent", 4).await;
+        let log = bot.log();
+        assert!(!log.contains(PASSWORD), "{log}");
+        assert!(!log.contains("@example.invalid"), "{log}");
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's `POST /json`: one command in SignedCommand's form (JSON or text), each answer
     /// a JSON string; signed with the time, always (a deliberate difference).
     #[tokio::test]

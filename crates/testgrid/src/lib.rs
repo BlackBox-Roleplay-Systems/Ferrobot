@@ -27,6 +27,7 @@ mod http;
 mod login;
 pub mod parcels;
 mod region;
+pub mod smtp;
 pub mod sound;
 mod xmlrpc;
 

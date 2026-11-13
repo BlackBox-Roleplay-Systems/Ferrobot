@@ -79,6 +79,8 @@ pub struct Service {
     pub homebound: Arc<Homebound>,
     pub grants: Arc<Grants>,
     pub http: reqwest::Client,
+    /// For an events target that is an e-mail address.
+    pub smtp: Arc<crate::services::smtp::Mailer>,
     /// Where the JSON events go (JsonOutputEventsTarget), when they are on.
     pub events: Option<String>,
 }
@@ -275,8 +277,15 @@ impl Service {
             return;
         };
         log::debug!("interaction event: {output}");
-        crate::smart_reply::send_with(&self.client, &self.http, target, output, "interactions")
-            .await;
+        crate::smart_reply::send_with(
+            &self.client,
+            &self.http,
+            &self.smtp,
+            target,
+            output,
+            "interactions",
+        )
+        .await;
     }
 
     /// DataStoreService.GetAvatarName: the name, or "lookup" when it is not known.

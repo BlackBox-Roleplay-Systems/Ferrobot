@@ -1,6 +1,6 @@
 //! SecondBot's Self commands that need nothing more than the bot (GoHome, Logoff,
 //! GetLastCommands, the key-value store, SetPermFlag), its Avatars commands AcceptNext and
-//! IsOnAcceptNext, and Ferrobot's own BotStatus.
+//! IsOnAcceptNext, SendEmail (through crate::services::smtp), and Ferrobot's own BotStatus.
 //!
 //! Deliberate difference: SetPermFlag has an effect (SecondBot's is a "@todo" that only answers):
 //! it grants, or takes back, an avatar's requests of one kind (crate::grants), once ("sticky"
@@ -25,6 +25,27 @@ pub fn go_home(ctx: &Ctx) -> Answer {
         }
     });
     basic("GoHome", "ok", &[])
+}
+
+/// SendEmail: a message through the SMTP service, when FERRO_SMTP_COMMAND allows it (SecondBot's
+/// AllowCommandSendMail). "sending" once the server took it, as SecondBot's, which answers after
+/// the send.
+pub async fn send_email(ctx: &Ctx, to: &str, subject: &str, body: &str) -> Answer {
+    const C: &str = "SendEmail";
+    if to.is_empty() {
+        return failure(C, "to is empty", &[]);
+    }
+    if subject.is_empty() {
+        return failure(C, "subject is empty", &owned(&[to]));
+    }
+    if body.is_empty() {
+        return failure(C, "body is empty", &owned(&[to, subject]));
+    }
+    let args = owned(&[to, subject, body]);
+    match ctx.smtp.command_email(to, subject, body).await {
+        Ok(()) => basic(C, "sending", &args),
+        Err(e) => failure(C, &format!("Send was rejected because: {e}"), &args),
+    }
 }
 
 /// Logoff: the bot logs out and stops, as on SIGTERM (no relog).
@@ -85,6 +106,11 @@ pub fn bot_status(ctx: &Ctx) -> Answer {
         "commands": commands,
         "failures": failures,
         "version": ferro_client::login::version(),
+        // SmtpService.Status's counts, when e-mail is on
+        "emails": ctx.smtp.settings().map(|_| {
+            let (sent, failed) = ctx.smtp.counts();
+            serde_json::json!({ "sent": sent, "failed": failed })
+        }),
     });
     basic("BotStatus", &status.to_string(), &[])
 }
