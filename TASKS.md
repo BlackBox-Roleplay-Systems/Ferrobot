@@ -419,6 +419,8 @@ baking: the bot says so and goes on.
   upload). To verify on the grid (human)
 - ⬜ UploadMediaWave from a WAV file: would need a Vorbis encoder in the container (an audio
   library, ruled out for now)
+- 🔧 Custom commands (SecondBot's CustomCommandsService): operator-defined commands made of
+  existing commands, with the caller's arguments put in
 
 ## Phase 8 - Running it for real
 
