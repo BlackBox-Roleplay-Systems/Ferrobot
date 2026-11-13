@@ -970,6 +970,165 @@ mod api {
         (bot, api)
     }
 
+    /// SecondBot's service control: off unless allowed; then a service stopped, its settings
+    /// changed and started again, one off by default enabled; the bot's core, secrets, unknown
+    /// settings and wrong values refused; no answer, history or log line holding a value.
+    #[tokio::test]
+    async fn services_are_stopped_started_and_their_settings_changed() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        let (reply, args) = api.failure("StopService", &["RelayService"]).await;
+        assert_eq!(reply, "Service control is not enabled by config");
+        assert_eq!(args, serde_json::json!([]));
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+
+        let grid = super::grid().await;
+        let (mut bot, api) = bot_with_settings(
+            &grid,
+            &[
+                ("FERRO_ALLOW_SERVICE_CONTROL", "true"),
+                (
+                    "FERRO_RELAY_1",
+                    "sType::localchat{}sFilter::avatar{}tType::localchat{}tConfig::9",
+                ),
+            ],
+        )
+        .await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("1 relays").await;
+        let relayed = |text: &'static str, channel: i32| {
+            move |s: &Seen| {
+                matches!(s, Seen::Chat { message, channel: c, .. }
+                    if *c == channel && message.contains(&format!(r#""message":"{{Relay}} {text}""#)))
+            }
+        };
+        grid.say("Other Avatar", "one");
+        wait_for(&grid, &bot, "one relayed", relayed("one", 9)).await;
+
+        // stopped, nothing relayed; its settings changed meanwhile, for its next start
+        assert_eq!(api.reply("StopService", &["RelayService"]).await, "ok");
+        bot.wait_log("RelayService: stopped").await;
+        grid.say("Other Avatar", "two");
+        for (name, value) in [
+            ("count", "1"),
+            ("1_enabled", "true"),
+            ("1_source_type", "localchat"),
+            ("1_source_option", "avatar"),
+            ("1_target_type", "localchat"),
+            ("1_target_option", "8"),
+        ] {
+            let (key, inner) = api
+                .run("ChangeConfigValue", &["RelayService", name, value])
+                .await;
+            assert!(key, "{inner}");
+            assert_eq!(
+                inner,
+                serde_json::json!({"command": "ChangeConfigValue", "args": [], "reply": "ok", "status": true})
+            );
+        }
+        assert_eq!(
+            api.reply("EnableAndStartService", &["RelayService"]).await,
+            "ok"
+        );
+        bot.wait_log("2 relays").await;
+        grid.say("Other Avatar", "three");
+        wait_for(&grid, &bot, "three relayed", relayed("three", 9)).await;
+        wait_for(&grid, &bot, "three relayed", relayed("three", 8)).await;
+        assert_eq!(grid.count(relayed("two", 9)), 0, "said while stopped");
+
+        // a service off by its settings, enabled with its settings
+        for (name, value) in [
+            ("HomeSimSlUrl", "Second%20Region/100/110/22"),
+            ("ReturnToHomeSimAfterMins", "0"),
+        ] {
+            assert_eq!(
+                api.reply("ChangeConfigValue", &["HomeboundService", name, value])
+                    .await,
+                "ok"
+            );
+        }
+        assert_eq!(
+            api.reply("RestartService", &["HomeboundService"]).await,
+            "ok"
+        );
+        bot.wait_log("HomeboundService: off by its settings").await;
+        assert_eq!(
+            api.reply("EnableAndStartService", &["HomeboundService"])
+                .await,
+            "ok"
+        );
+        wait_for(&grid, &bot, "the arrival at home", |s| {
+            *s == Seen::CompleteAgentMovement {
+                session: 1,
+                region: ferro_testgrid::SECOND_REGION,
+            }
+        })
+        .await;
+        assert_eq!(api.reply("StopService", &["HomeboundService"]).await, "ok");
+        bot.wait_log("HomeboundService: stopped").await;
+
+        // refusals, none echoing what was sent
+        const TOKEN: &str = "a-discord-token-value";
+        for (command, args, why) in [
+            (
+                "StopService",
+                vec!["HttpService"],
+                "Unable to manage selected service",
+            ),
+            (
+                "RestartService",
+                vec!["BotClientService"],
+                "Unable to manage selected service",
+            ),
+            (
+                "ChangeConfigValue",
+                vec!["BotClientService", "Password", TOKEN],
+                "Unable to manage selected service",
+            ),
+            ("StopService", vec!["CommandsService"], "Unknown service"),
+            (
+                "EnableAndStartService",
+                vec!["RLVService"],
+                "Unknown service",
+            ),
+            (
+                "ChangeConfigValue",
+                vec!["CommandsService", "SharedSecret", TOKEN],
+                "Unknown service",
+            ),
+            (
+                "ChangeConfigValue",
+                vec!["DiscordService", "ClientToken", TOKEN],
+                "Secret values can not be changed by command",
+            ),
+            (
+                "ChangeConfigValue",
+                vec!["RelayService", "HideStatusOutput", "true"],
+                "Unknown config name",
+            ),
+            (
+                "ChangeConfigValue",
+                vec!["RelayService", "count", "many"],
+                "Invalid config value",
+            ),
+        ] {
+            let (reply, sent) = api.failure(command, &args).await;
+            assert_eq!(reply, why, "{command} {args:?}");
+            assert_eq!(sent, serde_json::json!([]));
+        }
+        let (_, inner) = api.run("GetLastCommands", &[]).await;
+        let last = inner["args"].to_string();
+        assert!(last.contains("ChangeConfigValue"), "{last}");
+        assert!(!last.contains(TOKEN), "{last}");
+        assert!(!bot.log().contains(TOKEN));
+        // the API still answers
+        assert_eq!(api.reply("SimName", &[]).await, "Second Region");
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// `GET /health` for checks through a tunnel: 503 until in world, then 200.
     #[tokio::test]
     async fn the_health_endpoint_follows_the_bot() {
