@@ -29,9 +29,11 @@ mod outfit;
 pub mod parcels;
 pub mod profile;
 pub mod region_restart;
+pub mod sound;
 pub mod state;
 pub mod terrain;
 mod transfer;
+pub mod upload;
 pub mod walking;
 mod xmlrpc;
 

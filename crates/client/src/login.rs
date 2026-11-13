@@ -63,6 +63,9 @@ pub struct LoginResponse {
     #[allow(dead_code)]
     pub secure_session_id: Uuid,
     pub inventory_root: Uuid,
+    /// What uploading a sound costs, when the grid says (Second Life's
+    /// `account_level_benefits`, as Aurora's Prices::from_login reads them).
+    pub sound_upload_cost: Option<i32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -330,6 +333,10 @@ fn parse_success(v: &Llsd) -> Result<LoginResponse, LoginError> {
         seed_capability: v["seed_capability"].as_str().to_owned(),
         message: v["message"].as_str().to_owned(),
         inventory_root: v["inventory-root"][0]["folder_id"].as_uuid(),
+        sound_upload_cost: match &v["account_level_benefits"]["sound_upload_cost"] {
+            Llsd::Integer(n) if *n >= 0 => Some(*n),
+            _ => None,
+        },
         home: parse_home(v["home"].as_str()),
         buddies: v["buddy-list"]
             .as_array()
@@ -531,5 +538,33 @@ mod tests {
         assert_eq!(p["start"].as_str(), "home");
         assert_eq!(p["passwd"].as_str(), hash_password("x", true));
         assert_eq!(version().split('.').count(), 4);
+    }
+
+    #[test]
+    fn the_sound_price_from_the_benefits() {
+        let reply = |benefits: Llsd| {
+            ferro_llsd::llsd_map! {
+                "agent_id" => Uuid::from_u128(1),
+                "sim_ip" => "127.0.0.1",
+                "sim_port" => 13000,
+                "account_level_benefits" => benefits,
+            }
+        };
+        let priced = reply(ferro_llsd::llsd_map! { "sound_upload_cost" => 10 });
+        assert_eq!(
+            parse_success(&priced).expect("a login").sound_upload_cost,
+            Some(10)
+        );
+        let free = reply(ferro_llsd::llsd_map! { "sound_upload_cost" => 0 });
+        assert_eq!(
+            parse_success(&free).expect("a login").sound_upload_cost,
+            Some(0)
+        );
+        // OpenSim sends no benefits: the price is not known
+        let none = reply(Llsd::Undef);
+        assert_eq!(
+            parse_success(&none).expect("a login").sound_upload_cost,
+            None
+        );
     }
 }

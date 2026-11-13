@@ -166,6 +166,7 @@ impl Network {
             st.mute_list = None;
             st.away = false;
             st.inventory_root = login.inventory_root;
+            st.sound_upload_cost = login.sound_upload_cost;
         }
         self.shared
             .names()
@@ -2184,6 +2185,7 @@ mod tests {
             message: String::new(),
             secure_session_id: uuid::Uuid::from_u128(4),
             inventory_root: uuid::Uuid::nil(),
+            sound_upload_cost: None,
             home: None,
             buddies: Vec::new(),
         }

@@ -361,7 +361,10 @@ impl Client {
     ) -> Result<crate::groups::GroupCreated, ClientError> {
         let group = Box::new(group);
         let created = self
-            .group_ask(CREATE_TIMEOUT, |reply| GroupRequest::Create { group, reply })
+            .group_ask(CREATE_TIMEOUT, |reply| GroupRequest::Create {
+                group,
+                reply,
+            })
             .await?;
         if created.success
             && let Err(e) = self.reload_groups().await

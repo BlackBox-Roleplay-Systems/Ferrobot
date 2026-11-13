@@ -14,6 +14,10 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(45);
 const FOLDERS_PER_FETCH: usize = 10;
 /// The Trash's preferred type (LLFolderType::FT_TRASH).
 const TRASH: i32 = 14;
+/// The Sounds folder's preferred type (LLFolderType::FT_SOUND).
+const SOUNDS: i32 = 1;
+/// An upload's two requests, a minute each at most.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(125);
 /// A link's asset type (LLAssetType::AT_LINK).
 const LINK: i32 = 24;
 const CATEGORY: u8 = 8;
@@ -380,6 +384,42 @@ impl Client {
             .await?
             .map_err(ClientError::Refused)?;
         Ok(item)
+    }
+
+    /// Upload a sound (an Ogg Vorbis asset, see [`crate::sound`]) to the Sounds folder, else the
+    /// root, with SecondBot's UploadMediaWave permissions: every one for the next owner, none for
+    /// the group or everyone. `expected_cost` as [`crate::upload::AssetUpload`]'s.
+    pub async fn upload_sound(
+        &self,
+        name: &str,
+        data: Vec<u8>,
+        expected_cost: Option<i32>,
+    ) -> Result<crate::upload::Uploaded, ClientError> {
+        let root = self.inventory_root();
+        let folder = self
+            .folder_contents(root)
+            .await
+            .ok()
+            .and_then(|c| c.folders.into_iter().find(|f| f.type_default == SOUNDS))
+            .map_or(root, |f| f.id);
+        let upload = Box::new(crate::upload::AssetUpload {
+            asset_type: "sound",
+            inventory_type: "sound",
+            folder,
+            name: name.to_owned(),
+            description: String::new(),
+            // PermissionMask.All, None, None
+            next_owner_mask: 0x7fff_ffff,
+            group_mask: 0,
+            everyone_mask: 0,
+            expected_cost,
+            data,
+        });
+        self.ask_within(UPLOAD_TIMEOUT, |reply| {
+            Request::Inventory(InventoryRequest::UploadAsset { upload, reply })
+        })
+        .await?
+        .map_err(ClientError::Refused)
     }
 
     /// Create a notecard and give it (LibreMetaverse's SendNotecard, SecondBot's

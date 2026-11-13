@@ -19,6 +19,8 @@ pub struct State {
     pub groups: Vec<Group>,
     /// The inventory's root folder (the login's inventory-root).
     pub inventory_root: Uuid,
+    /// What uploading a sound costs, when the login said.
+    pub sound_upload_cost: Option<i32>,
     /// The bot's friends (the login's buddy list, then the friendships it accepts).
     pub friends: Vec<Uuid>,
     /// The friends online (OnlineNotification, OfflineNotification).

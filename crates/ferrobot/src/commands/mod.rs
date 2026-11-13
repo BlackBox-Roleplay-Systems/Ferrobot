@@ -146,6 +146,7 @@ const CHANGING: &[&str] = &[
     "TransferInventoryToObject",
     "AsyncTransferInventoryToObject",
     "InventoryPurgeNotecards",
+    "UploadMediaWave",
     "FetchNextNotecard",
     "Attach",
     "Detach",
@@ -347,6 +348,7 @@ const COMMANDS: &[(&str, usize)] = &[
     ("InventoryPreloadCount", 0),
     ("InventoryPreloadDone", 0),
     ("SetInventoryUpdate", 2),
+    ("UploadMediaWave", 2),
     ("FetchNextNotecard", 2),
     ("ListSculptys", 0),
     ("SetPermFlag", 4),
@@ -638,6 +640,7 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "InventoryPreloadCount" => inventory::preload_count(ctx),
         "InventoryPreloadDone" => inventory::preload_done(),
         "SetInventoryUpdate" => inventory::set_inventory_update(ctx, a(0), a(1)),
+        "UploadMediaWave" => inventory::upload_media_wave(ctx, a(0), a(1)).await,
         "FetchNextNotecard" => notecard::fetch_next(ctx, a(0), a(1)).await,
         "ListSculptys" => objects::list_sculptys(ctx).await,
         "SetPermFlag" => bot::set_perm_flag(ctx, a(0), a(1), a(2), a(3)).await,
@@ -746,6 +749,80 @@ pub fn test_ctx() -> Ctx {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The commands' context, the bot offline.
+    fn offline(allow_funds: bool) -> Ctx {
+        Ctx {
+            allow_funds,
+            ..test_ctx()
+        }
+    }
+
+    /// The reply of an answer.
+    fn reply_of(answer: &str) -> String {
+        let v: serde_json::Value = serde_json::from_str(answer).expect("json");
+        v["reply"].as_str().expect("reply").to_owned()
+    }
+
+    /// GroupCreate's checks come before the grid is asked, in SecondBot's order.
+    #[tokio::test]
+    async fn group_create_checks() {
+        let check = |funds: bool, args: [&'static str; 5]| async move {
+            let ctx = offline(funds);
+            let a = args;
+            reply_of(&groups::group_create(&ctx, a[0], a[1], a[2], a[3], a[4]).await)
+        };
+        let good = ["Bots United", "A place", "true", "0", "false"];
+        assert_eq!(check(false, good).await, "Funds commands are disabled");
+        let mut bad = good;
+        bad[0] = "Bot";
+        assert_eq!(check(true, bad).await, "Name must be 4 to 35 characters");
+        bad[0] = "A name far too long for a group, 36c";
+        assert_eq!(check(true, bad).await, "Name must be 4 to 35 characters");
+        let mut bad = good;
+        bad[2] = "yes";
+        assert_eq!(check(true, bad).await, "Invaild openenrollment value");
+        let mut bad = good;
+        bad[4] = "1";
+        assert_eq!(check(true, bad).await, "Invaild showinlist value");
+        let mut bad = good;
+        bad[3] = "100001";
+        assert_eq!(
+            check(true, bad).await,
+            "Invaild membershipfee value (0 to 100000)"
+        );
+        bad[3] = "-1";
+        assert_eq!(
+            check(true, bad).await,
+            "Invaild membershipfee value (0 to 100000)"
+        );
+        // offline, the balance cannot be asked
+        assert_eq!(
+            check(true, good).await,
+            "No reply from the grid [Retry later]"
+        );
+        let charter = "c".repeat(512);
+        let ctx = offline(true);
+        let answer = groups::group_create(&ctx, "Bots United", &charter, "true", "0", "true").await;
+        assert_eq!(reply_of(&answer), "Charter must be 511 characters or less");
+    }
+
+    /// UploadMediaWave: a Funds command unless the grid says sounds are free; its own checks.
+    #[tokio::test]
+    async fn upload_media_wave_checks() {
+        let ctx = offline(false);
+        let answer = inventory::upload_media_wave(&ctx, "https://example.test/a.ogg", "a").await;
+        assert_eq!(reply_of(&answer), "Funds commands are disabled");
+        let ctx = offline(true);
+        let answer = inventory::upload_media_wave(&ctx, "/tmp/a.wav", "a").await;
+        assert_eq!(
+            reply_of(&answer),
+            "sourcePath must start with http:// or https://"
+        );
+        let long = "n".repeat(64);
+        let answer = inventory::upload_media_wave(&ctx, "https://example.test/a.ogg", &long).await;
+        assert_eq!(reply_of(&answer), "inventoryName must be 1 to 63 bytes");
+    }
 
     #[tokio::test]
     async fn unknown_commands_and_argument_counts() {
