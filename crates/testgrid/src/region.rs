@@ -1267,14 +1267,18 @@ impl Region {
                 });
             }
         } else if id == GenericMessage::ID {
-            if let Ok(m) = pkt.decode::<GenericMessage>()
-                && field_str(&m.method_data.method) == "autopilot"
-            {
-                let params: Vec<String> = m
-                    .param_list
-                    .iter()
-                    .map(|p| field_str(&p.parameter))
-                    .collect();
+            let Ok(m) = pkt.decode::<GenericMessage>() else {
+                return true;
+            };
+            let params: Vec<String> = m
+                .param_list
+                .iter()
+                .map(|p| field_str(&p.parameter))
+                .collect();
+            let method = field_str(&m.method_data.method);
+            if method == "avatarpicksrequest" {
+                self.avatar_picks(from, &params);
+            } else if method == "autopilot" {
                 // global x and y, the height in the region (LLClientView.HandleAutopilot): the
                 // avatar is there at once
                 let region = &self.shared.regions[self.index];
@@ -1435,6 +1439,48 @@ impl Region {
                 self.shared.state().active_group = (!group.is_nil()).then_some(group);
                 // the grid answers with the agent's data
                 self.agent_data_only(from);
+            }
+        } else if id == CreateGroupRequest::ID {
+            if let Ok(m) = pkt.decode::<CreateGroupRequest>() {
+                let d = &m.group_data;
+                let name = field_str(&d.name);
+                self.shared.saw(Seen::CreateGroup {
+                    name: name.clone(),
+                    charter: field_str(&d.charter),
+                    show_in_list: d.show_in_list,
+                    membership_fee: d.membership_fee,
+                    open_enrollment: d.open_enrollment,
+                    allow_publish: d.allow_publish,
+                });
+                // the grid's refusals: a name taken, or the fee not paid
+                let (group, message, body) = {
+                    let mut st = self.shared.state();
+                    if st
+                        .groups
+                        .iter()
+                        .any(|g| g.name.eq_ignore_ascii_case(name.trim()))
+                    {
+                        (Uuid::nil(), "The group name is already in use.", None)
+                    } else if st.balance < 100 {
+                        (Uuid::nil(), "Insufficient funds to create a group.", None)
+                    } else {
+                        let group = Uuid::new_v4();
+                        st.balance -= 100;
+                        st.groups.push(crate::groups::founded(group, name.trim()));
+                        let body = crate::groups::agent_group_data(&st.groups, bot);
+                        (group, "Group created.", Some(body))
+                    }
+                };
+                let mut r = CreateGroupReply::default();
+                r.agent_data.agent_id = bot;
+                r.reply_data.group_id = group;
+                r.reply_data.success = body.is_some();
+                r.reply_data.message = str_field(message);
+                self.send(from, &r, true);
+                if let Some(body) = body {
+                    self.balance(from);
+                    self.shared.queue_event(n, "AgentGroupDataUpdate", body);
+                }
             }
         } else if id == JoinGroupRequest::ID {
             if let Ok(m) = pkt.decode::<JoinGroupRequest>() {
@@ -1686,6 +1732,29 @@ impl Region {
                 m.roles.retain(|r| *r != role);
             }
         }
+    }
+
+    /// The answer to "avatarpicksrequest" (OpenSim's UserProfileModule): the picks of an avatar
+    /// the grid knows; nothing for one it does not.
+    fn avatar_picks(&mut self, to: SocketAddr, params: &[String]) {
+        let Some(avatar) = params.first().and_then(|p| Uuid::parse_str(p).ok()) else {
+            return;
+        };
+        self.shared.saw(Seen::PicksRequest { avatar, cap: false });
+        let Some(picks) = crate::picks(avatar) else {
+            return;
+        };
+        let mut r = AvatarPicksReply::default();
+        r.agent_data.agent_id = self.shared.agent_id;
+        r.agent_data.target_id = avatar;
+        r.data = picks
+            .iter()
+            .map(|(id, name)| avatar_picks_reply::Data {
+                pick_id: *id,
+                pick_name: str_field(name),
+            })
+            .collect();
+        self.send(to, &r, true);
     }
 
     fn balance(&mut self, to: SocketAddr) {

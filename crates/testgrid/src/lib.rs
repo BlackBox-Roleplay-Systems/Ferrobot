@@ -27,6 +27,7 @@ mod http;
 mod login;
 pub mod parcels;
 mod region;
+pub mod sound;
 mod xmlrpc;
 
 use ferro_llsd::Llsd;
@@ -69,6 +70,12 @@ pub struct GridConfig {
     pub display_names: Vec<(Uuid, String)>,
     /// The regions give the GetDisplayNames capability (OpenSim may not).
     pub display_names_cap: bool,
+    /// The regions give the AgentProfile capability, as Second Life's do (OpenSim's do not:
+    /// profiles and picks then come by UDP).
+    pub agent_profile_cap: bool,
+    /// What uploading a sound costs, in the login reply's `account_level_benefits` (Second
+    /// Life's); `None`: no benefits in the reply, as OpenSim's.
+    pub sound_upload_cost: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +150,8 @@ impl Default for GridConfig {
             display_names: vec![(Uuid::from_u128(0x5eed_0001), "Sunny".into())],
             display_names_cap: true,
             member_data_cap: true,
+            agent_profile_cap: false,
+            sound_upload_cost: Some(10),
         }
     }
 }
@@ -359,6 +368,33 @@ pub enum Seen {
         image: Uuid,
         rest_kept: bool,
     },
+    /// An avatar's picks asked for: by the GenericMessage "avatarpicksrequest", or the
+    /// AgentProfile capability (`cap`).
+    PicksRequest {
+        avatar: Uuid,
+        cap: bool,
+    },
+    /// CreateGroupRequest.
+    CreateGroup {
+        name: String,
+        charter: String,
+        show_in_list: bool,
+        membership_fee: i32,
+        open_enrollment: bool,
+        allow_publish: bool,
+    },
+    /// An asset uploaded through NewFileAgentInventory and its uploader: what the request said
+    /// of it, and the bytes received ([`checksum`]).
+    AssetUploaded {
+        asset_type: String,
+        inventory_type: String,
+        folder: Uuid,
+        name: String,
+        expected_cost: i32,
+        next_owner_mask: i32,
+        len: usize,
+        checksum: u64,
+    },
     /// A ViewerAsset download.
     ViewerAsset {
         asset: Uuid,
@@ -548,6 +584,25 @@ struct State {
     balance: i32,
     /// Files on the grid's web server (`/files/<name>`), for the commands that download one.
     files: HashMap<String, Vec<u8>>,
+    /// Uploads offered by NewFileAgentInventory and not yet sent: their request, by the id in
+    /// their uploader's address.
+    asset_uploads: HashMap<Uuid, Llsd>,
+}
+
+/// The picks of the avatars the grid knows: Some Resident has two, the others none. `None` for an
+/// avatar the grid does not know.
+pub fn picks(avatar: Uuid) -> Option<Vec<(Uuid, String)>> {
+    match avatar.as_u128() {
+        0x5eed_0001 => Some(vec![
+            (Uuid::from_u128(0x91c4_0001), "Sunny Beach".into()),
+            (
+                Uuid::from_u128(0x91c4_0002),
+                "Club <Night> & \"Day\"".into(),
+            ),
+        ]),
+        0x5eed_0002 => Some(Vec::new()),
+        _ => None,
+    }
 }
 
 /// FNV-1a: what [`Seen::TerrainUploaded`] says of the bytes, rather than all of them.
@@ -748,6 +803,7 @@ impl TestGrid {
                 inventory: inventory::Inventory::default(),
                 balance: 500,
                 files: HashMap::new(),
+                asset_uploads: HashMap::new(),
             }),
             eq_wake: Notify::new(),
         });

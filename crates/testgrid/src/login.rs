@@ -79,6 +79,13 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
     buddy.insert("buddy_rights_given".into(), 1.into());
     buddy.insert("buddy_rights_has".into(), 1.into());
     r.insert("buddy-list".into(), Llsd::Array(vec![Llsd::Map(buddy)]));
+    if let Some(cost) = cfg.sound_upload_cost {
+        let mut benefits = Map::new();
+        benefits.insert("sound_upload_cost".into(), cost.into());
+        benefits.insert("texture_upload_cost".into(), cost.into());
+        benefits.insert("animation_upload_cost".into(), cost.into());
+        r.insert("account_level_benefits".into(), Llsd::Map(benefits));
+    }
     let mut root = Map::new();
     root.insert("folder_id".into(), crate::inventory::ROOT.into());
     r.insert("inventory-root".into(), Llsd::Array(vec![Llsd::Map(root)]));

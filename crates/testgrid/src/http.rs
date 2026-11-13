@@ -107,6 +107,24 @@ async fn route(shared: &Arc<Shared>, req: Request) -> Response {
                 None => Response::status(404),
             }
         }
+        // AgentProfile takes the avatar's key after its address: it goes on as the query
+        (Some("cap"), Some(n), Some(region), Some("agentprofile"), Some(avatar)) => {
+            match (n.parse(), region.parse()) {
+                (Ok(n), Ok(region)) => {
+                    crate::caps::handle(
+                        shared,
+                        n,
+                        region,
+                        "agentprofile",
+                        &req.method,
+                        avatar,
+                        &req.body,
+                    )
+                    .await
+                }
+                _ => Response::status(404),
+            }
+        }
         (Some("cap"), Some(n), Some(region), Some(name), None) => {
             match (n.parse(), region.parse()) {
                 (Ok(n), Ok(region)) => {

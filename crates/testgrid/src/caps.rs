@@ -143,6 +143,9 @@ pub async fn handle(
             m.insert("new_asset".into(), asset.into());
             llsd_reply(&Llsd::Map(m))
         }
+        ("agentprofile", "GET") => agent_profile(shared, query),
+        ("newfileagentinventory", "POST") => new_file(shared, n, region, body),
+        ("assetuploader", "POST") => asset_uploader(shared, query, body),
         ("fetchdescendents", "POST") => {
             let Ok(v) = from_xml(body) else {
                 return Response::status(400);
@@ -172,6 +175,152 @@ pub async fn handle(
         }
         _ => Response::status(404),
     }
+}
+
+/// GET <AgentProfile>/<avatar> (Second Life's profile service): the profile and its picks; 404
+/// for an avatar the grid does not know.
+fn agent_profile(shared: &Arc<Shared>, avatar: &str) -> Response {
+    let Ok(id) = uuid::Uuid::parse_str(avatar) else {
+        return Response::status(404);
+    };
+    let picks = if id == shared.agent_id {
+        Vec::new()
+    } else {
+        match crate::picks(id) {
+            Some(picks) => picks,
+            None => return Response::status(404),
+        }
+    };
+    shared.saw(Seen::PicksRequest {
+        avatar: id,
+        cap: true,
+    });
+    let (about, image) = shared
+        .state()
+        .profiles
+        .get(&id)
+        .cloned()
+        .unwrap_or_default();
+    let picks: Vec<Llsd> = picks
+        .into_iter()
+        .map(|(pick, name)| {
+            let mut m = Map::new();
+            m.insert("id".into(), pick.into());
+            m.insert("name".into(), name.into());
+            Llsd::Map(m)
+        })
+        .collect();
+    let mut m = Map::new();
+    m.insert("id".into(), id.into());
+    m.insert("sl_about_text".into(), about.into());
+    m.insert("sl_image_id".into(), image.into());
+    m.insert("fl_about_text".into(), "first life".into());
+    m.insert("allow_publish".into(), true.into());
+    m.insert("picks".into(), Llsd::Array(picks));
+    llsd_reply(&Llsd::Map(m))
+}
+
+/// What an upload costs on this grid: the login's benefits, else nothing (OpenSim without money).
+fn upload_cost(shared: &Arc<Shared>) -> i32 {
+    shared.cfg.sound_upload_cost.unwrap_or(0)
+}
+
+/// An error as NewFileAgentInventory gives one (LLSDAssetUploadError).
+fn upload_error(message: &str) -> Response {
+    let mut error = Map::new();
+    error.insert("message".into(), message.into());
+    let mut m = Map::new();
+    m.insert("state".into(), "error".into());
+    m.insert("uploader".into(), "".into());
+    m.insert("error".into(), Llsd::Map(error));
+    llsd_reply(&Llsd::Map(m))
+}
+
+/// NewFileAgentInventory (LLResourceUploadInfo's request): sounds only here. The grid wants the
+/// price it asks when it told it at login, and the L$ to pay it; it offers an uploader.
+fn new_file(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
+    let Ok(v) = from_xml(body) else {
+        return Response::status(400);
+    };
+    if v["asset_type"].as_str() != "sound" || v["inventory_type"].as_str() != "sound" {
+        return upload_error("Only sounds upload on the test grid");
+    }
+    let price = upload_cost(shared);
+    if shared.cfg.sound_upload_cost.is_some() && v["expected_upload_cost"].as_i32() != price {
+        return upload_error("Expected upload cost does not match");
+    }
+    let mut st = shared.state();
+    if !st
+        .inventory
+        .folders
+        .iter()
+        .any(|f| f.id == v["folder_id"].as_uuid())
+    {
+        return upload_error("Unknown folder");
+    }
+    if st.balance < price {
+        return upload_error("Insufficient funds");
+    }
+    let id = uuid::Uuid::new_v4();
+    st.asset_uploads.insert(id, v);
+    drop(st);
+    let mut m = Map::new();
+    m.insert("state".into(), "upload".into());
+    m.insert(
+        "uploader".into(),
+        format!(
+            "http://{}/cap/{n}/{region}/assetuploader?upload={id}",
+            shared.http_addr
+        )
+        .into(),
+    );
+    m.insert("upload_price".into(), price.into());
+    llsd_reply(&Llsd::Map(m))
+}
+
+/// The uploader NewFileAgentInventory offered: the asset is stored, the item made in the folder
+/// asked, the price paid.
+fn asset_uploader(shared: &Arc<Shared>, query: &str, body: &[u8]) -> Response {
+    let id: uuid::Uuid = query
+        .strip_prefix("upload=")
+        .and_then(|i| i.parse().ok())
+        .unwrap_or_default();
+    let price = upload_cost(shared);
+    let (request, item, asset) = {
+        let mut st = shared.state();
+        let Some(request) = st.asset_uploads.remove(&id) else {
+            return Response::status(404);
+        };
+        let (item, asset) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        st.balance -= price;
+        st.inventory.items.push(crate::inventory::Item {
+            id: item,
+            parent: request["folder_id"].as_uuid(),
+            name: request["name"].to_string_value(),
+            asset_type: 1,
+            inv_type: 1,
+            asset_id: asset,
+            flags: 0,
+            created_at: 0,
+        });
+        (request, item, asset)
+    };
+    shared.saw(Seen::AssetUploaded {
+        asset_type: request["asset_type"].to_string_value(),
+        inventory_type: request["inventory_type"].to_string_value(),
+        folder: request["folder_id"].as_uuid(),
+        name: request["name"].to_string_value(),
+        expected_cost: request["expected_upload_cost"].as_i32(),
+        next_owner_mask: request["next_owner_mask"].as_i32(),
+        len: body.len(),
+        checksum: crate::checksum(body),
+    });
+    let mut m = Map::new();
+    m.insert("state".into(), "complete".into());
+    m.insert("new_asset".into(), asset.into());
+    m.insert("new_inventory_item".into(), item.into());
+    m.insert("upload_price".into(), price.into());
+    llsd_reply(&Llsd::Map(m))
 }
 
 /// The seed answers with the capabilities it has among those asked for.
@@ -208,6 +357,7 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         ("DispatchRegionInfo", "regioninfo"),
         ("EstateChangeInfo", "estatechangeinfo"),
         ("ParcelPropertiesUpdate", "parcelupdate"),
+        ("NewFileAgentInventory", "newfileagentinventory"),
     ] {
         if caps.iter().any(|c| c == cap) {
             m.insert(
@@ -215,6 +365,12 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
                 format!("http://{}/cap/{n}/{region}/{path}", shared.http_addr).into(),
             );
         }
+    }
+    if shared.cfg.agent_profile_cap && caps.iter().any(|c| c == "AgentProfile") {
+        m.insert(
+            "AgentProfile".into(),
+            format!("http://{}/cap/{n}/{region}/agentprofile", shared.http_addr).into(),
+        );
     }
     if caps.iter().any(|c| c == "UpdateAvatarAppearance") {
         m.insert(
