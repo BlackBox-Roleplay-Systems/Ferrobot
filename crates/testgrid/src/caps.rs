@@ -25,6 +25,7 @@ pub async fn handle(
         ("seed", "POST") => seed(shared, n, region, body),
         ("eq", "POST") => event_queue(shared, n, region).await,
         ("displaynames", "GET") => display_names(shared, n, query),
+        ("groupmemberdata", "POST") => member_data(shared, body),
         _ => Response::status(404),
     }
 }
@@ -50,6 +51,16 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         m.insert(
             "GetDisplayNames".into(),
             format!("http://{}/cap/{n}/{region}/displaynames", shared.http_addr).into(),
+        );
+    }
+    if shared.cfg.member_data_cap && caps.iter().any(|c| c == "GroupMemberData") {
+        m.insert(
+            "GroupMemberData".into(),
+            format!(
+                "http://{}/cap/{n}/{region}/groupmemberdata",
+                shared.http_addr
+            )
+            .into(),
         );
     }
     if caps.iter().any(|c| c == "EventQueueGet") {
@@ -153,6 +164,25 @@ fn display_names(shared: &Arc<Shared>, n: u32, query: &str) -> Response {
     m.insert("agents".into(), Llsd::Array(agents));
     m.insert("bad_ids".into(), Llsd::Array(bad));
     llsd_reply(&Llsd::Map(m))
+}
+
+/// GroupMemberData: `{group_id}` in, the whole member list out; a group the bot is not in: 403.
+fn member_data(shared: &Arc<Shared>, body: &[u8]) -> Response {
+    let Ok(asked) = from_xml(body) else {
+        return Response::status(400);
+    };
+    let group = asked["group_id"].as_uuid();
+    shared.saw(Seen::GroupMembersRequest { group, cap: true });
+    let found = shared
+        .state()
+        .groups
+        .iter()
+        .find(|g| g.id == group && g.bot_member)
+        .cloned();
+    match found {
+        Some(g) => llsd_reply(&crate::groups::member_data(&g, shared.agent_id)),
+        None => Response::status(403),
+    }
 }
 
 fn llsd_reply(v: &Llsd) -> Response {

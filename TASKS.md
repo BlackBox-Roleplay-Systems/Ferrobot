@@ -73,12 +73,15 @@ region).
 
 ## Phase 3 - Groups
 
-- ⬜ The bot's groups and the active group
-- ⬜ Roles and titles
-- ⬜ Members (GroupMemberData capability, UDP fallback), on demand, cached
-- ⬜ Role members
-- ⬜ Invite with a role, eject, give and take a role
-- ⬜ Is someone a member
+- 🟡 The bot's groups and the active group (phase 2's state)
+- 🟡 Roles and titles (`Client::group_roles`, `group_titles`), replies gathered over packets
+- 🟡 Members (`group_members`): GroupMemberData capability, GroupMembersRequest without it; on
+  demand, cached a minute (SecondBot keeps the login's list)
+- 🟡 Role members (`group_role_members`: every role / member pair)
+- 🟡 Invite with a role, eject (answered by EjectGroupMemberReply), give and take a role
+- 🟡 Is someone a member (`is_group_member`)
+- 🟡 Answer a group invitation (`answer_group_invite`); from crates/client/src/groups.rs, a port
+  of Aurora's groups.rs, and network/groups.rs as its session_groups.rs. Tested on the test grid
 - ⬜ Accept group invites by SecondBot's interaction rules
 - ⬜ Group chat sessions
 

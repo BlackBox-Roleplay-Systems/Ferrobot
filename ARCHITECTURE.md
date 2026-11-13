@@ -16,8 +16,11 @@ crates/
     src/xmlrpc.rs          the XML-RPC codec of the login
     src/circuit.rs         reliable UDP circuit: sequence numbers, acks, resends, duplicates
     src/caps.rs            the seed capability and the EventQueueGet long poll
-    src/network.rs         one session in one region: connect sequence, keep-alive, incoming
-                           messages, requests, logout
+    src/network/mod.rs     one session in one region: connect sequence, keep-alive, incoming
+                           messages, requests, teleports, logout
+    src/network/groups.rs  group requests and replies (from Aurora's session_groups.rs)
+    src/groups.rs          group data: roles, members, pairs, titles (from Aurora's groups.rs)
+    src/group_api.rs       the client's group requests, the member list cache
     src/events.rs          what the client reports (Event, chat, IMs)
     src/state.rs           what it keeps: who and where the bot is, its groups, its health
     src/names.rs           key <-> name cache

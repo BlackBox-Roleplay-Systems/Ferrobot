@@ -117,7 +117,8 @@ async fn the_state_after_arrival() {
         .find(|g| g.name == "Test Group")
         .expect("Test Group");
     assert_eq!(test_group.id, Uuid::from_u128(0x6000_0001));
-    assert_eq!(test_group.powers, 0x0000_0002_0000_0002);
+    // invite, eject, assign and remove members
+    assert_eq!(test_group.powers, 0x306);
     assert!(test_group.accept_notices);
 
     assert!(matches!(r.logout().await, End::LoggedOut));
@@ -427,4 +428,238 @@ async fn without_the_people_api_display_names_are_the_legacy_names() {
         1
     );
     assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+mod groups {
+    use super::*;
+    use ferro_client::groups::LastSeen;
+    use ferro_testgrid::{BUILDERS, OFFICERS, OWNERS, TEST_GROUP, THIRD_GROUP};
+
+    const SOME: Uuid = Uuid::from_u128(0x5eed_0001);
+    const OTHER: Uuid = Uuid::from_u128(0x5eed_0002);
+
+    /// Connected, with the group list in.
+    async fn ready(cfg: GridConfig) -> Running {
+        let r = connect_to(cfg).await;
+        let deadline = tokio::time::Instant::now() + WAIT;
+        while r.client.state().groups.is_empty() {
+            assert!(tokio::time::Instant::now() < deadline, "no group list");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // and the capabilities
+        assert!(
+            r.grid
+                .wait_for(WAIT, |s| matches!(s, Seen::SeedRequest { .. }))
+                .await
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        r
+    }
+
+    #[tokio::test]
+    async fn roles_titles_and_role_members_over_several_packets() {
+        let r = ready(GridConfig::default()).await;
+        let roles = r.client.group_roles(TEST_GROUP).await.expect("roles");
+        assert_eq!(roles.len(), 4, "{roles:?}");
+        let everyone = roles.iter().find(|x| x.id.is_nil()).expect("everyone");
+        assert_eq!((everyone.name.as_str(), everyone.members), ("Everyone", 3));
+        assert!(
+            roles
+                .iter()
+                .any(|x| x.id == BUILDERS && x.name == "Builders")
+        );
+
+        let mut pairs = r
+            .client
+            .group_role_members(TEST_GROUP)
+            .await
+            .expect("pairs");
+        pairs.sort();
+        let me = r.client.state().agent_id;
+        let mut want = vec![(OFFICERS, me), (OWNERS, SOME), (BUILDERS, SOME)];
+        want.sort();
+        assert_eq!(pairs, want);
+
+        let titles = r.client.group_titles(TEST_GROUP).await.expect("titles");
+        assert_eq!(titles.len(), 2);
+        assert!(
+            titles
+                .iter()
+                .any(|t| t.role == OFFICERS && t.title == "Bot" && t.selected)
+        );
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
+
+    async fn check_members(r: &Running) {
+        let members = r.client.group_members(TEST_GROUP).await.expect("members");
+        assert_eq!(members.len(), 3, "{members:?}");
+        let some = members
+            .iter()
+            .find(|m| m.id == SOME)
+            .expect("Some Resident");
+        assert!(some.is_owner);
+        assert_eq!(some.last_seen, LastSeen::Online);
+        let other = members
+            .iter()
+            .find(|m| m.id == OTHER)
+            .expect("Other Avatar");
+        assert_eq!(other.last_seen, LastSeen::Date(2026, 9, 12));
+        assert_eq!(other.title, "Member");
+        assert_eq!(r.client.is_group_member(TEST_GROUP, OTHER).await, Ok(true));
+        assert_eq!(
+            r.client
+                .is_group_member(TEST_GROUP, Uuid::from_u128(0xdead))
+                .await,
+            Ok(false)
+        );
+        // one request: the cache answers the rest
+        assert_eq!(
+            r.grid
+                .count(|s| matches!(s, Seen::GroupMembersRequest { .. })),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn members_from_the_capability_cached() {
+        let r = ready(GridConfig::default()).await;
+        check_members(&r).await;
+        assert!(
+            r.grid.count(|s| *s
+                == Seen::GroupMembersRequest {
+                    group: TEST_GROUP,
+                    cap: true
+                })
+                == 1
+        );
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
+
+    #[tokio::test]
+    async fn members_by_udp_without_the_capability() {
+        let r = ready(GridConfig {
+            member_data_cap: false,
+            ..GridConfig::default()
+        })
+        .await;
+        check_members(&r).await;
+        assert!(
+            r.grid.count(|s| *s
+                == Seen::GroupMembersRequest {
+                    group: TEST_GROUP,
+                    cap: false
+                })
+                == 1
+        );
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
+
+    #[tokio::test]
+    async fn a_group_the_bot_is_not_in_is_unknown() {
+        let r = ready(GridConfig::default()).await;
+        assert_eq!(
+            r.client.group_roles(THIRD_GROUP).await,
+            Err(ClientError::UnknownGroup)
+        );
+        assert_eq!(
+            r.client.is_group_member(THIRD_GROUP, SOME).await,
+            Err(ClientError::UnknownGroup)
+        );
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
+
+    #[tokio::test]
+    async fn invite_eject_and_role_changes() {
+        let r = ready(GridConfig::default()).await;
+        let newcomer = Uuid::from_u128(0x5eed_0009);
+        r.client
+            .group_invite(TEST_GROUP, newcomer, BUILDERS)
+            .await
+            .expect("invite");
+        assert!(
+            r.grid
+                .wait_for(WAIT, |s| *s
+                    == Seen::GroupInvite {
+                        group: TEST_GROUP,
+                        invitee: newcomer,
+                        role: BUILDERS
+                    })
+                .await
+        );
+
+        // a role given, then taken
+        r.client
+            .group_add_role(TEST_GROUP, OTHER, BUILDERS)
+            .await
+            .expect("add");
+        let has_builders = |r: &Running| {
+            r.grid
+                .group_members(TEST_GROUP)
+                .iter()
+                .any(|m| m.id == OTHER && m.roles.contains(&BUILDERS))
+        };
+        assert!(r.grid.wait_until(WAIT, |_| has_builders(&r)).await);
+        r.client
+            .group_remove_role(TEST_GROUP, OTHER, BUILDERS)
+            .await
+            .expect("remove");
+        assert!(r.grid.wait_until(WAIT, |_| !has_builders(&r)).await);
+
+        // ejected: gone from the grid and from the cache
+        assert_eq!(r.client.is_group_member(TEST_GROUP, OTHER).await, Ok(true));
+        r.client
+            .group_eject(TEST_GROUP, OTHER)
+            .await
+            .expect("eject");
+        assert!(
+            !r.grid
+                .group_members(TEST_GROUP)
+                .iter()
+                .any(|m| m.id == OTHER)
+        );
+        assert_eq!(r.client.is_group_member(TEST_GROUP, OTHER).await, Ok(false));
+        // an owner cannot be ejected
+        assert!(matches!(
+            r.client.group_eject(TEST_GROUP, SOME).await,
+            Err(ClientError::Refused(_))
+        ));
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
+
+    #[tokio::test]
+    async fn a_group_invitation_accepted() {
+        let r = ready(GridConfig::default()).await;
+        let mut events = r.client.subscribe();
+        let tx = r.grid.invite_bot(&some_resident(), THIRD_GROUP, 0);
+        let im = tokio::time::timeout(WAIT, async {
+            loop {
+                if let Ok(Event::InstantMessage(im)) = events.recv().await {
+                    return im;
+                }
+            }
+        })
+        .await
+        .expect("the invitation");
+        assert_eq!(im.dialog, ferro_client::events::dialog::GROUP_INVITATION);
+        assert_eq!((im.from_agent_id, im.id), (THIRD_GROUP, tx));
+        r.client
+            .answer_group_invite(im.from_agent_id, im.id, true)
+            .await
+            .expect("answer");
+        assert!(
+            r.grid
+                .wait_for(WAIT, |s| *s
+                    == Seen::GroupInviteAnswer {
+                        group: THIRD_GROUP,
+                        accept: true
+                    })
+                .await
+        );
+        let deadline = tokio::time::Instant::now() + WAIT;
+        while !r.client.state().groups.iter().any(|g| g.id == THIRD_GROUP) {
+            assert!(tokio::time::Instant::now() < deadline, "not in the group");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
 }

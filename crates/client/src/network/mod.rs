@@ -12,6 +12,10 @@
 //! The old region is left behind: like LibreMetaverse's bots (AgentSettings.MultipleSims = false),
 //! the bot keeps no circuits to neighbour regions.
 
+mod groups;
+
+pub(crate) use groups::GroupRequest;
+
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::events::{ChatMessage, Event, InstantMessage};
@@ -167,6 +171,8 @@ struct Session<'a> {
     name_waits: Vec<(HashSet<Uuid>, oneshot::Sender<()>)>,
     /// Avatar searches, by query id.
     picker_waits: HashMap<Uuid, oneshot::Sender<Vec<(Uuid, String)>>>,
+    /// Group replies being gathered.
+    groups: groups::GroupWaits,
 }
 
 impl Session<'_> {
@@ -219,6 +225,26 @@ impl Session<'_> {
         a.camera_up_axis = Vec3::Z;
         a.far = 64.0;
         self.send(&m, false);
+    }
+
+    /// An instant message of any dialog, from the bot (LLIMModel::sendMessage's pack_instant_message).
+    fn send_im(&mut self, to: Uuid, dialog: u8, id: Uuid, message: &str, bucket: Vec<u8>) {
+        let mut m = ImprovedInstantMessage::default();
+        m.agent_data.agent_id = self.login.agent_id;
+        m.agent_data.session_id = self.login.session_id;
+        let b = &mut m.message_block;
+        b.to_agent_id = to;
+        b.dialog = dialog;
+        b.id = id;
+        b.position = self.position;
+        b.from_agent_name = str_field(&format!(
+            "{} {}",
+            self.login.first_name, self.login.last_name
+        ));
+        b.message = str_field(message);
+        // an empty bucket is sent as one zero byte, as the viewer does
+        b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
+        self.send(&m, true);
     }
 
     fn send_logout_request(&mut self) {
@@ -396,6 +422,7 @@ impl Session<'_> {
                 self.name_waits.push((missing, reply));
             }
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
+            Request::Group(r) => self.on_group_request(r),
             Request::DisplayNames { ids, reply } => match self.caps.get("GetDisplayNames") {
                 Some(cap) => {
                     tokio::spawn(fetch_display_names(
@@ -488,6 +515,7 @@ impl Session<'_> {
         // callers that gave up waiting
         self.name_waits.retain(|(_, reply)| !reply.is_closed());
         self.picker_waits.retain(|_, reply| !reply.is_closed());
+        self.groups.retain_open();
         if now.duration_since(self.circuit.last_recv) > REGION_TIMEOUT {
             return Some(End::Lost(format!(
                 "nothing from the region for {} s",
@@ -526,6 +554,9 @@ impl Session<'_> {
     }
 
     fn dispatch(&mut self, pkt: &IncomingPacket) -> Result<Option<End>, ferro_msg::DecodeError> {
+        if self.dispatch_groups(pkt)? {
+            return Ok(None);
+        }
         let id: MsgId = pkt.id;
         if id == PacketAck::ID {
             let m: PacketAck = pkt.decode()?;
@@ -910,6 +941,7 @@ async fn run(
         last_update: Instant::now(),
         name_waits: Vec::new(),
         picker_waits: HashMap::new(),
+        groups: groups::GroupWaits::default(),
     };
     s.send_use_circuit_code();
     // capabilities and the event queue, alongside the circuit

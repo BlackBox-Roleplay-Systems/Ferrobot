@@ -13,6 +13,9 @@
 //! closed circuit. Each feature that talks to a region adds what it needs here (ROADMAP phase 1).
 
 mod caps;
+mod groups;
+
+pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GROUP};
 mod http;
 mod login;
 mod region;
@@ -47,8 +50,10 @@ pub struct GridConfig {
     pub ping_interval: Duration,
     /// Other avatars the grid knows, for names and searches.
     pub residents: Vec<Resident>,
-    /// The groups the bot is in, and its active group.
+    /// The groups: the bot is in some, can be invited to the others.
     pub groups: Vec<GridGroup>,
+    /// The regions give the GroupMemberData capability (else members come by UDP).
+    pub member_data_cap: bool,
     pub active_group: Option<Uuid>,
     /// The login reply's `home`, as the grid writes it (LLSD notation in a string).
     pub home: String,
@@ -65,12 +70,40 @@ pub struct Resident {
     pub last: String,
 }
 
+/// A group: its roles, its members, and the bot's place in it.
 #[derive(Debug, Clone)]
 pub struct GridGroup {
     pub id: Uuid,
     pub name: String,
+    /// The bot's title and powers in it.
     pub title: String,
     pub powers: u64,
+    /// The bot is in it (else it can be invited, [`TestGrid::invite_bot`]).
+    pub bot_member: bool,
+    /// The bot's roles, besides "everyone".
+    pub bot_roles: Vec<Uuid>,
+    /// The roles; "everyone" (the nil id) first.
+    pub roles: Vec<GridRole>,
+    /// The members other than the bot.
+    pub members: Vec<GridMember>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GridRole {
+    pub id: Uuid,
+    pub name: String,
+    pub title: String,
+    pub powers: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct GridMember {
+    pub id: Uuid,
+    /// Roles besides "everyone".
+    pub roles: Vec<Uuid>,
+    pub owner: bool,
+    /// "Online", or the last login as MM/DD/YYYY.
+    pub last_login: String,
 }
 
 impl Default for GridConfig {
@@ -95,25 +128,13 @@ impl Default for GridConfig {
                     last: "Avatar".into(),
                 },
             ],
-            groups: vec![
-                GridGroup {
-                    id: Uuid::from_u128(0x6000_0001),
-                    name: "Test Group".into(),
-                    title: "Bot".into(),
-                    powers: 0x0000_0002_0000_0002,
-                },
-                GridGroup {
-                    id: Uuid::from_u128(0x6000_0002),
-                    name: "Second Group".into(),
-                    title: "Member".into(),
-                    powers: 0,
-                },
-            ],
+            groups: groups::default_groups(),
             active_group: Some(Uuid::from_u128(0x6000_0001)),
             // in the second region
             home: "{'region_handle':[r256256, r256000], 'position':[r100, r110, r22], 'look_at':[r1, r0, r0]}".into(),
             display_names: vec![(Uuid::from_u128(0x5eed_0001), "Sunny".into())],
             display_names_cap: true,
+            member_data_cap: true,
         }
     }
 }
@@ -171,6 +192,40 @@ pub enum Seen {
         session: u32,
         ids: Vec<Uuid>,
     },
+    GroupRolesRequest {
+        group: Uuid,
+    },
+    /// By UDP (`cap` false) or the GroupMemberData capability.
+    GroupMembersRequest {
+        group: Uuid,
+        cap: bool,
+    },
+    GroupRoleMembersRequest {
+        group: Uuid,
+    },
+    GroupTitlesRequest {
+        group: Uuid,
+    },
+    GroupInvite {
+        group: Uuid,
+        invitee: Uuid,
+        role: Uuid,
+    },
+    GroupEject {
+        group: Uuid,
+        member: Uuid,
+        done: bool,
+    },
+    GroupRoleChange {
+        group: Uuid,
+        role: Uuid,
+        member: Uuid,
+        add: bool,
+    },
+    GroupInviteAnswer {
+        group: Uuid,
+        accept: bool,
+    },
     TeleportLureRequest {
         session: u32,
         lure: Uuid,
@@ -220,6 +275,10 @@ struct State {
     lures: HashSet<Uuid>,
     /// The next teleport fails, with this reason.
     fail_teleport: Option<String>,
+    /// The groups as they are now: ejections, role changes and accepted invitations change them.
+    groups: Vec<GridGroup>,
+    /// Group invitations sent to the bot: transaction to group.
+    group_invites: HashMap<Uuid, Uuid>,
 }
 
 /// A region as the others see it.
@@ -283,12 +342,31 @@ impl Shared {
 /// What a test asks a region to send to the bot.
 #[derive(Debug)]
 enum RegionCommand {
-    Say { from: String, text: String },
-    Im { from: String, text: String },
-    OfferTeleport { from: Resident, lure: Uuid },
-    Kick { reason: String },
+    Say {
+        from: String,
+        text: String,
+    },
+    Im {
+        from: String,
+        text: String,
+    },
+    OfferTeleport {
+        from: Resident,
+        lure: Uuid,
+    },
+    Kick {
+        reason: String,
+    },
     DisableSimulator,
-    RestartNotice { seconds: i32 },
+    RestartNotice {
+        seconds: i32,
+    },
+    GroupInvitation {
+        from: Resident,
+        group: Uuid,
+        transaction: Uuid,
+        fee: i32,
+    },
 }
 
 /// A running fake grid. Dropping it stops it.
@@ -328,6 +406,7 @@ impl TestGrid {
                 y: 1000 * 256,
             },
         ];
+        let groups = cfg.groups.clone();
         let shared = Arc::new(Shared {
             cfg,
             agent_id: Uuid::new_v4(),
@@ -338,6 +417,8 @@ impl TestGrid {
                 seen: Vec::new(),
                 lures: HashSet::new(),
                 fail_teleport: None,
+                groups,
+                group_invites: HashMap::new(),
             }),
             eq_wake: Notify::new(),
         });
@@ -397,7 +478,9 @@ impl TestGrid {
     pub async fn wait_until(&self, timeout: Duration, done: impl Fn(&[Seen]) -> bool) -> bool {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            if done(&self.shared.state().seen) {
+            // a copy: `done` may ask the grid again, and its lock is not reentrant
+            let seen = self.shared.state().seen.clone();
+            if done(&seen) {
                 return true;
             }
             if tokio::time::Instant::now() >= deadline {
@@ -439,6 +522,35 @@ impl TestGrid {
             lure,
         });
         lure
+    }
+
+    /// A resident invites the bot into a group it is not in (IM_GROUP_INVITATION), with this
+    /// membership fee. Returns the invitation's transaction id.
+    pub fn invite_bot(&self, from: &Resident, group: Uuid, fee: i32) -> Uuid {
+        let transaction = Uuid::new_v4();
+        self.shared.state().group_invites.insert(transaction, group);
+        self.command(RegionCommand::GroupInvitation {
+            from: from.clone(),
+            group,
+            transaction,
+            fee,
+        });
+        transaction
+    }
+
+    /// The members of a group as they are now (the bot included when it is in it).
+    pub fn group_members(&self, group: Uuid) -> Vec<GridMember> {
+        let st = self.shared.state();
+        st.groups
+            .iter()
+            .find(|g| g.id == group)
+            .map(|g| groups::all_members(g, self.shared.agent_id))
+            .unwrap_or_default()
+    }
+
+    /// The bot's agent id.
+    pub fn agent_id(&self) -> Uuid {
+        self.shared.agent_id
     }
 
     /// The next teleport fails (TeleportFailed on the event queue) with this reason.

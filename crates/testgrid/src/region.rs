@@ -182,6 +182,7 @@ impl Region {
                     None => self.teleport_failed(n, "Could not find that region."),
                 }
             }
+        } else if self.on_group_packet(&pkt, from, n) {
         } else if id == LogoutRequest::ID {
             self.shared.saw(Seen::LogoutRequest { session: n });
             let mut r = LogoutReply::default();
@@ -284,29 +285,12 @@ impl Region {
             m.agent_data.group_title = str_field(&g.title);
             m.agent_data.group_powers = g.powers;
         }
-        let groups: Vec<Llsd> = cfg
-            .groups
-            .iter()
-            .map(|g| {
-                let mut e = Map::new();
-                e.insert("GroupID".into(), g.id.into());
-                e.insert("GroupName".into(), g.name.clone().into());
-                e.insert("GroupInsigniaID".into(), Uuid::nil().into());
-                // U64 travels as 8 big-endian bytes in LLSD
-                e.insert("GroupPowers".into(), g.powers.to_be_bytes().to_vec().into());
-                e.insert("AcceptNotices".into(), true.into());
-                e.insert("Contribution".into(), 0.into());
-                Llsd::Map(e)
-            })
-            .collect();
-        let mut body = Map::new();
-        let mut agent = Map::new();
-        agent.insert("AgentID".into(), self.shared.agent_id.into());
-        body.insert("AgentData".into(), Llsd::Array(vec![Llsd::Map(agent)]));
-        body.insert("GroupData".into(), Llsd::Array(groups));
+        let body = {
+            let st = self.shared.state();
+            crate::groups::agent_group_data(&st.groups, self.shared.agent_id)
+        };
         self.send(to, &m, true);
-        self.shared
-            .queue_event(n, "AgentGroupDataUpdate", Llsd::Map(body));
+        self.shared.queue_event(n, "AgentGroupDataUpdate", body);
     }
 
     /// UUIDNameReply with the residents the grid knows; unknown ids get no answer.
@@ -367,6 +351,177 @@ impl Region {
         m.agent_data.query_id = query;
         m.data = data;
         self.send(to, &m, true);
+    }
+
+    /// The group messages; false when `pkt` is not one of them.
+    fn on_group_packet(&mut self, pkt: &IncomingPacket, from: SocketAddr, n: u32) -> bool {
+        use crate::groups as g;
+        let bot = self.shared.agent_id;
+        let group_of = |shared: &Shared, id: Uuid| {
+            shared
+                .state()
+                .groups
+                .iter()
+                .find(|x| x.id == id && x.bot_member)
+                .cloned()
+        };
+        let id = pkt.id;
+        if id == GroupRoleDataRequest::ID {
+            if let Ok(m) = pkt.decode::<GroupRoleDataRequest>() {
+                let group = m.group_data.group_id;
+                self.shared.saw(Seen::GroupRolesRequest { group });
+                if let Some(grp) = group_of(&self.shared, group) {
+                    for r in g::role_data_replies(&grp, bot, m.group_data.request_id) {
+                        self.send(from, &r, true);
+                    }
+                }
+            }
+        } else if id == GroupMembersRequest::ID {
+            if let Ok(m) = pkt.decode::<GroupMembersRequest>() {
+                let group = m.group_data.group_id;
+                self.shared
+                    .saw(Seen::GroupMembersRequest { group, cap: false });
+                if let Some(grp) = group_of(&self.shared, group) {
+                    for r in g::members_replies(&grp, bot, m.group_data.request_id) {
+                        self.send(from, &r, true);
+                    }
+                }
+            }
+        } else if id == GroupRoleMembersRequest::ID {
+            if let Ok(m) = pkt.decode::<GroupRoleMembersRequest>() {
+                let group = m.group_data.group_id;
+                self.shared.saw(Seen::GroupRoleMembersRequest { group });
+                if let Some(grp) = group_of(&self.shared, group) {
+                    for r in g::role_members_replies(&grp, bot, m.group_data.request_id) {
+                        self.send(from, &r, true);
+                    }
+                }
+            }
+        } else if id == GroupTitlesRequest::ID {
+            if let Ok(m) = pkt.decode::<GroupTitlesRequest>() {
+                let group = m.agent_data.group_id;
+                self.shared.saw(Seen::GroupTitlesRequest { group });
+                if let Some(grp) = group_of(&self.shared, group) {
+                    let r = g::titles_reply(&grp, bot, m.agent_data.request_id);
+                    self.send(from, &r, true);
+                }
+            }
+        } else if id == InviteGroupRequest::ID {
+            if let Ok(m) = pkt.decode::<InviteGroupRequest>() {
+                for i in &m.invite_data {
+                    self.shared.saw(Seen::GroupInvite {
+                        group: m.group_data.group_id,
+                        invitee: i.invitee_id,
+                        role: i.role_id,
+                    });
+                }
+            }
+        } else if id == EjectGroupMemberRequest::ID {
+            if let Ok(m) = pkt.decode::<EjectGroupMemberRequest>() {
+                let group = m.group_data.group_id;
+                let mut all = true;
+                for e in &m.eject_data {
+                    let done = self.eject(group, e.ejectee_id);
+                    self.shared.saw(Seen::GroupEject {
+                        group,
+                        member: e.ejectee_id,
+                        done,
+                    });
+                    all &= done;
+                }
+                let mut r = EjectGroupMemberReply::default();
+                r.agent_data.agent_id = bot;
+                r.group_data.group_id = group;
+                r.eject_data.success = all;
+                self.send(from, &r, true);
+            }
+        } else if id == GroupRoleChanges::ID {
+            if let Ok(m) = pkt.decode::<GroupRoleChanges>() {
+                let group = m.agent_data.group_id;
+                for c in &m.role_change {
+                    let add = c.change == 0;
+                    self.change_role(group, c.role_id, c.member_id, add);
+                    self.shared.saw(Seen::GroupRoleChange {
+                        group,
+                        role: c.role_id,
+                        member: c.member_id,
+                        add,
+                    });
+                }
+            }
+        } else if id == ImprovedInstantMessage::ID {
+            if let Ok(m) = pkt.decode::<ImprovedInstantMessage>() {
+                let b = &m.message_block;
+                // send_join_group_response: an IM to the group
+                if matches!(b.dialog, 35 | 36) {
+                    let accept = b.dialog == 35;
+                    let group = self.shared.state().group_invites.remove(&b.id);
+                    if let Some(group) = group.filter(|g| *g == b.to_agent_id) {
+                        self.shared.saw(Seen::GroupInviteAnswer { group, accept });
+                        if accept {
+                            self.join(group, n);
+                        }
+                    }
+                }
+            }
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// An ejection by the bot: it needs the power, and an owner cannot be ejected.
+    fn eject(&mut self, group: Uuid, member: Uuid) -> bool {
+        let mut st = self.shared.state();
+        let Some(g) = st.groups.iter_mut().find(|g| g.id == group && g.bot_member) else {
+            return false;
+        };
+        if g.powers & crate::groups::MEMBER_EJECT == 0 {
+            return false;
+        }
+        match g.members.iter().position(|m| m.id == member && !m.owner) {
+            Some(i) => {
+                g.members.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A role given or taken: the bot needs the power, the member and the role must exist; the
+    /// grid ignores the others silently.
+    fn change_role(&mut self, group: Uuid, role: Uuid, member: Uuid, add: bool) {
+        let mut st = self.shared.state();
+        let Some(g) = st.groups.iter_mut().find(|g| g.id == group && g.bot_member) else {
+            return;
+        };
+        let power = if add {
+            crate::groups::ROLE_ASSIGN_MEMBER
+        } else {
+            crate::groups::ROLE_REMOVE_MEMBER
+        };
+        if g.powers & power == 0 || role.is_nil() || !g.roles.iter().any(|r| r.id == role) {
+            return;
+        }
+        if let Some(m) = g.members.iter_mut().find(|m| m.id == member) {
+            if add && !m.roles.contains(&role) {
+                m.roles.push(role);
+            } else if !add {
+                m.roles.retain(|r| *r != role);
+            }
+        }
+    }
+
+    /// The bot joins a group it accepted: the group list goes out again.
+    fn join(&mut self, group: Uuid, n: u32) {
+        let body = {
+            let mut st = self.shared.state();
+            if let Some(g) = st.groups.iter_mut().find(|g| g.id == group) {
+                g.bot_member = true;
+            }
+            crate::groups::agent_group_data(&st.groups, self.shared.agent_id)
+        };
+        self.shared.queue_event(n, "AgentGroupDataUpdate", body);
     }
 
     fn other(&self) -> usize {
@@ -508,6 +663,27 @@ impl Region {
                 b.id = lure;
                 b.from_agent_name = str_field(&format!("{} {}", from.first, from.last));
                 b.message = str_field("Join me in Second Region");
+                self.send(to, &m, true);
+            }
+            RegionCommand::GroupInvitation {
+                from,
+                group,
+                transaction,
+                fee,
+            } => {
+                let mut m = ImprovedInstantMessage::default();
+                // the invitation comes from the group (process_improved_im, IM_GROUP_INVITATION)
+                m.agent_data.agent_id = group;
+                let b = &mut m.message_block;
+                b.to_agent_id = self.shared.agent_id;
+                b.dialog = 3; // IM_GROUP_INVITATION
+                b.id = transaction;
+                b.from_agent_name = str_field(&format!("{} {}", from.first, from.last));
+                b.message = str_field("You have been invited to join a group.");
+                // invite_bucket_t: the fee (big-endian S32) and the role
+                let mut bucket = fee.to_be_bytes().to_vec();
+                bucket.extend_from_slice(Uuid::nil().as_bytes());
+                b.binary_bucket = bucket;
                 self.send(to, &m, true);
             }
             RegionCommand::Kick { reason } => {

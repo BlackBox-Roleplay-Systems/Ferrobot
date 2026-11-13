@@ -12,6 +12,8 @@
 mod caps;
 mod circuit;
 pub mod events;
+mod group_api;
+pub mod groups;
 pub mod login;
 pub mod names;
 mod network;
@@ -47,6 +49,8 @@ pub enum ClientError {
     Timeout,
     #[error("{0}")]
     Refused(String),
+    #[error("the bot is not in that group")]
+    UnknownGroup,
 }
 
 /// What the network task is asked to do. Each request that has an answer carries the
@@ -69,6 +73,8 @@ pub(crate) enum Request {
         ids: Vec<Uuid>,
         reply: oneshot::Sender<Result<Vec<DisplayName>, String>>,
     },
+    /// Groups: roles, members, invitations, ejections, role changes.
+    Group(network::GroupRequest),
     /// A teleport; answered with the region arrived in, or the grid's reason.
     Teleport {
         to: TeleportTo,
@@ -94,6 +100,8 @@ pub(crate) struct Shared {
     pub events: broadcast::Sender<Event>,
     state: RwLock<State>,
     names: Mutex<names::Cache>,
+    /// Group member lists and when they were fetched.
+    group_members: Mutex<HashMap<Uuid, (Vec<groups::GroupMember>, std::time::Instant)>>,
 }
 
 impl Shared {
@@ -135,6 +143,7 @@ impl Client {
             events,
             state: RwLock::new(State::default()),
             names: Mutex::new(names::Cache::default()),
+            group_members: Mutex::new(HashMap::new()),
         });
         let (tx, rx) = mpsc::channel(REQUEST_BUFFER);
         (
