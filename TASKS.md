@@ -460,6 +460,7 @@ baking: the bot says so and goes on.
   matches); the clock is UTC
 - ⬜ Events and commands on events: to check on the grid (human); events_HideStatusOutput and
   onevent_HideStatusOutput are not read (Ferrobot has no status page)
+- 🔧 RLV: objects drive the bot with RestrainedLove commands (SecondBot's RLVService)
 
 ## Phase 8 - Running it for real
 
