@@ -414,6 +414,69 @@ impl Region {
                     self.send(from, &r, true);
                 }
             }
+        } else if id == CreateInventoryFolder::ID {
+            if let Ok(m) = pkt.decode::<CreateInventoryFolder>() {
+                let f = &m.folder_data;
+                let name = field_str(&f.name);
+                self.shared
+                    .state()
+                    .inventory
+                    .folders
+                    .push(crate::inventory::Folder {
+                        id: f.folder_id,
+                        parent: f.parent_id,
+                        name: name.clone(),
+                        kind: i32::from(f.type_),
+                    });
+                self.shared.saw(Seen::CreateInventoryFolder {
+                    id: f.folder_id,
+                    parent: f.parent_id,
+                    name,
+                });
+            }
+        } else if id == MoveInventoryItem::ID {
+            if let Ok(m) = pkt.decode::<MoveInventoryItem>() {
+                for d in &m.inventory_data {
+                    let name = field_str(&d.new_name);
+                    if let Some(i) = self
+                        .shared
+                        .state()
+                        .inventory
+                        .items
+                        .iter_mut()
+                        .find(|i| i.id == d.item_id)
+                    {
+                        i.parent = d.folder_id;
+                        if !name.is_empty() {
+                            i.name = name.clone();
+                        }
+                    }
+                    self.shared.saw(Seen::MoveInventoryItem {
+                        item: d.item_id,
+                        folder: d.folder_id,
+                        name,
+                    });
+                }
+            }
+        } else if id == MoveInventoryFolder::ID {
+            if let Ok(m) = pkt.decode::<MoveInventoryFolder>() {
+                for d in &m.inventory_data {
+                    if let Some(f) = self
+                        .shared
+                        .state()
+                        .inventory
+                        .folders
+                        .iter_mut()
+                        .find(|f| f.id == d.folder_id)
+                    {
+                        f.parent = d.parent_id;
+                    }
+                    self.shared.saw(Seen::MoveInventoryFolder {
+                        folder: d.folder_id,
+                        parent: d.parent_id,
+                    });
+                }
+            }
         } else if id == GroupTitleUpdate::ID {
             if let Ok(m) = pkt.decode::<GroupTitleUpdate>() {
                 self.shared.saw(Seen::GroupTitleUpdate {
@@ -587,6 +650,16 @@ impl Region {
                     0 => self.shared.saw(Seen::Im {
                         to: b.to_agent_id,
                         message: field_str(&b.message),
+                    }),
+                    4 => self.shared.saw(Seen::InventoryOffer {
+                        to: b.to_agent_id,
+                        name: field_str(&b.message),
+                        entries: b
+                            .binary_bucket
+                            .chunks(17)
+                            .filter(|c| c.len() == 17)
+                            .map(|c| (c[0], Uuid::from_slice(&c[1..]).unwrap_or_default()))
+                            .collect(),
                     }),
                     // send_group_notice: needs the notices power, as the grid checks
                     32 => self.shared.saw(Seen::GroupNotice {

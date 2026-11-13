@@ -13,8 +13,10 @@
 //! the bot keeps no circuits to neighbour regions.
 
 mod groups;
+mod inventory;
 
 pub(crate) use groups::GroupRequest;
+pub(crate) use inventory::InventoryRequest;
 
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
@@ -118,6 +120,7 @@ impl Network {
             // chat sessions end with the login
             st.group_chats.clear();
             st.friends = login.buddies.clone();
+            st.inventory_root = login.inventory_root;
         }
         self.shared
             .names()
@@ -497,6 +500,7 @@ impl Session<'_> {
             }
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
             Request::Group(r) => self.on_group_request(r),
+            Request::Inventory(r) => self.on_inventory_request(r),
             Request::Rebake { reply } => self.request_appearance(Some(reply)),
             Request::RegionHandle { name, reply } => {
                 // LLWorldMapMessage::sendNamedRegionRequest; the reply gives the grid position

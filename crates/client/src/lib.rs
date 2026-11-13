@@ -13,7 +13,10 @@ mod caps;
 mod circuit;
 pub mod events;
 mod group_api;
+mod inventory_api;
+pub use inventory_api::FolderNode;
 pub mod groups;
+pub mod inventory;
 pub mod login;
 pub mod names;
 mod network;
@@ -101,6 +104,8 @@ pub(crate) enum Request {
         interaction: Interaction,
         reply: oneshot::Sender<()>,
     },
+    /// The inventory: fetches, gifts, changes.
+    Inventory(network::InventoryRequest),
     /// Groups: roles, members, invitations, ejections, role changes.
     Group(network::GroupRequest),
     /// A teleport; answered with the region arrived in, or the grid's reason.
@@ -152,6 +157,8 @@ pub(crate) struct Shared {
     pub events: broadcast::Sender<Event>,
     state: RwLock<State>,
     names: Mutex<names::Cache>,
+    /// The names of the inventory folders seen in fetches.
+    folder_names: Mutex<HashMap<Uuid, String>>,
     /// Group member lists and when they were fetched.
     group_members: Mutex<HashMap<Uuid, (Vec<groups::GroupMember>, std::time::Instant)>>,
 }
@@ -196,6 +203,7 @@ impl Client {
             state: RwLock::new(State::default()),
             names: Mutex::new(names::Cache::default()),
             group_members: Mutex::new(HashMap::new()),
+            folder_names: Mutex::new(HashMap::new()),
         });
         let (tx, rx) = mpsc::channel(REQUEST_BUFFER);
         (

@@ -59,10 +59,9 @@ pub struct LoginResponse {
     pub home: Option<crate::state::Home>,
     /// The friends (the login reply's buddy-list).
     pub buddies: Vec<Uuid>,
-    /// For the inventory and group commands to come.
+    /// For the commands to come that need it.
     #[allow(dead_code)]
     pub secure_session_id: Uuid,
-    #[allow(dead_code)]
     pub inventory_root: Uuid,
 }
 

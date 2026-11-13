@@ -417,6 +417,7 @@ dependencies = [
  "log",
  "md5",
  "reqwest",
+ "serde",
  "thiserror",
  "tokio",
  "uuid",

@@ -21,6 +21,8 @@ crates/
     src/network/groups.rs  group requests and replies (from Aurora's session_groups.rs)
     src/groups.rs          group data: roles, members, pairs, titles (from Aurora's groups.rs)
     src/group_api.rs       the client's group requests, the member list cache
+    src/inventory.rs       inventory data, fetch bodies and answers (from Aurora's inventory.rs)
+    src/inventory_api.rs   folders, items, gifts, moves; network/inventory.rs sends them
     src/events.rs          what the client reports (Event, chat, IMs)
     src/state.rs           what it keeps: who and where the bot is, its groups, its health
     src/names.rs           key <-> name cache

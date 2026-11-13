@@ -72,7 +72,7 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
     }
     r.insert("message".into(), "Welcome to the test grid".into());
     let mut root = Map::new();
-    root.insert("folder_id".into(), Uuid::new_v4().into());
+    root.insert("folder_id".into(), crate::inventory::ROOT.into());
     r.insert("inventory-root".into(), Llsd::Array(vec![Llsd::Map(root)]));
     st.sessions.insert(n, session);
     drop(st);

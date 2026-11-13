@@ -8,6 +8,7 @@ mod chat;
 mod dialogs;
 mod groups;
 mod info;
+mod inventory;
 pub mod reply;
 
 use crate::dialogs::Dialogs;
@@ -34,6 +35,8 @@ pub struct Ctx {
 
 /// The commands that change things in world: under the rate limit.
 const CHANGING: &[&str] = &[
+    "SendItem",
+    "SendFolder",
     "GroupInvite",
     "GroupEject",
     "GroupAddRole",
@@ -105,6 +108,18 @@ const COMMANDS: &[(&str, usize)] = &[
     ("ClearKeyValue", 1),
     ("BotStatus", 0),
     ("RebakeAppearance", 0),
+    ("InventoryFolders", 0),
+    ("InventoryFoldersLimited", 1),
+    ("InventoryContents", 1),
+    ("SendItem", 2),
+    ("SendFolder", 2),
+    ("GetRealUUID", 1),
+    ("CreateInventoryFolder", 2),
+    ("RenameInventory", 2),
+    ("DeleteInventoryItem", 1),
+    ("DeleteInventoryFolder", 1),
+    ("MoveInventoryItem", 2),
+    ("MoveInventoryFolder", 2),
     ("DialogRelayAvatarTarget", 1),
     ("DialogRelayChatTarget", 1),
     ("DialogRelayHttpTarget", 1),
@@ -185,6 +200,18 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "ClearKeyValue" => bot::clear_key_value(ctx, a(0)),
         "BotStatus" => bot::bot_status(ctx),
         "RebakeAppearance" => bot::rebake(ctx).await,
+        "InventoryFolders" => inventory::folders(ctx).await,
+        "InventoryFoldersLimited" => inventory::folders_limited(ctx, a(0)).await,
+        "InventoryContents" => inventory::contents(ctx, a(0)).await,
+        "SendItem" => inventory::send_item(ctx, a(0), a(1)).await,
+        "SendFolder" => inventory::send_folder(ctx, a(0), a(1)).await,
+        "GetRealUUID" => inventory::real_uuid(ctx, a(0)).await,
+        "CreateInventoryFolder" => inventory::create_folder(ctx, a(0), a(1)).await,
+        "RenameInventory" => inventory::rename(ctx, a(0), a(1)).await,
+        "DeleteInventoryItem" => inventory::delete_item(ctx, a(0)).await,
+        "DeleteInventoryFolder" => inventory::delete_folder(ctx, a(0)).await,
+        "MoveInventoryItem" => inventory::move_item(ctx, a(0), a(1)).await,
+        "MoveInventoryFolder" => inventory::move_folder(ctx, a(0), a(1)).await,
         "DialogRelayAvatarTarget" => dialogs::relay_avatar(ctx, a(0)).await,
         "DialogRelayChatTarget" => dialogs::relay_chat(ctx, a(0)),
         "DialogRelayHttpTarget" => dialogs::relay_http(ctx, a(0)),

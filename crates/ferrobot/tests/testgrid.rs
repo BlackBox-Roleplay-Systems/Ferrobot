@@ -819,6 +819,155 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's Inventory commands, against the grid's inventory.
+    #[tokio::test]
+    async fn inventory_commands() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+
+        let tree: Value =
+            serde_json::from_str(&api.reply("InventoryFolders", &[]).await).expect("tree");
+        assert_eq!(tree["name"], "My Inventory");
+        let names: Vec<&str> = tree["subfolders"]
+            .as_array()
+            .expect("subfolders")
+            .iter()
+            .map(|f| f["name"].as_str().expect("name"))
+            .collect();
+        assert!(
+            names.contains(&"Notecards") && names.contains(&"Trash"),
+            "{names:?}"
+        );
+        let stuff = tree["subfolders"]
+            .as_array()
+            .expect("subfolders")
+            .iter()
+            .find(|f| f["name"] == "Stuff")
+            .expect("Stuff");
+        assert_eq!(stuff["subfolders"][0]["name"], "Sub");
+
+        let contents: Vec<Value> = serde_json::from_str(
+            &api.reply("InventoryContents", &[&inv::NOTECARDS.to_string()])
+                .await,
+        )
+        .expect("list");
+        assert_eq!(contents[0]["typename"], "Folder");
+        assert_eq!(contents[0]["name"], "Notecards");
+        assert_eq!(contents[1]["name"], "Welcome");
+        assert_eq!(contents[1]["typename"], "InventoryNotecard");
+
+        // the asset behind a link
+        assert_eq!(
+            api.reply("GetRealUUID", &[&inv::LINK.to_string()]).await,
+            inv::NOTECARD_ASSET.to_string()
+        );
+
+        // sending an item and a folder
+        assert_eq!(
+            api.reply("SendItem", &[&inv::NOTECARD.to_string(), "Other Avatar"])
+                .await,
+            "ok"
+        );
+        assert_eq!(
+            api.reply("SendFolder", &[&inv::OBJECTS.to_string(), OTHER])
+                .await,
+            "ok"
+        );
+        let other = uuid_from(0x5eed_0002);
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.contains(&Seen::InventoryOffer {
+                    to: other,
+                    name: "Welcome".into(),
+                    entries: vec![(7, inv::NOTECARD)],
+                }) && seen.contains(&Seen::InventoryOffer {
+                    to: other,
+                    name: "Objects".into(),
+                    entries: vec![(8, inv::OBJECTS), (6, inv::BOX)],
+                })
+            })
+            .await,
+            "{:?}",
+            grid.seen()
+        );
+        assert_eq!(
+            api.failure("SendItem", &["00000000-0000-0000-0000-0000000000ff", OTHER])
+                .await
+                .0,
+            "Unable to find item"
+        );
+
+        // a new folder, an item renamed and moved, a folder moved, things thrown away
+        let (key, inner) = api
+            .run(
+                "CreateInventoryFolder",
+                &[&inv::ROOT.to_string(), "Deliveries"],
+            )
+            .await;
+        assert!(key && inner["reply"] == "Ok");
+        let new_id: uuid::Uuid = inner["args"][0]
+            .as_str()
+            .expect("its key")
+            .parse()
+            .expect("a key");
+        assert_eq!(
+            api.reply("RenameInventory", &[&inv::BOX.to_string(), "Big Box"])
+                .await,
+            "Ok"
+        );
+        assert_eq!(
+            api.reply(
+                "MoveInventoryItem",
+                &[&inv::BOX.to_string(), &new_id.to_string()]
+            )
+            .await,
+            "Ok"
+        );
+        assert_eq!(
+            api.reply(
+                "MoveInventoryFolder",
+                &[&inv::SUB.to_string(), &new_id.to_string()]
+            )
+            .await,
+            "Ok"
+        );
+        assert_eq!(
+            api.reply("DeleteInventoryItem", &[&inv::NOTECARD.to_string()])
+                .await,
+            "Ok"
+        );
+        assert!(
+            grid.wait_until(WAIT, |_| {
+                let now = grid.inventory();
+                let item = |id| now.items.iter().find(|i| i.id == id).cloned();
+                now.folders
+                    .iter()
+                    .any(|f| f.id == new_id && f.name == "Deliveries")
+                    && item(inv::BOX).is_some_and(|b| b.name == "Big Box" && b.parent == new_id)
+                    && now
+                        .folders
+                        .iter()
+                        .any(|f| f.id == inv::SUB && f.parent == new_id)
+                    && item(inv::NOTECARD).is_some_and(|n| n.parent == inv::TRASH)
+            })
+            .await,
+            "{:?}",
+            grid.inventory()
+        );
+        assert_eq!(
+            api.failure("RenameInventory", &[&inv::BOX.to_string(), "ab"])
+                .await
+                .0,
+            "Item name is to short"
+        );
+
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's Info, Core and Self commands, and BotStatus; Logoff stops the bot.
     #[tokio::test]
     async fn bot_commands() {

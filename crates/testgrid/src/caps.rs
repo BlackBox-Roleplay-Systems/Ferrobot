@@ -29,6 +29,33 @@ pub async fn handle(
         ("chatsessionrequest", "POST") => chat_session_request(shared, body),
         ("groupapi", "GET" | "POST") => group_api(shared, method, query, body),
         ("appearance", "POST") => appearance(shared, body),
+        ("fetchdescendents", "POST") => {
+            let Ok(v) = from_xml(body) else {
+                return Response::status(400);
+            };
+            let folders: Vec<uuid::Uuid> = v["folders"]
+                .as_array()
+                .iter()
+                .map(|f| f["folder_id"].as_uuid())
+                .collect();
+            let reply = shared
+                .state()
+                .inventory
+                .descendents(&folders, shared.agent_id);
+            llsd_reply(&reply)
+        }
+        ("fetchitems", "POST") => {
+            let Ok(v) = from_xml(body) else {
+                return Response::status(400);
+            };
+            let ids: Vec<uuid::Uuid> = v["items"]
+                .as_array()
+                .iter()
+                .map(|i| i["item_id"].as_uuid())
+                .collect();
+            let reply = shared.state().inventory.items(&ids, shared.agent_id);
+            llsd_reply(&reply)
+        }
         _ => Response::status(404),
     }
 }
@@ -55,6 +82,17 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
             "GetDisplayNames".into(),
             format!("http://{}/cap/{n}/{region}/displaynames", shared.http_addr).into(),
         );
+    }
+    for (cap, path) in [
+        ("FetchInventoryDescendents2", "fetchdescendents"),
+        ("FetchInventory2", "fetchitems"),
+    ] {
+        if caps.iter().any(|c| c == cap) {
+            m.insert(
+                cap.into(),
+                format!("http://{}/cap/{n}/{region}/{path}", shared.http_addr).into(),
+            );
+        }
     }
     if caps.iter().any(|c| c == "UpdateAvatarAppearance") {
         m.insert(

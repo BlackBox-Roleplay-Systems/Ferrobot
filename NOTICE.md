@@ -19,6 +19,7 @@ a Second Life viewer in Rust, GPL-3.0-or-later. They may have been changed since
 | `crates/client/src/network/mod.rs` | the connect sequence of `crates/aurora-net/src/session.rs` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/groups.rs` | `crates/aurora-net/src/groups.rs`, without notices, bans and group edits | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/network/groups.rs` | the group requests of `crates/aurora-net/src/session_groups.rs` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
+| `crates/client/src/inventory.rs` | `crates/aurora-net/src/inventory.rs`, without AIS, uploads and rezzing | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/region_restart.rs` | `crates/aurora-net/src/region_restart.rs`, without the channel announcement | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 
 Aurora's code in turn follows the Second Life viewer's sources (Linden Lab,

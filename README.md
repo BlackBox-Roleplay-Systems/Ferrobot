@@ -74,7 +74,10 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`; the other group commands:
 `Groupnotice`, `GroupnoticeWithAttachment`, `GetGroupBanList`, `GroupBan`, `GetGroupTitles`,
 `GroupActiveTitle`, `GroupActiveGroup`, `GroupJoin`, `GroupLeave`, `GetGroupMemberRoles`,
-`ForceLoadGroups`; `RebakeAppearance`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
+`ForceLoadGroups`; `RebakeAppearance`; the inventory: `InventoryFolders`,
+`InventoryFoldersLimited`, `InventoryContents`, `SendItem`, `SendFolder`, `GetRealUUID`,
+`CreateInventoryFolder`, `RenameInventory`, `DeleteInventoryItem` (to the Trash),
+`DeleteInventoryFolder`, `MoveInventoryItem`, `MoveInventoryFolder`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`
 (in world, region, logins, uptime, commands run and failed); SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,

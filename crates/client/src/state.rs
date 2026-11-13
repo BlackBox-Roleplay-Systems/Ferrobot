@@ -17,6 +17,8 @@ pub struct State {
     pub home: Option<Home>,
     pub active_group: Option<ActiveGroup>,
     pub groups: Vec<Group>,
+    /// The inventory's root folder (the login's inventory-root).
+    pub inventory_root: Uuid,
     /// The bot's friends (the login's buddy list, then the friendships it accepts).
     pub friends: Vec<Uuid>,
     /// The group chats the bot is in (their session id is the group's).

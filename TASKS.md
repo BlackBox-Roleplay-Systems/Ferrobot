@@ -156,7 +156,13 @@ region).
   (UpdateAvatarAppearance, the version it expects asked again, as Aurora's
   request_server_appearance); RebakeAppearance; tested on the test grid, to see in world
 - ⬜ Hover height; changing the outfit (wear, take off)
-- ⬜ Inventory fetch, give, accept
+- 🟡 Inventory (crates/client/src/inventory.rs from Aurora's inventory.rs; FetchInventoryDescendents2,
+  FetchInventory2; MoveInventoryItem, MoveInventoryFolder, CreateInventoryFolder; gifts as
+  give_inventory): SecondBot's InventoryFolders, InventoryFoldersLimited, InventoryContents,
+  SendItem, SendFolder, GetRealUUID, CreateInventoryFolder, RenameInventory, DeleteInventoryItem,
+  DeleteInventoryFolder, MoveInventoryItem, MoveInventoryFolder; accepting offers is the
+  interaction rules'. Deliberate difference: deleting moves to the Trash
+- ⬜ Inventory: by path (SendItemByPath…), rezzing, attaching, outfits (phase 7, with objects)
 - ⬜ Notecards: create and send
 
 ## Phase 7 - The rest of SecondBot

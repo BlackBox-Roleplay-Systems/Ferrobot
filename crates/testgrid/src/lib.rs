@@ -14,6 +14,7 @@
 
 mod caps;
 mod groups;
+pub mod inventory;
 
 pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GROUP};
 mod http;
@@ -294,6 +295,27 @@ pub enum Seen {
     AppearanceRequest {
         cof_version: i32,
     },
+    /// The bot offered an inventory item or folder (IM_INVENTORY_OFFERED): the offer's name and
+    /// the bucket's (asset type, key) entries.
+    InventoryOffer {
+        to: Uuid,
+        name: String,
+        entries: Vec<(u8, Uuid)>,
+    },
+    CreateInventoryFolder {
+        id: Uuid,
+        parent: Uuid,
+        name: String,
+    },
+    MoveInventoryItem {
+        item: Uuid,
+        folder: Uuid,
+        name: String,
+    },
+    MoveInventoryFolder {
+        folder: Uuid,
+        parent: Uuid,
+    },
     /// The bot looked a region up by name (MapNameRequest).
     MapNameRequest {
         name: String,
@@ -364,6 +386,8 @@ struct State {
     active_group: Option<Uuid>,
     /// The banned avatars, by group.
     bans: HashMap<Uuid, Vec<Uuid>>,
+    /// The bot's inventory.
+    inventory: inventory::Inventory,
 }
 
 /// A region as the others see it.
@@ -531,6 +555,7 @@ impl TestGrid {
                 group_chats: HashSet::new(),
                 active_group,
                 bans: HashMap::new(),
+                inventory: inventory::Inventory::default(),
             }),
             eq_wake: Notify::new(),
         });
@@ -790,6 +815,11 @@ impl TestGrid {
             .find(|g| g.id == group)
             .map(|g| groups::all_members(g, self.shared.agent_id))
             .unwrap_or_default()
+    }
+
+    /// The bot's inventory as it is now.
+    pub fn inventory(&self) -> inventory::Inventory {
+        self.shared.state().inventory.clone()
     }
 
     /// The bot's agent id.
