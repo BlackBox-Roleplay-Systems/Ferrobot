@@ -307,6 +307,17 @@ pub enum Seen {
         parent: Uuid,
         name: String,
     },
+    CreateInventoryItem {
+        item: Uuid,
+        folder: Uuid,
+        name: String,
+        asset_type: i8,
+    },
+    /// A notecard's asset uploaded (UpdateNotecardAgentInventory's uploader).
+    NotecardSaved {
+        item: Uuid,
+        asset: String,
+    },
     MoveInventoryItem {
         item: Uuid,
         folder: Uuid,

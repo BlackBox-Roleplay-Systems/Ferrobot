@@ -9,6 +9,7 @@ mod dialogs;
 mod groups;
 mod info;
 mod inventory;
+mod notecard;
 pub mod reply;
 
 use crate::dialogs::Dialogs;
@@ -37,6 +38,8 @@ pub struct Ctx {
 const CHANGING: &[&str] = &[
     "SendItem",
     "SendFolder",
+    "NotecardSend",
+    "NotecardDirectSend",
     "GroupInvite",
     "GroupEject",
     "GroupAddRole",
@@ -120,6 +123,10 @@ const COMMANDS: &[(&str, usize)] = &[
     ("DeleteInventoryFolder", 1),
     ("MoveInventoryItem", 2),
     ("MoveInventoryFolder", 2),
+    ("NotecardAdd", 2),
+    ("NotecardClear", 1),
+    ("NotecardSend", 3),
+    ("NotecardDirectSend", 3),
     ("DialogRelayAvatarTarget", 1),
     ("DialogRelayChatTarget", 1),
     ("DialogRelayHttpTarget", 1),
@@ -212,6 +219,10 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "DeleteInventoryFolder" => inventory::delete_folder(ctx, a(0)).await,
         "MoveInventoryItem" => inventory::move_item(ctx, a(0), a(1)).await,
         "MoveInventoryFolder" => inventory::move_folder(ctx, a(0), a(1)).await,
+        "NotecardAdd" => notecard::add(ctx, a(0), a(1)),
+        "NotecardClear" => notecard::clear(ctx, a(0)),
+        "NotecardSend" => notecard::send(ctx, a(0), a(1), a(2)).await,
+        "NotecardDirectSend" => notecard::direct_send(ctx, a(0), a(1), a(2)).await,
         "DialogRelayAvatarTarget" => dialogs::relay_avatar(ctx, a(0)).await,
         "DialogRelayChatTarget" => dialogs::relay_chat(ctx, a(0)),
         "DialogRelayHttpTarget" => dialogs::relay_http(ctx, a(0)),

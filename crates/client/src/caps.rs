@@ -21,6 +21,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GroupMemberData",
     "ReadOfflineMsgs",
     "UpdateAvatarAppearance",
+    "UpdateNotecardAgentInventory",
 ];
 
 #[derive(Debug, thiserror::Error)]

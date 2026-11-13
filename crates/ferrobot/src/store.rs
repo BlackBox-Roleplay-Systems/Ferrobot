@@ -67,6 +67,14 @@ impl Store {
         self.lock().kv.insert(key.to_owned(), value.to_owned());
     }
 
+    /// AppendKeyValue: the value added at the end; answers the new length.
+    pub fn append(&self, key: &str, value: &str) -> usize {
+        let mut i = self.lock();
+        let v = i.kv.entry(key.to_owned()).or_default();
+        v.push_str(value);
+        v.len()
+    }
+
     pub fn clear(&self, key: &str) {
         self.lock().kv.remove(key);
     }

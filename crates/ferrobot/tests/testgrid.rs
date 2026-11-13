@@ -964,6 +964,52 @@ mod api {
             "Item name is to short"
         );
 
+        // notecards: straight from a text, and from a collection
+        assert_eq!(
+            api.reply(
+                "NotecardDirectSend",
+                &["Other Avatar", "Hello there", "Note"]
+            )
+            .await,
+            "ok"
+        );
+        let (_, inner) = api.run("NotecardAdd", &["list", "first line, "]).await;
+        assert_eq!(inner["args"], serde_json::json!(["list", "12"]));
+        api.reply("NotecardAdd", &["list", "second line"]).await;
+        assert_eq!(
+            api.reply("NotecardSend", &[OTHER, "list", "Lines"]).await,
+            "ok"
+        );
+        assert_eq!(
+            api.failure("NotecardSend", &[OTHER, "list", "Lines"])
+                .await
+                .0,
+            "No content in notecard storage ?"
+        );
+        let asset = |text: &str| {
+            format!(
+                "Linden text version 2\n{{\nLLEmbeddedItems version 1\n{{\ncount 0\n}}\nText length {}\n{text}}}\n",
+                text.len()
+            )
+        };
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                let saved = |text: &str| seen.iter().any(|s| matches!(s, Seen::NotecardSaved { asset: a, .. } if *a == asset(text)));
+                let sent = |name: &str| seen.iter().any(|s| matches!(s, Seen::InventoryOffer { to, name: n, entries } if *to == other && n == name && entries[0].0 == 7));
+                saved("Hello there") && saved("first line, second line") && sent("Note") && sent("Lines")
+            })
+            .await,
+            "{:?}",
+            grid.seen()
+        );
+        // created in the Notecards folder
+        assert!(
+            grid.inventory()
+                .items
+                .iter()
+                .any(|i| i.name == "Note" && i.parent == inv::NOTECARDS)
+        );
+
         bot.terminate();
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }

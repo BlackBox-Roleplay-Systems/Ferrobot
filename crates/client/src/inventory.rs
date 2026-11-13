@@ -308,6 +308,16 @@ pub fn parse_fetch_response(v: &Llsd) -> Vec<FolderContents> {
         .collect()
 }
 
+/// A notecard's asset for a text without embedded items (LLNotecard::exportStream, Aurora's
+/// Notecard::encode): the length is the text's in bytes.
+pub fn notecard_asset(text: &str) -> Vec<u8> {
+    format!(
+        "Linden text version 2\n{{\nLLEmbeddedItems version 1\n{{\ncount 0\n}}\nText length {}\n{text}}}\n",
+        text.len()
+    )
+    .into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +367,13 @@ mod tests {
         assert_eq!(r[0].folders[0].name, "Objects");
         assert_eq!(r[0].items[0].asset_type, 3);
         assert_eq!(r[0].items[0].asset_id, Uuid::from_u128(5));
+    }
+
+    #[test]
+    fn a_notecard_asset() {
+        assert_eq!(
+            String::from_utf8(notecard_asset("héllo")).expect("text"),
+            "Linden text version 2\n{\nLLEmbeddedItems version 1\n{\ncount 0\n}\nText length 6\nhéllo}\n"
+        );
     }
 }

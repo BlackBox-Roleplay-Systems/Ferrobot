@@ -29,6 +29,47 @@ pub async fn handle(
         ("chatsessionrequest", "POST") => chat_session_request(shared, body),
         ("groupapi", "GET" | "POST") => group_api(shared, method, query, body),
         ("appearance", "POST") => appearance(shared, body),
+        ("notecardsave", "POST") => {
+            let Ok(v) = from_xml(body) else {
+                return Response::status(400);
+            };
+            let mut m = Map::new();
+            m.insert("state".into(), "upload".into());
+            m.insert(
+                "uploader".into(),
+                format!(
+                    "http://{}/cap/{n}/{region}/uploader?item={}",
+                    shared.http_addr,
+                    v["item_id"].as_uuid()
+                )
+                .into(),
+            );
+            llsd_reply(&Llsd::Map(m))
+        }
+        ("uploader", "POST") => {
+            let item: uuid::Uuid = query
+                .strip_prefix("item=")
+                .and_then(|i| i.parse().ok())
+                .unwrap_or_default();
+            let asset = uuid::Uuid::new_v4();
+            if let Some(i) = shared
+                .state()
+                .inventory
+                .items
+                .iter_mut()
+                .find(|i| i.id == item)
+            {
+                i.asset_id = asset;
+            }
+            shared.saw(Seen::NotecardSaved {
+                item,
+                asset: String::from_utf8_lossy(body).into_owned(),
+            });
+            let mut m = Map::new();
+            m.insert("state".into(), "complete".into());
+            m.insert("new_asset".into(), asset.into());
+            llsd_reply(&Llsd::Map(m))
+        }
         ("fetchdescendents", "POST") => {
             let Ok(v) = from_xml(body) else {
                 return Response::status(400);
@@ -86,6 +127,7 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
     for (cap, path) in [
         ("FetchInventoryDescendents2", "fetchdescendents"),
         ("FetchInventory2", "fetchitems"),
+        ("UpdateNotecardAgentInventory", "notecardsave"),
     ] {
         if caps.iter().any(|c| c == cap) {
             m.insert(

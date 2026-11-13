@@ -256,4 +256,38 @@ impl Client {
         let trash = self.trash_folder().await?;
         self.move_folder(folder, trash).await
     }
+
+    /// Create a notecard with this text, in the Notecards folder (else the root); answers its key.
+    pub async fn create_notecard(&self, name: &str, text: &str) -> Result<Uuid, ClientError> {
+        let root = self.inventory_root();
+        let folder = self
+            .folder_contents(root)
+            .await
+            .ok()
+            .and_then(|c| c.folders.into_iter().find(|f| f.type_default == 7))
+            .map_or(root, |f| f.id);
+        let (name, description) = (name.to_owned(), String::new());
+        let item = self
+            .inventory_ask(|reply| InventoryRequest::CreateItem {
+                folder,
+                name,
+                description,
+                asset_type: 7,
+                inv_type: 7,
+                reply,
+            })
+            .await?;
+        let data = crate::inventory::notecard_asset(text);
+        self.inventory_ask(|reply| InventoryRequest::UploadNotecard { item, data, reply })
+            .await?
+            .map_err(ClientError::Refused)?;
+        Ok(item)
+    }
+
+    /// Create a notecard and give it (LibreMetaverse's SendNotecard, SecondBot's
+    /// NotecardDirectSend).
+    pub async fn send_notecard(&self, to: Uuid, name: &str, text: &str) -> Result<(), ClientError> {
+        let item = self.create_notecard(name, text).await?;
+        self.give(to, name.to_owned(), vec![(7, item)]).await
+    }
 }

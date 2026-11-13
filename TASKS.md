@@ -163,7 +163,10 @@ region).
   DeleteInventoryFolder, MoveInventoryItem, MoveInventoryFolder; accepting offers is the
   interaction rules'. Deliberate difference: deleting moves to the Trash
 - ⬜ Inventory: by path (SendItemByPath…), rezzing, attaching, outfits (phase 7, with objects)
-- ⬜ Notecards: create and send
+- 🟡 Notecards: created (CreateInventoryItem, UpdateNotecardAgentInventory's uploader, the
+  "Linden text version 2" asset, as Aurora) and sent; SecondBot's NotecardAdd, NotecardClear,
+  NotecardSend, NotecardDirectSend; tested on the test grid
+- ⬜ NotecardRead (downloading an asset)
 
 ## Phase 7 - The rest of SecondBot
 

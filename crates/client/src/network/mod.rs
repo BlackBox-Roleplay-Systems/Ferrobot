@@ -179,6 +179,9 @@ struct Session<'a> {
     picker_waits: HashMap<Uuid, oneshot::Sender<Vec<(Uuid, String)>>>,
     /// Group replies being gathered.
     groups: groups::GroupWaits,
+    /// Inventory items being created, by callback number.
+    created: HashMap<u32, oneshot::Sender<Uuid>>,
+    next_callback: u32,
     /// The outfit was asked to be baked this session.
     appearance_asked: bool,
     /// Region names asked of the world map (lower case), and who waits.
@@ -642,6 +645,7 @@ impl Session<'_> {
         self.picker_waits.retain(|_, reply| !reply.is_closed());
         self.groups.retain_open();
         self.map_waits.retain(|(_, tx)| !tx.is_closed());
+        self.created.retain(|_, tx| !tx.is_closed());
         if now.duration_since(self.circuit.last_recv) > REGION_TIMEOUT {
             return Some(End::Lost(format!(
                 "nothing from the region for {} s",
@@ -748,6 +752,13 @@ impl Session<'_> {
             };
             self.on_session_message(&im);
             self.shared.emit(Event::InstantMessage(im));
+        } else if id == UpdateCreateInventoryItem::ID {
+            let m: UpdateCreateInventoryItem = pkt.decode()?;
+            for it in &m.inventory_data {
+                if let Some(tx) = self.created.remove(&it.callback_id) {
+                    let _ = tx.send(it.item_id);
+                }
+            }
         } else if id == MapBlockReply::ID {
             let m: MapBlockReply = pkt.decode()?;
             self.on_map_blocks(&m);
@@ -1192,6 +1203,8 @@ async fn run(
         groups: groups::GroupWaits::default(),
         map_waits: Vec::new(),
         appearance_asked: false,
+        created: HashMap::new(),
+        next_callback: 0,
     };
     s.send_use_circuit_code();
     // capabilities and the event queue, alongside the circuit

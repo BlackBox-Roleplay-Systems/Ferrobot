@@ -414,6 +414,48 @@ impl Region {
                     self.send(from, &r, true);
                 }
             }
+        } else if id == CreateInventoryItem::ID {
+            if let Ok(m) = pkt.decode::<CreateInventoryItem>() {
+                let b = &m.inventory_block;
+                let item = Uuid::new_v4();
+                let name = field_str(&b.name);
+                self.shared
+                    .state()
+                    .inventory
+                    .items
+                    .push(crate::inventory::Item {
+                        id: item,
+                        parent: b.folder_id,
+                        name: name.clone(),
+                        asset_type: i32::from(b.type_),
+                        inv_type: i32::from(b.inv_type),
+                        asset_id: Uuid::nil(),
+                    });
+                self.shared.saw(Seen::CreateInventoryItem {
+                    item,
+                    folder: b.folder_id,
+                    name: name.clone(),
+                    asset_type: b.type_,
+                });
+                let mut r = UpdateCreateInventoryItem::default();
+                r.agent_data.agent_id = bot;
+                r.agent_data.sim_approved = true;
+                r.inventory_data = vec![update_create_inventory_item::InventoryData {
+                    item_id: item,
+                    folder_id: b.folder_id,
+                    callback_id: b.callback_id,
+                    creator_id: bot,
+                    owner_id: bot,
+                    base_mask: 0x7fff_ffff,
+                    owner_mask: 0x7fff_ffff,
+                    next_owner_mask: b.next_owner_mask,
+                    type_: b.type_,
+                    inv_type: b.inv_type,
+                    name: str_field(&name),
+                    ..Default::default()
+                }];
+                self.send(from, &r, true);
+            }
         } else if id == CreateInventoryFolder::ID {
             if let Ok(m) = pkt.decode::<CreateInventoryFolder>() {
                 let f = &m.folder_data;
