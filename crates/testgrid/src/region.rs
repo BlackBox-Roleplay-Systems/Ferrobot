@@ -35,6 +35,8 @@ struct Region {
     shared: Arc<Shared>,
     clients: HashMap<SocketAddr, Client>,
     buf: Vec<u8>,
+    /// Packets to send, in order.
+    outbox: Vec<(Vec<u8>, SocketAddr)>,
 }
 
 impl Region {
@@ -45,9 +47,9 @@ impl Region {
         let seq = c.next_seq;
         c.next_seq += 1;
         build_packet(msg, seq, reliable, false, &[], &mut self.buf);
-        if let Err(e) = self.sock.try_send_to(&self.buf, to) {
-            log::debug!("testgrid region send: {e}");
-        }
+        // queued and sent by the loop, awaited: a busy socket must not lose a packet, as the
+        // region never resends one
+        self.outbox.push((self.buf.clone(), to));
     }
 
     /// The circuit of the latest login still on the region.
@@ -892,6 +894,7 @@ pub async fn run(
         shared,
         clients: HashMap::new(),
         buf: Vec::with_capacity(1500),
+        outbox: Vec::new(),
     };
     let mut data = vec![0u8; 8192];
     let mut ping_id = 0u8;
@@ -910,6 +913,11 @@ pub async fn run(
                 Some(cmd) => r.on_command(cmd),
                 None => return,
             },
+        }
+        for (packet, to) in std::mem::take(&mut r.outbox) {
+            if let Err(e) = r.sock.send_to(&packet, to).await {
+                log::debug!("testgrid region send: {e}");
+            }
         }
     }
 }
