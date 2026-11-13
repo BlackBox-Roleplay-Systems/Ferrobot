@@ -22,6 +22,12 @@ pub struct Config {
     pub shared_secret: Option<String>,
     /// How old a signed command may be, in seconds (SecondBot's TimeWindowSecs).
     pub time_window: u64,
+    /// Commands by IM: from masters, and signed ones from objects (SecondBot's AllowIMcontrol).
+    pub im_commands: bool,
+    /// Commands by IM carry their time and are refused when too old (EnforceTimeWindow).
+    pub enforce_time_window: bool,
+    /// An object owned by a master needs no signature (ObjectMasterOptout).
+    pub object_master_optout: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -38,6 +44,9 @@ impl std::fmt::Debug for Config {
             .field("http_port", &self.http_port)
             .field("shared_secret_set", &self.shared_secret.is_some())
             .field("time_window", &self.time_window)
+            .field("im_commands", &self.im_commands)
+            .field("enforce_time_window", &self.enforce_time_window)
+            .field("object_master_optout", &self.object_master_optout)
             .finish_non_exhaustive()
     }
 }
@@ -80,6 +89,14 @@ fn parse_flag(name: &'static str, v: &str) -> Result<bool, ConfigError> {
             format!("\"{v}\" is not true or false"),
         )),
     }
+}
+
+fn setting_flag(
+    ferro: &'static str,
+    secondbot: &'static str,
+    default: bool,
+) -> Result<bool, ConfigError> {
+    setting(ferro, secondbot).map_or(Ok(default), |(name, v)| parse_flag(name, &v))
 }
 
 fn flag(name: &'static str, default: bool) -> Result<bool, ConfigError> {
@@ -165,6 +182,17 @@ impl Config {
                 setting("FERRO_TIME_WINDOW", "commands_TimeWindowSecs"),
                 35,
                 "a number of seconds",
+            )?,
+            im_commands: setting_flag("FERRO_IM_COMMANDS", "commands_AllowIMcontrol", true)?,
+            enforce_time_window: setting_flag(
+                "FERRO_ENFORCE_TIME_WINDOW",
+                "commands_EnforceTimeWindow",
+                false,
+            )?,
+            object_master_optout: setting_flag(
+                "FERRO_OBJECT_MASTER_OPTOUT",
+                "commands_ObjectMasterOptout",
+                false,
             )?,
         })
     }

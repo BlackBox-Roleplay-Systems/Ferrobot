@@ -742,6 +742,22 @@ impl Region {
                 b.message = str_field(&text);
                 self.send(to, &m, true);
             }
+            RegionCommand::ImFrom {
+                id,
+                name,
+                dialog,
+                text,
+            } => {
+                let mut m = ImprovedInstantMessage::default();
+                m.agent_data.agent_id = id;
+                let b = &mut m.message_block;
+                b.to_agent_id = self.shared.agent_id;
+                b.dialog = dialog;
+                b.id = Uuid::new_v4();
+                b.from_agent_name = str_field(&name);
+                b.message = str_field(&text);
+                self.send(to, &m, true);
+            }
             RegionCommand::Kick { reason } => {
                 let mut m = KickUser::default();
                 m.user_info.agent_id = self.shared.agent_id;

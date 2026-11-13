@@ -119,7 +119,10 @@ region).
   GroupchatHistory, GroupchatListAllUnreadGroups, GroupchatGroupHasUnread, GroupchatAnyUnread,
   GroupchatClearAll); tested through the API against the test grid
 - ⬜ Masters and interactions (friends, teleports, inventory, group invites)
-- ⬜ Commands from masters in chat / IM
+- 🟡 Commands by IM (services/im_commands.rs, SecondBot's BotImMessage and SignedCommand): from
+  masters unsigned, from objects signed (FERRO_OBJECT_MASTER_OPTOUT), the text and JSON forms,
+  the reply target (channel, avatar, HTTP POST; not e-mail). Deliberate difference: a master is
+  recognised by key, not by the name an IM carries (also for teleport offers)
 - ⬜ Script dialogs
 - ⬜ Relays: Discord, webhooks
 - ⬜ Homebound

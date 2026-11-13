@@ -377,6 +377,14 @@ enum RegionCommand {
         from: String,
         text: String,
     },
+    /// An IM with a sender key: a resident's (IM_NOTHING_SPECIAL), or an object's owner's
+    /// (IM_FROM_TASK).
+    ImFrom {
+        id: Uuid,
+        name: String,
+        dialog: u8,
+        text: String,
+    },
     OfferTeleport {
         from: Resident,
         lure: Uuid,
@@ -541,6 +549,27 @@ impl TestGrid {
     pub fn im(&self, from: &str, text: &str) {
         self.command(RegionCommand::Im {
             from: from.into(),
+            text: text.into(),
+        });
+    }
+
+    /// A resident sends the bot an IM, with their key as the grid gives it.
+    pub fn im_from(&self, from: &Resident, text: &str) {
+        self.command(RegionCommand::ImFrom {
+            id: from.id,
+            name: format!("{} {}", from.first, from.last),
+            dialog: 0,
+            text: text.into(),
+        });
+    }
+
+    /// An object owned by `owner` sends the bot an IM (llInstantMessage: IM_FROM_TASK, the
+    /// owner's key, the object's name).
+    pub fn object_im(&self, owner: &Resident, object: &str, text: &str) {
+        self.command(RegionCommand::ImFrom {
+            id: owner.id,
+            name: object.into(),
+            dialog: 19,
             text: text.into(),
         });
     }

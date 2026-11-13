@@ -943,3 +943,64 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 }
+
+/// Commands by IM, as SecondBot takes them: a master's run, the answer goes to the reply target;
+/// a stranger's are ignored, even under a master's name; an object's must be signed.
+#[tokio::test]
+async fn commands_by_im() {
+    use sha1::Digest;
+    let grid = grid().await;
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("FERRO_MASTERS", "Some Resident"),
+            ("FERRO_SHARED_SECRET", "a shared secret"),
+            ("FERRO_HTTP", "false"),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    let some = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    let other = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0002),
+        first: "Other".into(),
+        last: "Avatar".into(),
+    };
+    let said = |text: &'static str| move |s: &Seen| matches!(s, Seen::Chat { message, .. } if message == text);
+
+    // not masters: a stranger, and a stranger's IM under a master's name
+    grid.im_from(&other, "Say|||0~#~from a stranger");
+    grid.im("Some Resident", "Say|||0~#~from an impostor");
+    // a master: runs, and the answer of Name goes to channel 5
+    grid.im_from(&some, "Say|||0~#~from a master");
+    wait_for(&grid, &bot, "the master's command", said("from a master")).await;
+    grid.im_from(&some, "Name#|#5");
+    wait_for(&grid, &bot, "the answer on channel 5", |s| {
+        matches!(s, Seen::Chat { message, channel: 5, .. } if message.contains(r#""reply":"Test Bot""#))
+    })
+    .await;
+    assert_eq!(grid.count(said("from a stranger")), 0);
+    assert_eq!(grid.count(said("from an impostor")), 0);
+
+    // an object: signed with the shared secret (no time window by default)
+    let sig: String = sha1::Sha1::digest("Say0~#~from an objecta shared secret")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    grid.object_im(&other, "Vendor", "Say|||0~#~unsigned object");
+    grid.object_im(
+        &other,
+        "Vendor",
+        &format!("Say|||0~#~from an object@@@{sig}"),
+    );
+    wait_for(&grid, &bot, "the object's command", said("from an object")).await;
+    bot.wait_log("command by IM from Vendor refused: not signed")
+        .await;
+    assert_eq!(grid.count(said("unsigned object")), 0);
+
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}

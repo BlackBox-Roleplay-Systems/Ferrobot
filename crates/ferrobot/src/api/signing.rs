@@ -17,7 +17,14 @@ pub fn split_args(args: Option<&str>) -> Vec<String> {
 }
 
 pub fn sign(command: &str, args: &[String], unixtime: i64, secret: &str) -> String {
-    let raw = format!("{command}{}{unixtime}{secret}", args.join("~#~"));
+    sign_with(command, args, Some(unixtime), secret)
+}
+
+/// The signature with the time left out when no time window is asked for (SignedCommand
+/// without EnforceTimeWindow, for commands by IM).
+pub fn sign_with(command: &str, args: &[String], unixtime: Option<i64>, secret: &str) -> String {
+    let time = unixtime.map(|t| t.to_string()).unwrap_or_default();
+    let raw = format!("{command}{}{time}{secret}", args.join("~#~"));
     Sha1::digest(raw.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -43,8 +50,11 @@ pub fn accepted(
     let Some(signing) = signing else {
         return false;
     };
-    let expected = sign(command, args, unixtime, secret);
-    // compared in constant time: the time taken says nothing about the right signature
+    same(&sign(command, args, unixtime, secret), signing)
+}
+
+/// Two signatures compared in constant time: the time taken says nothing about the right one.
+pub fn same(expected: &str, signing: &str) -> bool {
     expected.len() == signing.len()
         && expected
             .bytes()

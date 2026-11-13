@@ -21,12 +21,16 @@ All settings come from environment variables.
 | `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`) |
 | `FERRO_HTTP_PORT` | `80` | Its port |
 | `FERRO_TIME_WINDOW` | `35` | Seconds a signed command stays valid |
+| `FERRO_IM_COMMANDS` | `true` | Commands by IM: from masters, and signed ones from objects |
+| `FERRO_ENFORCE_TIME_WINDOW` | `false` | Commands by IM carry their time and must be recent |
+| `FERRO_OBJECT_MASTER_OPTOUT` | `false` | An object owned by a master needs no signature |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
 SecondBot's names work too, so that a SecondBot container's settings can stay as they are:
 `basic_Username`, `basic_Password`, `basic_LoginURI`, `commands_MastersCSV`,
-`commands_SharedSecret`, `commands_TimeWindowSecs`, `http_Enabled`, `http_Port`. The `FERRO_*` name
+`commands_SharedSecret`, `commands_TimeWindowSecs`, `commands_AllowIMcontrol`,
+`commands_EnforceTimeWindow`, `commands_ObjectMasterOptout`, `http_Enabled`, `http_Port`. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
 
 ### SecondBot's HTTP API

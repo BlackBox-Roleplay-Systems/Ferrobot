@@ -4,6 +4,7 @@ mod api;
 mod commands;
 mod config;
 mod history;
+mod masters;
 mod services;
 
 use config::Config;
@@ -55,7 +56,8 @@ async fn main() -> std::process::ExitCode {
     let (client, mut network) = Client::new(http.clone());
     tokio::spawn(services::chat_log::run(client.clone()));
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
-    tokio::spawn(services::lures::run(client.clone(), cfg.masters.clone()));
+    let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
+    tokio::spawn(services::lures::run(client.clone(), masters.clone()));
     tokio::spawn(services::restart::run(client.clone()));
     let history = std::sync::Arc::new(history::History::default());
     tokio::spawn(history::run(client.clone(), history.clone()));
@@ -63,6 +65,18 @@ async fn main() -> std::process::ExitCode {
         client: client.clone(),
         history,
     };
+    if cfg.im_commands {
+        tokio::spawn(services::im_commands::run(
+            ctx.clone(),
+            masters.clone(),
+            services::im_commands::Settings {
+                secret: cfg.shared_secret.clone(),
+                enforce_time_window: cfg.enforce_time_window,
+                time_window: cfg.time_window,
+                object_master_optout: cfg.object_master_optout,
+            },
+        ));
+    }
     match (&cfg.shared_secret, cfg.http_enabled) {
         (Some(secret), true) => {
             tokio::spawn(api::serve(
@@ -77,7 +91,7 @@ async fn main() -> std::process::ExitCode {
     }
     tokio::spawn(services::group_invites::run(
         client.clone(),
-        cfg.masters.clone(),
+        masters.clone(),
     ));
     std::process::ExitCode::from(run(&cfg, &http, &mut network, stop_rx).await)
 }

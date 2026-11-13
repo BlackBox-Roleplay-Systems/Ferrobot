@@ -5,7 +5,7 @@
 //! A deliberate difference: an invitation with a membership fee is never accepted, from a master
 //! either, so that the bot cannot be made to pay to join a group.
 
-use crate::services::lures::is_master;
+use crate::masters::Masters;
 use ferro_client::events::dialog;
 use ferro_client::{Client, Event, InstantMessage};
 use tokio::sync::broadcast::error::RecvError;
@@ -17,8 +17,9 @@ fn fee(bucket: &[u8]) -> Option<i32> {
     (bucket.len() == 20).then(|| i32::from_be_bytes(bytes))
 }
 
-async fn on_invitation(client: &Client, masters: &[String], im: InstantMessage) {
-    if !is_master(masters, &im.from_name) {
+async fn on_invitation(client: &Client, masters: &Masters, im: InstantMessage) {
+    // the invitation comes from the group: only the inviter's name tells who sent it
+    if !masters.by_name(&im.from_name) {
         log::info!(
             "group invitation from {} left unanswered: not a master",
             im.from_name
@@ -45,7 +46,7 @@ async fn on_invitation(client: &Client, masters: &[String], im: InstantMessage) 
     }
 }
 
-pub async fn run(client: Client, masters: Vec<String>) {
+pub async fn run(client: Client, masters: std::sync::Arc<Masters>) {
     let mut events = client.subscribe();
     loop {
         match events.recv().await {
