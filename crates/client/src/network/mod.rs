@@ -166,6 +166,7 @@ impl Network {
             st.mute_list = None;
             st.away = false;
             st.inventory_root = login.inventory_root;
+            st.sound_upload_cost = login.sound_upload_cost;
         }
         self.shared
             .names()
@@ -1407,6 +1408,9 @@ impl Session<'_> {
         } else if id == AvatarPropertiesReply::ID {
             let m: AvatarPropertiesReply = pkt.decode()?;
             self.on_avatar_properties(&m);
+        } else if id == AvatarPicksReply::ID {
+            let m: AvatarPicksReply = pkt.decode()?;
+            self.on_avatar_picks(&m);
         } else if id == AvatarAnimation::ID {
             // the animations the region plays on the bot (SignaledAnimations)
             let m: AvatarAnimation = pkt.decode()?;
@@ -2181,6 +2185,7 @@ mod tests {
             message: String::new(),
             secure_session_id: uuid::Uuid::from_u128(4),
             inventory_root: uuid::Uuid::nil(),
+            sound_upload_cost: None,
             home: None,
             buddies: Vec::new(),
         }

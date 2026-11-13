@@ -1,5 +1,6 @@
 //! Avatar profiles: the AgentProfile capability's reply and the older AvatarPropertiesReply, as
-//! LLAvatarPropertiesProcessor reads them; after Aurora's profile.rs (see NOTICE.md).
+//! LLAvatarPropertiesProcessor reads them, and the picks the capability's reply carries; after
+//! Aurora's profile.rs (see NOTICE.md).
 
 use ferro_llsd::Llsd;
 use uuid::Uuid;
@@ -62,6 +63,22 @@ pub fn parse_agent_profile(requested: Uuid, v: &Llsd) -> Option<Profile> {
     })
 }
 
+/// The picks of GET <AgentProfile>/<id>'s reply, (key, name) in the order given, as Aurora's
+/// parse_agent_profile reads them (a nil key left out): None when it is about another avatar.
+pub fn parse_agent_profile_picks(requested: Uuid, v: &Llsd) -> Option<Vec<(Uuid, String)>> {
+    if v["id"].as_uuid() != requested {
+        return None;
+    }
+    Some(
+        v["picks"]
+            .as_array()
+            .iter()
+            .map(|p| (p["id"].as_uuid(), p["name"].to_string_value()))
+            .filter(|p| !p.0.is_nil())
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,5 +101,27 @@ mod tests {
         let c = ProfileChange::About("New".into());
         assert_eq!(c.body()["sl_about_text"].as_str(), "New");
         assert_eq!(c.apply(&p).image, p.image, "the rest kept");
+    }
+
+    #[test]
+    fn the_picks_of_the_capability_reply() {
+        let id = Uuid::from_u128(5);
+        let pick = |n: u128, name: &str| {
+            ferro_llsd::llsd_map! { "id" => Uuid::from_u128(n), "name" => name }
+        };
+        let v = ferro_llsd::llsd_map! {
+            "id" => id,
+            "picks" => Llsd::Array(vec![pick(3, "Beach"), pick(0, "nil"), pick(4, "Club")]),
+        };
+        assert_eq!(
+            parse_agent_profile_picks(id, &v),
+            Some(vec![
+                (Uuid::from_u128(3), "Beach".to_owned()),
+                (Uuid::from_u128(4), "Club".to_owned())
+            ])
+        );
+        let none = ferro_llsd::llsd_map! { "id" => id };
+        assert_eq!(parse_agent_profile_picks(id, &none), Some(Vec::new()));
+        assert!(parse_agent_profile_picks(Uuid::from_u128(6), &v).is_none());
     }
 }

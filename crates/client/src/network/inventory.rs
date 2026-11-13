@@ -70,6 +70,11 @@ pub(crate) enum InventoryRequest {
         item: InvItem,
         reply: oneshot::Sender<Result<Vec<u8>, String>>,
     },
+    /// A new asset and its item (NewFileAgentInventory, then its uploader).
+    UploadAsset {
+        upload: Box<crate::upload::AssetUpload>,
+        reply: oneshot::Sender<Result<crate::upload::Uploaded, String>>,
+    },
     /// A notecard's text saved (UpdateNotecardAgentInventory, then its uploader).
     UploadNotecard {
         item: Uuid,
@@ -157,6 +162,18 @@ impl Session<'_> {
                 m.inventory_block.description = str_field(&description);
                 self.send(&m, true);
                 self.created.insert(callback, reply);
+            }
+            InventoryRequest::UploadAsset { upload, reply } => {
+                // LibreMetaverse's RequestCreateItemFromAssetAsync needs the capability too; the
+                // viewer's UDP upload (AssetUploadRequest) is left out
+                let Some(cap) = self.caps.get("NewFileAgentInventory").cloned() else {
+                    let _ = reply.send(Err("no NewFileAgentInventory capability".into()));
+                    return;
+                };
+                let http = self.http.clone();
+                tokio::spawn(async move {
+                    let _ = reply.send(crate::upload::upload(&http, &cap, *upload).await);
+                });
             }
             InventoryRequest::UploadNotecard { item, data, reply } => {
                 let Some(cap) = self.caps.get("UpdateNotecardAgentInventory").cloned() else {

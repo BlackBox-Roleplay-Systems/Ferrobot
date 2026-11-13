@@ -37,6 +37,25 @@ fn role(id: Uuid, name: &str, title: &str, powers: u64) -> GridRole {
     }
 }
 
+/// A group the bot just founded (CreateGroupRequest): it is its owner, alone in it, with the
+/// roles a new group has (Everyone and Owners).
+pub fn founded(id: Uuid, name: &str) -> GridGroup {
+    let owners = Uuid::new_v4();
+    GridGroup {
+        id,
+        name: name.into(),
+        title: "Owner".into(),
+        powers: u64::MAX >> 1,
+        bot_member: true,
+        bot_roles: vec![owners],
+        roles: vec![
+            role(Uuid::nil(), "Everyone", "Member", NOTICES_RECEIVE),
+            role(owners, "Owners", "Owner", u64::MAX >> 1),
+        ],
+        members: Vec::new(),
+    }
+}
+
 pub fn default_groups() -> Vec<GridGroup> {
     let everyone = role(Uuid::nil(), "Everyone", "Member", NOTICES_RECEIVE);
     vec![

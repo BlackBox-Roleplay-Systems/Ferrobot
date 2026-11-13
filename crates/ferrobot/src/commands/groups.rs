@@ -429,6 +429,71 @@ pub async fn group_join(client: &Client, group: &str) -> Answer {
     }
 }
 
+/// GroupCreate: a new group, the bot its founder. It costs L$100, so it is a Funds command (off
+/// unless FERRO_ALLOW_FUNDS). SecondBot's checks, in its order; the balance is asked of the grid
+/// (SecondBot reads the one it last heard, and asks for the next call).
+pub async fn group_create(
+    ctx: &super::Ctx,
+    name: &str,
+    charter: &str,
+    open_enrollment: &str,
+    membership_fee: &str,
+    show_in_list: &str,
+) -> Answer {
+    const C: &str = "GroupCreate";
+    /// What the grid charges for a new group.
+    const PRICE: i32 = 100;
+    let args = owned(&[name, charter, open_enrollment, membership_fee, show_in_list]);
+    if !ctx.allow_funds {
+        return failure(C, "Funds commands are disabled", &args);
+    }
+    // C#'s string lengths count UTF-16 units
+    let length = |s: &str| s.encode_utf16().count();
+    if !(4..=35).contains(&length(name)) {
+        return failure(C, "Name must be 4 to 35 characters", &args);
+    }
+    if length(charter) > 511 {
+        return failure(C, "Charter must be 511 characters or less", &args);
+    }
+    let Some(open) = super::cs_bool(open_enrollment) else {
+        return failure(C, "Invaild openenrollment value", &args);
+    };
+    let Some(listed) = super::cs_bool(show_in_list) else {
+        return failure(C, "Invaild showinlist value", &args);
+    };
+    let fee = match membership_fee.trim().parse::<i32>() {
+        Ok(fee) if (0..=100_000).contains(&fee) => fee,
+        _ => return failure(C, "Invaild membershipfee value (0 to 100000)", &args),
+    };
+    let client = &ctx.client;
+    match client.balance().await {
+        Ok(balance) if balance >= PRICE => {}
+        Ok(_) => return failure(C, "Not enough funds (L$100 needed)", &args),
+        Err(e) => {
+            log::debug!("{C}: the balance: {e}");
+            return failure(C, "No reply from the grid [Retry later]", &args);
+        }
+    }
+    let group = ferro_client::groups::NewGroup {
+        name: name.to_owned(),
+        charter: charter.to_owned(),
+        show_in_list: listed,
+        insignia: Uuid::nil(),
+        membership_fee: fee,
+        open_enrollment: open,
+        allow_publish: listed,
+        mature_publish: false,
+    };
+    match client.create_group(group).await {
+        Ok(created) if created.success => basic(C, &created.id.to_string(), &args),
+        Ok(created) => failure(C, &format!("Create failed: {}", created.message), &args),
+        Err(e) => {
+            log::debug!("{C}: {e}");
+            failure(C, "No reply from the grid [Retry later]", &args)
+        }
+    }
+}
+
 /// GroupLeave: the bot leaves, its roles and powers in the group with it.
 pub async fn group_leave(client: &Client, group: &str) -> Answer {
     const C: &str = "GroupLeave";

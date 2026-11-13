@@ -10,6 +10,12 @@
 //! InventoryPreloadCount counts what the fetches have shown so far. SecondBot's
 //! InventoryPurgeNotecards fails when it finds the folder (an inverted check): Ferrobot's fails
 //! when it does not.
+//!
+//! UploadMediaWave cannot do what SecondBot's does: SecondBot reads a WAV file from a path on its
+//! own disk and encodes it to Ogg Vorbis, and the container has neither the files nor an audio
+//! library. Ferrobot's downloads a sound already encoded (Ogg Vorbis, mono, 44100 Hz, 30 s at
+//! most, as the viewer makes them) from an http(s) URL, checks its headers, and uploads it. It
+//! costs what the grid asks for a sound, so it is a Funds command unless the grid says it is free.
 
 use super::reply::{Answer, basic, failure, json};
 use super::{Ctx, avatar, key, owned};
@@ -566,6 +572,63 @@ pub fn set_inventory_update(ctx: &Ctx, kind: &str, target: &str) -> Answer {
         .map_or_else(|| event_type_name(kind), event_type_name);
     ctx.inventory_updates.add(&name, target.trim());
     basic("SetInventoryUpdate", "Ok", &[])
+}
+
+/// The largest sound UploadMediaWave downloads: 30 s of mono Ogg Vorbis is far smaller, even at
+/// the encoder's highest quality.
+const MAX_SOUND_FILE: usize = 2 * 1024 * 1024;
+
+/// UploadMediaWave: a sound from an http(s) URL into the Sounds folder, as `inventoryName`.
+pub async fn upload_media_wave(ctx: &Ctx, source: &str, name: &str) -> Answer {
+    const C: &str = "UploadMediaWave";
+    let args = owned(&[source, name]);
+    let price = ctx.client.state().sound_upload_cost;
+    if !ctx.allow_funds && price != Some(0) {
+        return failure(C, "Funds commands are disabled", &args);
+    }
+    if name.trim().is_empty() || name.len() > 63 {
+        return failure(C, "inventoryName must be 1 to 63 bytes", &args);
+    }
+    if !crate::download::allowed(source) {
+        return failure(C, "sourcePath must start with http:// or https://", &args);
+    }
+    let data = match crate::download::fetch(source, MAX_SOUND_FILE).await {
+        Ok(data) => data,
+        Err(e) => {
+            let why = format!("Unable to download the sound from url error {e}");
+            return failure(C, &why, &args);
+        }
+    };
+    let sound = match ferro_client::sound::check(&data) {
+        Ok(sound) => sound,
+        Err(why) => return failure(C, &format!("Not an Ogg Vorbis sound: {why}"), &args),
+    };
+    if let Some(price) = price.filter(|p| *p > 0) {
+        match ctx.client.balance().await {
+            Ok(balance) if balance >= price => {}
+            Ok(_) => {
+                let why = format!("Not enough funds (L${price} needed)");
+                return failure(C, &why, &args);
+            }
+            Err(e) => {
+                log::debug!("{C}: the balance: {e}");
+                return failure(C, "No reply from the grid [Retry later]", &args);
+            }
+        }
+    }
+    match ctx.client.upload_sound(name.trim(), data, price).await {
+        Ok(done) => {
+            log::info!(
+                "{C}: \"{}\" uploaded ({:.1} s), item {}, L${}",
+                name.trim(),
+                sound.seconds(),
+                done.item,
+                done.cost
+            );
+            basic(C, "ok", &[])
+        }
+        Err(e) => failure(C, &format!("Upload failed: {e}"), &args),
+    }
 }
 
 #[cfg(test)]

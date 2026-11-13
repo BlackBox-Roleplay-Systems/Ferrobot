@@ -118,7 +118,7 @@ baking: the bot says so and goes on.
 - 🟡 SecondBot's other group commands: Groupnotice, GroupnoticeWithAttachment, GetGroupBanList,
   GroupBan (GroupAPIv1), GetGroupTitles, GroupActiveTitle, GroupActiveGroup, GroupJoin,
   GroupLeave, GetGroupMemberRoles, ForceLoadGroups; tested through the API on the test grid.
-  Not GroupCreate (it costs L$100)
+  GroupCreate: see phase 7
 - 🟡 SecondBot's Hello, Version, UnixTimeNow, GetPosition, GoHome, Logoff, GetLastCommands,
   ReadKeyValue, SetKeyValue, ClearKeyValue. Deliberate differences: SetKeyValue and ClearKeyValue
   work (SecondBot's check is inverted), GetLastCommands gives the newest five
@@ -383,6 +383,25 @@ baking: the bot says so and goes on.
   whole profile in AvatarPropertiesUpdate, as Aurora's session for OpenSim): SecondBot's
   GetProfileAbout, GetProfileImage, SetProfileAbout, SetProfileImage; tested on the test grid (NGC
   has its profile service off: no viewer sees profiles there either)
+- 🟡 SecondBot's GetProfilePicks (the AgentProfile capability's picks, else the GenericMessage
+  "avatarpicksrequest" answered by AvatarPicksReply, as Aurora's session), GroupCreate
+  (CreateGroupRequest / CreateGroupReply as LLGroupMgr and Aurora's create_group_message; the
+  balance asked of the grid first, the group list after) and UploadMediaWave
+  (crates/client/src/upload.rs from Aurora's inventory/upload.rs: NewFileAgentInventory, its price
+  check and its uploader; crates/client/src/sound.rs: an Ogg Vorbis file's pages, CRCs and Vorbis
+  headers checked, never decoded); their checks, replies and args as SecondBot's; tested on the
+  test grid (picks by UDP and by the capability, a group created, a sound uploaded paid and free).
+  GroupCreate is a Funds command (FERRO_ALLOW_FUNDS), UploadMediaWave too unless the login's
+  `account_level_benefits` say sounds are free; both are under the rate limit. Deliberate
+  differences: GroupCreate asks the grid for the balance (SecondBot reads the last one it heard);
+  UploadMediaWave cannot encode audio (no audio library in the container), so it takes an Ogg
+  Vorbis sound (mono, 44100 Hz, 30 s at most, 2 MiB at most) from an http(s) URL where SecondBot
+  encodes a WAV file from a path on its own disk, it refuses a name of more than 63 bytes, a WAV
+  file, and a file the viewer would not have made, it fails when the upload fails (SecondBot
+  answers "ok" whatever happens), and it needs the NewFileAgentInventory capability (no UDP
+  upload). To verify on the grid (human)
+- ⬜ UploadMediaWave from a WAV file: would need a Vorbis encoder in the container (an audio
+  library, ruled out for now)
 
 ## Phase 8 - Running it for real
 

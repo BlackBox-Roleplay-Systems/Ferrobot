@@ -29,9 +29,11 @@ mod outfit;
 pub mod parcels;
 pub mod profile;
 pub mod region_restart;
+pub mod sound;
 pub mod state;
 pub mod terrain;
 mod transfer;
+pub mod upload;
 pub mod walking;
 mod xmlrpc;
 
@@ -951,6 +953,14 @@ impl Client {
         })
         .await?
         .map_err(ClientError::Refused)
+    }
+
+    /// An avatar's picks, (key, name) in the grid's order. Waits as SecondBot's GetProfilePicks
+    /// does: 10 s.
+    pub async fn picks(&self, id: Uuid) -> Result<Vec<(Uuid, String)>, ClientError> {
+        self.ask(|reply| Request::Profile(network::ProfileRequest::Picks { id, reply }))
+            .await?
+            .map_err(ClientError::Refused)
     }
 
     /// Change the bot's own profile (its about text or its picture).

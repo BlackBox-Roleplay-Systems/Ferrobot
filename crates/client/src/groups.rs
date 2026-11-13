@@ -1,5 +1,5 @@
 //! Port of aurora-net/src/groups.rs (Aurora Viewer, see NOTICE.md), without what a bot does not
-//! use yet (notices, bans, role and group edits, group creation).
+//! use yet (notices, bans, role and group edits).
 //!
 //! The data of one group as LLGroupMgr keeps it (indra/newview/llgroupmgr.cpp,
 //! roles_constants.h, llpanelgroupnotices.cpp, originally LGPL 2.1): its
@@ -471,10 +471,92 @@ pub fn ban_list(v: &Llsd) -> Option<(Uuid, Vec<(Uuid, f64)>)> {
     Some((group, bans))
 }
 
+/// A group to create, as the viewer's group panel fills UpdateGroupInfo's fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewGroup {
+    pub name: String,
+    pub charter: String,
+    pub show_in_list: bool,
+    pub insignia: Uuid,
+    pub membership_fee: i32,
+    pub open_enrollment: bool,
+    pub allow_publish: bool,
+    pub mature_publish: bool,
+}
+
+/// CreateGroupReply (LLGroupMgr::processCreateGroupReply): the new group, or the grid's reason
+/// for refusing it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupCreated {
+    pub id: Uuid,
+    pub success: bool,
+    pub message: String,
+}
+
+/// CreateGroupRequest (LLGroupMgr::sendCreateGroupRequest): the trimmed name and what
+/// UpdateGroupInfo would send (Aurora's create_group_message). The grid takes the fee.
+pub fn create_message(agent: Uuid, session: Uuid, g: &NewGroup) -> msgs::CreateGroupRequest {
+    let mut m = msgs::CreateGroupRequest::default();
+    m.agent_data.agent_id = agent;
+    m.agent_data.session_id = session;
+    let d = &mut m.group_data;
+    d.name = ferro_msg::str_field(g.name.trim());
+    d.charter = ferro_msg::str_field(&g.charter);
+    d.show_in_list = g.show_in_list;
+    d.insignia_id = g.insignia;
+    d.membership_fee = g.membership_fee;
+    d.open_enrollment = g.open_enrollment;
+    d.allow_publish = g.allow_publish;
+    d.mature_publish = g.mature_publish;
+    m
+}
+
+/// CreateGroupReply, read.
+pub fn created_reply(m: &msgs::CreateGroupReply) -> GroupCreated {
+    GroupCreated {
+        id: m.reply_data.group_id,
+        success: m.reply_data.success,
+        message: field_str(&m.reply_data.message),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ferro_msg::str_field;
+
+    #[test]
+    fn a_group_created_as_the_viewer_asks() {
+        let g = NewGroup {
+            name: "  Bots United ".into(),
+            charter: "A place".into(),
+            show_in_list: true,
+            insignia: Uuid::nil(),
+            membership_fee: 25,
+            open_enrollment: false,
+            allow_publish: true,
+            mature_publish: false,
+        };
+        let m = create_message(Uuid::from_u128(1), Uuid::from_u128(2), &g);
+        assert_eq!(field_str(&m.group_data.name), "Bots United");
+        assert_eq!(field_str(&m.group_data.charter), "A place");
+        assert_eq!(
+            (m.group_data.membership_fee, m.group_data.show_in_list),
+            (25, true)
+        );
+        let mut r = msgs::CreateGroupReply::default();
+        r.reply_data.group_id = Uuid::from_u128(9);
+        r.reply_data.success = false;
+        r.reply_data.message = str_field("The group name is already in use.");
+        assert_eq!(
+            created_reply(&r),
+            GroupCreated {
+                id: Uuid::from_u128(9),
+                success: false,
+                message: "The group name is already in use.".into()
+            }
+        );
+    }
     use msgs::{
         group_members_reply, group_role_data_reply, group_role_members_reply, group_titles_reply,
     };

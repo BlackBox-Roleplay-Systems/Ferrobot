@@ -11,6 +11,8 @@ pub const NOTECARDS: Uuid = Uuid::from_u128(0x1000_0002);
 pub const TRASH: Uuid = Uuid::from_u128(0x1000_0003);
 pub const STUFF: Uuid = Uuid::from_u128(0x1000_0004);
 pub const SUB: Uuid = Uuid::from_u128(0x1000_0005);
+/// Where uploaded sounds go (FT_SOUND).
+pub const SOUNDS: Uuid = Uuid::from_u128(0x1000_0006);
 /// A notecard, an object, and a link to the notecard.
 pub const NOTECARD: Uuid = Uuid::from_u128(0x2000_0001);
 pub const BOX: Uuid = Uuid::from_u128(0x2000_0002);
@@ -172,6 +174,7 @@ impl Default for Inventory {
                 f(OBJECTS, ROOT, "Objects", 6),
                 f(NOTECARDS, ROOT, "Notecards", 7),
                 f(TRASH, ROOT, "Trash", 14),
+                f(SOUNDS, ROOT, "Sounds", 1),
                 f(STUFF, ROOT, "Stuff", -1),
                 f(SUB, STUFF, "Sub", -1),
                 f(COF, ROOT, "Current Outfit", 46),
