@@ -9,7 +9,7 @@
 //! reply target, when there is one (crate::smart_reply).
 
 use crate::api::signing::{Unpacked, same, sign_with, unpack};
-use crate::commands::{self, Ctx};
+use crate::commands::Ctx;
 use crate::masters::Masters;
 use ferro_client::events::dialog;
 use ferro_client::{Event, InstantMessage};
@@ -75,15 +75,7 @@ async fn on_im(ctx: Ctx, masters: Arc<Masters>, settings: Arc<Settings>, im: Ins
         log::warn!("command by IM from {} refused: not signed", im.from_name);
         return;
     }
-    let (ran, value) = match tokio::time::timeout(
-        crate::api::COMMAND_DEADLINE,
-        commands::run(&ctx, &u.command, &u.args),
-    )
-    .await
-    {
-        Ok(answer) => answer,
-        Err(_) => (false, "No reply from the grid [Retry later]".to_owned()),
-    };
+    let (ran, value) = crate::api::run_command(&ctx, &u.command, &u.args).await;
     // a master's IM is tried as a command, as SecondBot does: plain talk is no failure
     if !ran && value == "Unknown command" {
         log::debug!("IM from {} is not a command", im.from_name);

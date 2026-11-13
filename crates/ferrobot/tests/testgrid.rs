@@ -617,6 +617,30 @@ mod api {
                 inner["args"].clone(),
             )
         }
+
+        /// POST /json with this body; the text SecondBot sends, read from its JSON string.
+        async fn json(&self, body: &str) -> String {
+            let answer = self
+                .http
+                .post(self.url.replace("/api/Run", "/json"))
+                .body(body.to_owned())
+                .send()
+                .await
+                .expect("the API answers")
+                .text()
+                .await
+                .expect("a body");
+            serde_json::from_str(&answer).unwrap_or_else(|_| panic!("not a JSON string: {answer}"))
+        }
+    }
+
+    /// sha1(command + args joined with ~#~ [+ unixtime] + secret), as SignedCommand checks it.
+    fn signature(command: &str, args: &[&str], unixtime: Option<i64>, secret: &str) -> String {
+        let time = unixtime.map(|t| t.to_string()).unwrap_or_default();
+        Sha1::digest(format!("{command}{}{time}{secret}", args.join("~#~")))
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     /// SecondBot's inventory extras: SetPermFlag, the inventory tree and its counts, purging old
@@ -931,6 +955,109 @@ mod api {
                 Value::String("incorrect number of args expected: 0 but got: 1".into())
             )
         );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
+    /// SecondBot's `POST /json`: one command in SignedCommand's form (JSON or text), each answer
+    /// a JSON string; signed with the time, always (a deliberate difference).
+    #[tokio::test]
+    async fn the_json_endpoint_answers_as_secondbot() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, Some("http://127.0.0.1:1/")).await;
+        assert_eq!(api.json("Name").await, "No bot connected yet");
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        assert_eq!(api.json("").await, "No body sent");
+        let inner = |answer: &str| -> (bool, Value) {
+            let outer: Value = serde_json::from_str(answer).unwrap_or_else(|_| panic!("{answer}"));
+            let value = outer["Value"].as_str().expect("Value");
+            (
+                outer["Key"].as_bool().expect("Key"),
+                serde_json::from_str(value).unwrap_or(Value::String(value.into())),
+            )
+        };
+
+        // the JSON form, its time as a number or a string
+        let t = now();
+        let sig = signature("Name", &[], Some(t), SECRET);
+        let body = serde_json::json!({"cmd": "Name", "args": [], "unixtime": t, "signing": sig});
+        let (key, answer) = inner(&api.json(&body.to_string()).await);
+        assert!(key);
+        assert_eq!(answer["reply"], "Test Bot", "{answer}");
+        let body = serde_json::json!({"cmd": "name", "unixtime": t.to_string(),
+            "signing": signature("name", &[], Some(t), SECRET)});
+        assert_eq!(
+            inner(&api.json(&body.to_string()).await).1["command"],
+            "Name"
+        );
+
+        // the text form, as by IM
+        let args = ["Other Avatar"];
+        let sig = signature("Name2Key", &args, Some(t), SECRET);
+        let (_, answer) = inner(
+            &api.json(&format!("Name2Key|||Other Avatar@@@{sig};|;{t}"))
+                .await,
+        );
+        assert_eq!(answer["reply"], OTHER, "{answer}");
+
+        // empty arguments are kept, unlike /api/Run's
+        let body = serde_json::json!({"cmd": "Name", "args": [""], "unixtime": t,
+            "signing": signature("Name", &[""], Some(t), SECRET)});
+        assert_eq!(
+            inner(&api.json(&body.to_string()).await),
+            (
+                false,
+                Value::String("incorrect number of args expected: 0 but got: 1".into())
+            )
+        );
+
+        // refused: a wrong secret, too old, no time (SecondBot's default), unsigned, malformed
+        let refused = [
+            serde_json::json!({"cmd": "Name", "unixtime": t,
+                "signing": signature("Name", &[], Some(t), "wrong")}),
+            serde_json::json!({"cmd": "Name", "unixtime": t - 36,
+                "signing": signature("Name", &[], Some(t - 36), SECRET)}),
+            serde_json::json!({"cmd": "Name", "signing": signature("Name", &[], None, SECRET)}),
+            serde_json::json!({"cmd": "Name", "unixtime": t}),
+            serde_json::json!({"cmd": "Name", "args": "nope", "unixtime": t,
+                "signing": signature("Name", &[], Some(t), SECRET)}),
+        ];
+        for body in refused {
+            assert_eq!(
+                api.json(&body.to_string()).await,
+                "Command request rejected",
+                "{body}"
+            );
+        }
+        assert_eq!(api.json("Name").await, "Command request rejected");
+
+        // the answer goes to the reply target too
+        let body = serde_json::json!({"cmd": "Name", "unixtime": t, "reply": "7",
+            "signing": signature("Name", &[], Some(t), SECRET)});
+        assert!(inner(&api.json(&body.to_string()).await).0);
+        assert!(
+            grid.wait_for(WAIT, |s| matches!(s, Seen::Chat { message, channel: 7, .. }
+                if message.contains(r#""reply":"Test Bot""#)))
+                .await,
+            "{}",
+            bot.log()
+        );
+
+        // POST only: anything else reaches the catch-all
+        let other = api
+            .http
+            .get(api.url.replace("/api/Run", "/json"))
+            .send()
+            .await
+            .expect("an answer")
+            .text()
+            .await
+            .expect("body");
+        assert_eq!(other, r#"{"Message":"Error"}"#);
         bot.terminate();
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
