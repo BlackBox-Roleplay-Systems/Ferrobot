@@ -47,6 +47,18 @@ struct Region {
     attached: HashMap<Uuid, u32>,
     /// Where each bot's avatar stands, as the object updates told it.
     avatar_at: HashMap<SocketAddr, Vec3>,
+    /// A terrain file each bot is uploading.
+    terrain: HashMap<SocketAddr, TerrainIn>,
+}
+
+/// A terrain file coming in by xfer, as a region receives one (LLXferManager::processReceiveData,
+/// OpenSim's EstateTerrainXferHandler).
+struct TerrainIn {
+    id: u64,
+    name: String,
+    next: u32,
+    announced: usize,
+    data: Vec<u8>,
 }
 
 impl Region {
@@ -600,6 +612,79 @@ impl Region {
         self.send(to, &m, true);
     }
 
+    /// `terrain` "upload filename": the region asks the estate manager for that file by xfer,
+    /// under the name it was given, outside any folder (OpenSim's HandleUploadTerrain).
+    fn request_terrain(&mut self, from: SocketAddr, name: &str) {
+        if self.index != 0 {
+            // the bot does not manage the second region's estate
+            return;
+        }
+        let id = 0x7e44_a100_0000_0000 | u64::from(self.clients[&from].n);
+        self.terrain.insert(
+            from,
+            TerrainIn {
+                id,
+                name: name.to_owned(),
+                next: 0,
+                announced: 0,
+                data: Vec::new(),
+            },
+        );
+        let mut r = RequestXfer::default();
+        r.xfer_id.id = id;
+        r.xfer_id.filename = str_field(name);
+        r.xfer_id.file_path = 0;
+        r.xfer_id.delete_on_completion = false;
+        r.xfer_id.use_big_packets = false;
+        r.xfer_id.v_file_id = Uuid::nil();
+        r.xfer_id.v_file_type = 0;
+        self.send(from, &r, true);
+    }
+
+    /// A packet of the terrain file: in order, each confirmed; the whole file seen at the last.
+    fn terrain_packet(&mut self, from: SocketAddr, m: &SendXferPacket) {
+        const LAST: u32 = 0x8000_0000;
+        let Some(t) = self.terrain.get_mut(&from).filter(|t| t.id == m.xfer_id.id) else {
+            return;
+        };
+        let num = m.xfer_id.packet & !LAST;
+        if num != t.next {
+            // a packet sent again: confirm it again if it is the last one taken
+            if num + 1 == t.next {
+                let mut c = ConfirmXferPacket::default();
+                c.xfer_id.id = m.xfer_id.id;
+                c.xfer_id.packet = m.xfer_id.packet;
+                self.send(from, &c, false);
+            }
+            return;
+        }
+        let data = &m.data_packet.data;
+        if num == 0 {
+            let Some(size) = data.get(..4) else {
+                return;
+            };
+            t.announced = i32::from_le_bytes([size[0], size[1], size[2], size[3]]).max(0) as usize;
+            t.data.extend_from_slice(&data[4..]);
+        } else {
+            t.data.extend_from_slice(data);
+        }
+        t.next += 1;
+        let done = (m.xfer_id.packet & LAST != 0).then(|| Seen::TerrainUploaded {
+            name: t.name.clone(),
+            announced: t.announced,
+            len: t.data.len(),
+            checksum: crate::checksum(&t.data),
+        });
+        let mut c = ConfirmXferPacket::default();
+        c.xfer_id.id = m.xfer_id.id;
+        c.xfer_id.packet = m.xfer_id.packet;
+        self.send(from, &c, false);
+        if let Some(seen) = done {
+            self.terrain.remove(&from);
+            self.shared.saw(seen);
+        }
+    }
+
     /// The group messages; false when `pkt` is not one of them.
     fn on_group_packet(&mut self, pkt: &IncomingPacket, from: SocketAddr, n: u32) -> bool {
         use crate::groups as g;
@@ -682,9 +767,14 @@ impl Region {
                     .collect();
                 self.shared.saw(Seen::EstateMessage {
                     method: method.clone(),
-                    params,
+                    params: params.clone(),
                 });
-                if method == "getinfo" {
+                if method == "terrain"
+                    && params.first().is_some_and(|p| p == "upload filename")
+                    && let Some(name) = params.get(1)
+                {
+                    self.request_terrain(from, name);
+                } else if method == "getinfo" {
                     // the estate's info, with the invoice it was asked with
                     let strings = [
                         "Test Estate".to_owned(),
@@ -1108,6 +1198,10 @@ impl Region {
                 self.shared.saw(Seen::XferConfirmed {
                     packet: m.xfer_id.packet,
                 });
+            }
+        } else if id == SendXferPacket::ID {
+            if let Ok(m) = pkt.decode::<SendXferPacket>() {
+                self.terrain_packet(from, &m);
             }
         } else if id == TransferRequest::ID {
             if let Ok(m) = pkt.decode::<TransferRequest>() {
@@ -1954,6 +2048,7 @@ pub async fn run(
         playing: HashMap::new(),
         attached: HashMap::new(),
         avatar_at: HashMap::new(),
+        terrain: HashMap::new(),
     };
     let mut data = vec![0u8; 8192];
     let mut ping_id = 0u8;
