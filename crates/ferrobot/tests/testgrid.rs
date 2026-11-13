@@ -854,6 +854,16 @@ mod api {
         assert_eq!(status["logins"], 1);
         assert!(status["commands"].as_u64().expect("a count") >= 10);
 
+        // the outfit, baked by itself after the login (the version corrected), then on demand
+        assert!(
+            grid.wait_until(WAIT, |seen| seen
+                .contains(&Seen::AppearanceRequest { cof_version: 0 })
+                && seen.contains(&Seen::AppearanceRequest { cof_version: 7 }))
+                .await
+        );
+        bot.wait_log("outfit baked (version 7)").await;
+        assert_eq!(api.reply("RebakeAppearance", &[]).await, "ok");
+
         assert_eq!(api.reply("Logoff", &[]).await, "ok");
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
         bot.wait_log("logged out").await;

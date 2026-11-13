@@ -86,6 +86,11 @@ pub(crate) enum Request {
         message: String,
         reply: oneshot::Sender<()>,
     },
+    /// Ask the region to bake the bot's outfit (UpdateAvatarAppearance); answered with the outfit
+    /// version baked, or why not.
+    Rebake {
+        reply: oneshot::Sender<Result<i32, String>>,
+    },
     /// A region's handle by its name (MapNameRequest); `None` when there is no such region.
     RegionHandle {
         name: String,
@@ -496,5 +501,14 @@ impl Client {
             Some(handle) => self.teleport_to(handle, position).await,
             None => Err(ClientError::Refused(format!("no region named {region}"))),
         }
+    }
+
+    /// Ask the region to bake the bot's outfit again (server-side baking), as SecondBot's
+    /// RebakeAppearance; answers with the outfit version baked. The bot asks once by itself
+    /// after each login.
+    pub async fn rebake(&self) -> Result<i32, ClientError> {
+        self.ask_within(Duration::from_secs(60), |reply| Request::Rebake { reply })
+            .await?
+            .map_err(ClientError::Refused)
     }
 }

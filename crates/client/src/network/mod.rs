@@ -176,6 +176,8 @@ struct Session<'a> {
     picker_waits: HashMap<Uuid, oneshot::Sender<Vec<(Uuid, String)>>>,
     /// Group replies being gathered.
     groups: groups::GroupWaits,
+    /// The outfit was asked to be baked this session.
+    appearance_asked: bool,
     /// Region names asked of the world map (lower case), and who waits.
     map_waits: Vec<(String, oneshot::Sender<Option<u64>>)>,
 }
@@ -356,6 +358,7 @@ impl Session<'_> {
             position: p,
         });
         self.send_agent_update();
+        self.appearance_once();
         if let Some(waiting) = self.teleport.take() {
             log::info!("teleported to {}", self.region_name);
             if let Some(reply) = waiting {
@@ -494,6 +497,7 @@ impl Session<'_> {
             }
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
             Request::Group(r) => self.on_group_request(r),
+            Request::Rebake { reply } => self.request_appearance(Some(reply)),
             Request::RegionHandle { name, reply } => {
                 // LLWorldMapMessage::sendNamedRegionRequest; the reply gives the grid position
                 let mut m = MapNameRequest::default();
@@ -896,6 +900,70 @@ impl Session<'_> {
         Ok(None)
     }
 
+    /// Once per login, arrived and with the capabilities: ask for the outfit to be baked, or the
+    /// bot stays a cloud.
+    fn appearance_once(&mut self) {
+        if self.appearance_asked || !self.arrived || self.caps.is_empty() {
+            return;
+        }
+        self.appearance_asked = true;
+        self.request_appearance(None);
+    }
+
+    /// LLAppearanceMgr::serverAppearanceUpdateCoro (Aurora's request_server_appearance): POST
+    /// the outfit's version to UpdateAvatarAppearance; the region bakes the current outfit. The
+    /// version is not known here: a wrong one is answered with the one `expected`, asked again.
+    fn request_appearance(&mut self, reply: Option<oneshot::Sender<Result<i32, String>>>) {
+        let Some(url) = self.caps.get("UpdateAvatarAppearance").cloned() else {
+            log::warn!("no UpdateAvatarAppearance capability: the outfit is not baked");
+            if let Some(reply) = reply {
+                let _ = reply.send(Err("no UpdateAvatarAppearance capability".into()));
+            }
+            return;
+        };
+        let http = self.http.clone();
+        tokio::spawn(async move {
+            let mut version = 0;
+            let mut answer = Err("no answer".to_owned());
+            for _ in 0..2 {
+                let body = ferro_llsd::llsd_map! { "cof_version" => version };
+                match tokio::time::timeout(
+                    Duration::from_secs(60),
+                    caps::post_llsd(&http, &url, &body),
+                )
+                .await
+                {
+                    Ok(Ok(v)) if v["success"].as_bool() => {
+                        answer = Ok(version);
+                        break;
+                    }
+                    Ok(Ok(v)) if v.has("expected") && v["expected"].as_i32() != version => {
+                        version = v["expected"].as_i32();
+                    }
+                    Ok(Ok(v)) => {
+                        answer = Err(v["error"].to_string_value());
+                        break;
+                    }
+                    Ok(Err(e)) => {
+                        answer = Err(e.to_string());
+                        break;
+                    }
+                    Err(_) => {
+                        answer = Err("no answer in 60 s".into());
+                        break;
+                    }
+                }
+            }
+            match &answer {
+                Ok(v) => log::info!("outfit baked (version {v})"),
+                Err(e) => log::warn!("outfit not baked: {e}"),
+            }
+            if let Some(reply) = reply {
+                let _ = reply.send(answer);
+            }
+        });
+    }
+
     /// MapBlockReply for the names asked (Aurora's teleport by name): the region of that very
     /// name, the end-of-list block (access 255, MapSearchModule's) never one; a reply with only
     /// other names starting like it, or empty ones, means there is no such region.
@@ -1119,6 +1187,7 @@ async fn run(
         picker_waits: HashMap::new(),
         groups: groups::GroupWaits::default(),
         map_waits: Vec::new(),
+        appearance_asked: false,
     };
     s.send_use_circuit_code();
     // capabilities and the event queue, alongside the circuit
@@ -1155,7 +1224,10 @@ async fn run(
             // The capabilities task drops its sender when it ends; a closed channel is always
             // ready, so its branch is switched off then, or the loop would spin.
             ev = s.eq_rx.recv(), if s.eq_open => match ev {
-                Some(EqMessage::Caps(caps)) => s.caps = caps,
+                Some(EqMessage::Caps(caps)) => {
+                    s.caps = caps;
+                    s.appearance_once();
+                }
                 Some(EqMessage::Event(e)) => {
                     if let Some(end) = s.on_event(e) {
                         break end;

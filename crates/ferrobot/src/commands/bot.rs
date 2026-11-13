@@ -82,3 +82,15 @@ pub fn bot_status(ctx: &Ctx) -> Answer {
     });
     basic("BotStatus", &status.to_string(), &[])
 }
+
+/// RebakeAppearance: the region bakes the outfit again.
+pub async fn rebake(ctx: &Ctx) -> Answer {
+    const C: &str = "RebakeAppearance";
+    match ctx.client.rebake().await {
+        Ok(_) => basic(C, "ok", &[]),
+        Err(ferro_client::ClientError::Timeout) => {
+            failure(C, "Rebake did not finish in 60 secs", &[])
+        }
+        Err(e) => failure(C, &format!("Rebake failed: {e}"), &[]),
+    }
+}

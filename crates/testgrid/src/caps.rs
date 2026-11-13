@@ -28,6 +28,7 @@ pub async fn handle(
         ("groupmemberdata", "POST") => member_data(shared, body),
         ("chatsessionrequest", "POST") => chat_session_request(shared, body),
         ("groupapi", "GET" | "POST") => group_api(shared, method, query, body),
+        ("appearance", "POST") => appearance(shared, body),
         _ => Response::status(404),
     }
 }
@@ -53,6 +54,12 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         m.insert(
             "GetDisplayNames".into(),
             format!("http://{}/cap/{n}/{region}/displaynames", shared.http_addr).into(),
+        );
+    }
+    if caps.iter().any(|c| c == "UpdateAvatarAppearance") {
+        m.insert(
+            "UpdateAvatarAppearance".into(),
+            format!("http://{}/cap/{n}/{region}/appearance", shared.http_addr).into(),
         );
     }
     if caps.iter().any(|c| c == "GroupAPIv1") {
@@ -244,6 +251,30 @@ fn group_api(shared: &Arc<Shared>, method: &str, query: &str, body: &[u8]) -> Re
     v.insert("group_id".into(), group.into());
     v.insert("ban_list".into(), Llsd::Map(list));
     llsd_reply(&Llsd::Map(v))
+}
+
+/// The outfit's version, as the grid keeps it.
+const COF_VERSION: i32 = 7;
+
+/// UpdateAvatarAppearance: the outfit baked when the version is right, else the one expected, as
+/// the grid answers (LLAppearanceMgr reads `success`, `error`, `expected`).
+fn appearance(shared: &Arc<Shared>, body: &[u8]) -> Response {
+    let Ok(v) = from_xml(body) else {
+        return Response::status(400);
+    };
+    let version = v["cof_version"].as_i32();
+    shared.saw(Seen::AppearanceRequest {
+        cof_version: version,
+    });
+    let mut m = Map::new();
+    if version == COF_VERSION {
+        m.insert("success".into(), true.into());
+    } else {
+        m.insert("success".into(), false.into());
+        m.insert("error".into(), "Cof Version Mismatch".into());
+        m.insert("expected".into(), COF_VERSION.into());
+    }
+    llsd_reply(&Llsd::Map(m))
 }
 
 /// ChatSessionRequest: "accept invitation" joins the bot to a group chat.

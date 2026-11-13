@@ -152,7 +152,10 @@ region).
 
 ## Phase 6 - Appearance and inventory
 
-- ⬜ Current outfit and server-side baking; hover height
+- 🟡 Server-side baking: once per login the region is asked to bake the current outfit
+  (UpdateAvatarAppearance, the version it expects asked again, as Aurora's
+  request_server_appearance); RebakeAppearance; tested on the test grid, to see in world
+- ⬜ Hover height; changing the outfit (wear, take off)
 - ⬜ Inventory fetch, give, accept
 - ⬜ Notecards: create and send
 

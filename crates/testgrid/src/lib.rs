@@ -290,6 +290,10 @@ pub enum Seen {
     StartLure {
         target: Uuid,
     },
+    /// The bot asked for its outfit to be baked (UpdateAvatarAppearance).
+    AppearanceRequest {
+        cof_version: i32,
+    },
     /// The bot looked a region up by name (MapNameRequest).
     MapNameRequest {
         name: String,
