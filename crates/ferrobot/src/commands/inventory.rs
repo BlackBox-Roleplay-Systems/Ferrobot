@@ -121,6 +121,85 @@ pub async fn send_folder(ctx: &Ctx, folder: &str, who: &str) -> Answer {
     }
 }
 
+pub async fn send_item_by_path(ctx: &Ctx, path: &str, who: &str) -> Answer {
+    const C: &str = "SendItemByPath";
+    let args = owned(&[path, who]);
+    let Some(to) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar uuid", &args);
+    };
+    let item = match ctx.client.item_by_path(path).await {
+        Ok(Some(i)) => i,
+        Ok(None) => return failure(C, "Unable to find item via path", &args),
+        Err(e) => return failure(C, &e.to_string(), &args),
+    };
+    let t = u8::try_from(item.asset_type).unwrap_or(0);
+    match ctx.client.give_item_as(to, item.id, &item.name, t).await {
+        Ok(()) => basic(C, "ok", &args),
+        Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
+pub async fn send_folder_by_path(ctx: &Ctx, path: &str, who: &str) -> Answer {
+    const C: &str = "SendFolderByPath";
+    let args = owned(&[path, who]);
+    let Some(to) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar uuid", &args);
+    };
+    let folder = match ctx.client.folder_by_path(path).await {
+        Ok(Some(f)) => f,
+        Ok(None) => return failure(C, "Unable to find folder", &args),
+        Err(e) => return failure(C, &e.to_string(), &args),
+    };
+    match ctx.client.give_folder(to, folder.id, &folder.name).await {
+        Ok(()) => basic(C, "ok", &args),
+        Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
+/// An asset type by LibreMetaverse's AssetType name (SecondBot matches those, lower case), or
+/// by the viewer's short name, which SecondBot's own hints give (callcard, animatn, material).
+fn asset_type(name: &str) -> Option<u8> {
+    let n = name.trim().to_ascii_lowercase();
+    let t = match n.as_str() {
+        "callingcard" => 2,
+        "script" => 4,
+        "lslbytecode" => 11,
+        "texturetga" => 12,
+        "soundwav" => 17,
+        "imagetga" => 18,
+        "imagejpeg" => 19,
+        "animation" => 20,
+        "widget" => 40,
+        "person" => 45,
+        other => ferro_client::inventory::asset_type_from_name(other),
+    };
+    // folders are not items
+    u8::try_from(t).ok().filter(|t| !matches!(t, 8 | 25))
+}
+
+pub async fn send_item_direct(ctx: &Ctx, item: &str, name: &str, kind: &str, who: &str) -> Answer {
+    const C: &str = "SendItemDirect";
+    let args = owned(&[item, name, kind, who]);
+    let Some(id) = key(item) else {
+        return failure(C, "Invaild item uuid", &args);
+    };
+    if name.trim().is_empty() || kind.trim().is_empty() {
+        return failure(C, "Invaild item name", &args);
+    }
+    let Some(t) = asset_type(kind) else {
+        return failure(C, "Invaild item type", &args);
+    };
+    let Some(to) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar uuid", &args);
+    };
+    // SecondBot answers with the avatar's key in place of what was sent
+    let args = owned(&[item, name, kind, &to.to_string()]);
+    match ctx.client.give_item_as(to, id, name, t).await {
+        Ok(()) => basic(C, "ok", &args),
+        Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
 pub async fn real_uuid(ctx: &Ctx, item: &str) -> Answer {
     const C: &str = "GetRealUUID";
     let args = owned(&[item]);
@@ -221,5 +300,23 @@ pub async fn move_folder(ctx: &Ctx, folder: &str, dest: &str) -> Answer {
     match ctx.client.move_folder(id, to).await {
         Ok(()) => basic(C, "Ok", &args),
         Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asset_types_by_either_name() {
+        assert_eq!(asset_type("Object"), Some(6));
+        assert_eq!(asset_type("notecard"), Some(7));
+        assert_eq!(asset_type("CallingCard"), Some(2));
+        assert_eq!(asset_type("callcard"), Some(2));
+        assert_eq!(asset_type("animation"), Some(20));
+        assert_eq!(asset_type("animatn"), Some(20));
+        assert_eq!(asset_type("folder"), None);
+        assert_eq!(asset_type("category"), None);
+        assert_eq!(asset_type("thing"), None);
     }
 }

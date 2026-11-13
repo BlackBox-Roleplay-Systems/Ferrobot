@@ -170,7 +170,11 @@ baking: the bot says so and goes on.
   SendItem, SendFolder, GetRealUUID, CreateInventoryFolder, RenameInventory, DeleteInventoryItem,
   DeleteInventoryFolder, MoveInventoryItem, MoveInventoryFolder; accepting offers is the
   interaction rules'. Deliberate difference: deleting moves to the Trash
-- ⬜ Inventory: by path (SendItemByPath…), rezzing, attaching, outfits (phase 7, with objects)
+- 🟡 Inventory by path and direct: SecondBot's SendItemByPath, SendFolderByPath (a folder fetched
+  per part, exact names, as its FindObjectByPath), SendItemDirect (its AssetType names, and the
+  viewer's short ones its hints give); tested on the test grid. Deliberate difference: empty parts
+  of a path are skipped ("/Stuff/Sub/" is "Stuff/Sub")
+- ⬜ Inventory: the Async… variants (smart replies), rezzing, attaching, outfits
 - 🟡 Notecards: created (CreateInventoryItem, UpdateNotecardAgentInventory's uploader, the
   "Linden text version 2" asset, as Aurora) and sent; SecondBot's NotecardAdd, NotecardClear,
   NotecardSend, NotecardDirectSend; tested on the test grid

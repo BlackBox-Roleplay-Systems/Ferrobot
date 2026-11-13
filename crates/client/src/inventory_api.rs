@@ -1,7 +1,7 @@
 //! The client's inventory: folders and their contents (fetched when asked), items, giving,
 //! creating, moving, renaming and throwing away, as SecondBot's Inventory commands need them.
 
-use crate::inventory::{FolderContents, InvItem};
+use crate::inventory::{FolderContents, InvFolder, InvItem};
 use crate::network::InventoryRequest;
 use crate::{Client, ClientError, Request};
 use serde::Serialize;
@@ -170,6 +170,59 @@ impl Client {
         };
         let t = u8::try_from(i.asset_type).unwrap_or(0);
         self.give(to, i.name, vec![(t, i.id)]).await
+    }
+
+    /// Give an item by its key, name and asset type, without looking it up (SecondBot's
+    /// SendItemDirect).
+    pub async fn give_item_as(
+        &self,
+        to: Uuid,
+        item: Uuid,
+        name: &str,
+        asset_type: u8,
+    ) -> Result<(), ClientError> {
+        self.give(to, name.to_owned(), vec![(asset_type, item)])
+            .await
+    }
+
+    /// The folder at the end of the folders named in `parts`, from the root (SecondBot's
+    /// FindObjectByPath walks the same way: exact names, one folder fetched per part).
+    async fn walk(&self, parts: &[&str]) -> Result<Option<Uuid>, ClientError> {
+        let mut current = self.inventory_root();
+        for part in parts {
+            let contents = self.folder_contents(current).await?;
+            match contents.folders.iter().find(|f| f.name == *part) {
+                Some(f) => current = f.id,
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(current))
+    }
+
+    /// An item by its path from the root, "Objects/Demo Item"; empty parts are skipped.
+    pub async fn item_by_path(&self, path: &str) -> Result<Option<InvItem>, ClientError> {
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        let Some((name, folders)) = parts.split_last() else {
+            return Ok(None);
+        };
+        let Some(folder) = self.walk(folders).await? else {
+            return Ok(None);
+        };
+        let contents = self.folder_contents(folder).await?;
+        Ok(contents.items.into_iter().find(|i| i.name == *name))
+    }
+
+    /// A folder by its path from the root, "Objects/Gifts".
+    pub async fn folder_by_path(&self, path: &str) -> Result<Option<InvFolder>, ClientError> {
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        let Some((name, parents)) = parts.split_last() else {
+            return Ok(None);
+        };
+        let Some(parent) = self.walk(parents).await? else {
+            return Ok(None);
+        };
+        let contents = self.folder_contents(parent).await?;
+        Ok(contents.folders.into_iter().find(|f| f.name == *name))
     }
 
     /// Give a folder and the items in it (LLGiveInventory::giveInventoryCategory: the folder, then

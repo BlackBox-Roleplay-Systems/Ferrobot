@@ -917,6 +917,76 @@ mod api {
             "Unable to find item"
         );
 
+        // by path, and directly by key, name and type
+        assert_eq!(
+            api.reply("SendItemByPath", &["Objects/Box", OTHER]).await,
+            "ok"
+        );
+        assert_eq!(
+            api.reply("SendFolderByPath", &["/Stuff/Sub/", OTHER]).await,
+            "ok"
+        );
+        let direct = uuid_from(0xd1ec7);
+        let (_, inner) = api
+            .run(
+                "SendItemDirect",
+                &[&direct.to_string(), "A Gift", "Object", "Other Avatar"],
+            )
+            .await;
+        assert_eq!(inner["reply"], "ok", "{inner}");
+        assert_eq!(
+            inner["args"][3],
+            other.to_string(),
+            "the avatar's key, as SecondBot"
+        );
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.contains(&Seen::InventoryOffer {
+                    to: other,
+                    name: "Box".into(),
+                    entries: vec![(6, inv::BOX)],
+                }) && seen.contains(&Seen::InventoryOffer {
+                    to: other,
+                    name: "Sub".into(),
+                    entries: vec![(8, inv::SUB)],
+                }) && seen.contains(&Seen::InventoryOffer {
+                    to: other,
+                    name: "A Gift".into(),
+                    entries: vec![(6, direct)],
+                })
+            })
+            .await,
+            "{:?}",
+            grid.seen()
+        );
+        assert_eq!(
+            api.failure("SendItemByPath", &["Objects/Nothing", OTHER])
+                .await
+                .0,
+            "Unable to find item via path"
+        );
+        assert_eq!(
+            api.failure("SendItemByPath", &["Nowhere/Box", OTHER])
+                .await
+                .0,
+            "Unable to find item via path"
+        );
+        assert_eq!(
+            api.failure("SendFolderByPath", &["Stuff/None", OTHER])
+                .await
+                .0,
+            "Unable to find folder"
+        );
+        assert_eq!(
+            api.failure(
+                "SendItemDirect",
+                &[&direct.to_string(), "A Gift", "folder", OTHER]
+            )
+            .await
+            .0,
+            "Invaild item type"
+        );
+
         // a new folder, an item renamed and moved, a folder moved, things thrown away
         let (key, inner) = api
             .run(
