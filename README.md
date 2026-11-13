@@ -21,7 +21,7 @@ All settings come from environment variables.
 | `FERRO_MASTERS` | (none) | Avatars the bot obeys, comma-separated: `First Last` or usernames |
 | `FERRO_SHARED_SECRET` | (none) | The secret that signs the HTTP API's commands. Without it, the API is off |
 | `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`, `POST /json`) |
-| `FERRO_HTTP_PORT` | `80` | Its port |
+| `FERRO_HTTP_PORT` | `80` | Its port (0: any free port, named in the log) |
 | `FERRO_HTTP_BIND` | `0.0.0.0` | The address it listens on: `127.0.0.1` behind a tunnel on the same host |
 | `FERRO_TIME_WINDOW` | `35` | Seconds a signed command stays valid |
 | `FERRO_IM_COMMANDS` | `true` | Commands by IM: from masters, and signed ones from objects |

@@ -230,6 +230,9 @@ pub async fn serve(ctx: Ctx, bind: std::net::IpAddr, port: u16, secret: String, 
             return;
         }
     };
+    // Port 0 lets the system pick one (the tests do, so that no other process takes it between
+    // a test choosing a port and the bot opening it): the log names the one opened.
+    let port = listener.local_addr().map_or(port, |a| a.port());
     log::info!("HTTP API on port {port} ({bind})");
     if let Err(e) = axum::serve(listener, app).await {
         log::error!("HTTP API: {e}");

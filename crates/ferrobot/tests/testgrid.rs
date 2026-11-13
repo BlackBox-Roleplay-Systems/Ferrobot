@@ -566,12 +566,19 @@ mod api {
     const SOME: &str = "00000000-0000-0000-0000-00005eed0001";
     const OTHER: &str = "00000000-0000-0000-0000-00005eed0002";
 
-    fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("bind")
-            .local_addr()
-            .expect("address")
-            .port()
+    /// The port the bot's HTTP API opened. The bot is started with port 0 so the system picks a
+    /// free one as it binds: a port chosen by the test and released could be taken by another
+    /// test before the bot opens it.
+    pub(super) async fn api_port(bot: &Bot) -> u16 {
+        const LINE: &str = "HTTP API on port ";
+        bot.wait_log(LINE).await;
+        let log = bot.log();
+        let at = log.find(LINE).expect("the API's log line") + LINE.len();
+        log[at..]
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|p| p.parse().ok())
+            .expect("the API's port")
     }
 
     fn encode(s: &str) -> String {
@@ -937,14 +944,10 @@ mod api {
 
     /// The bot with its API, and these settings too.
     async fn bot_with_settings(grid: &TestGrid, settings: &[(&str, &str)]) -> (Bot, Api) {
-        let port = free_port().to_string();
-        let mut env = vec![
-            ("FERRO_HTTP_PORT", port.as_str()),
-            ("commands_SharedSecret", SECRET),
-        ];
+        let mut env = vec![("FERRO_HTTP_PORT", "0"), ("commands_SharedSecret", SECRET)];
         env.extend_from_slice(settings);
         let bot = Bot::start(grid, &env);
-        bot.wait_log("HTTP API on port").await;
+        let port = api_port(&bot).await;
         let api = Api {
             url: format!("http://127.0.0.1:{port}/api/Run"),
             http: reqwest::Client::new(),
@@ -1625,16 +1628,16 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 
         // money on
-        let port = free_port().to_string();
         let mut bot = Bot::start(
             &grid,
             &[
-                ("FERRO_HTTP_PORT", port.as_str()),
+                ("FERRO_HTTP_PORT", "0"),
                 ("commands_SharedSecret", SECRET),
                 ("FERRO_ALLOW_FUNDS", "true"),
             ],
         );
         bot.wait_log("in world").await;
+        let port = api_port(&bot).await;
         let api = Api {
             url: format!("http://127.0.0.1:{port}/api/Run"),
             http: reqwest::Client::new(),
@@ -2200,15 +2203,15 @@ mod api {
     #[tokio::test]
     async fn parcel_access() {
         let grid = grid().await;
-        let port = free_port().to_string();
         let mut bot = Bot::start(
             &grid,
             &[
-                ("FERRO_HTTP_PORT", port.as_str()),
+                ("FERRO_HTTP_PORT", "0"),
                 ("commands_SharedSecret", SECRET),
                 ("FERRO_ALLOW_FUNDS", "true"),
             ],
         );
+        let port = api_port(&bot).await;
         let api = Api {
             url: format!("http://127.0.0.1:{port}/api/Run"),
             http: reqwest::Client::new(),
@@ -3082,11 +3085,10 @@ mod api {
         let grid = grid().await;
         let discord = StandIn::start().await.expect("the stand-in Discord");
         let host = discord.host();
-        let port = free_port().to_string();
         let mut bot = Bot::start(
             &grid,
             &[
-                ("FERRO_HTTP_PORT", port.as_str()),
+                ("FERRO_HTTP_PORT", "0"),
                 ("commands_SharedSecret", SECRET),
                 ("discord_Enabled", "true"),
                 ("discord_ServerID", "800"),
@@ -3094,6 +3096,7 @@ mod api {
                 ("FERRO_DISCORD_STAND_IN", host.as_str()),
             ],
         );
+        let port = api_port(&bot).await;
         let api = Api {
             url: format!("http://127.0.0.1:{port}/api/Run"),
             http: reqwest::Client::new(),
@@ -3845,22 +3848,16 @@ async fn a_strangers_item_is_declined_by_default() {
 #[tokio::test]
 async fn script_dialogs_are_relayed_and_answered() {
     let grid = grid().await;
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind")
-        .local_addr()
-        .expect("address")
-        .port()
-        .to_string();
     let mut bot = Bot::start(
         &grid,
         &[
-            ("FERRO_HTTP_PORT", port.as_str()),
+            ("FERRO_HTTP_PORT", "0"),
             ("FERRO_SHARED_SECRET", "s"),
             ("FERRO_DIALOG_CHANNEL", "7"),
         ],
     );
     arrived(&grid, &bot, 1).await;
-    bot.wait_log("HTTP API on port").await;
+    let port = api::api_port(&bot).await.to_string();
     let some = ferro_testgrid::Resident {
         id: uuid_from(0x5eed_0001),
         first: "Some".into(),
