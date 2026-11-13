@@ -15,13 +15,12 @@
 
 pub mod signing;
 
-use crate::commands;
+use crate::commands::{self, Ctx};
 use axum::Router;
 use axum::extract::{Form, State};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use ferro_client::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +29,7 @@ use std::time::Duration;
 pub const COMMAND_DEADLINE: Duration = Duration::from_secs(90);
 
 struct Api {
-    client: Client,
+    ctx: Ctx,
     secret: String,
     window: u64,
 }
@@ -72,7 +71,7 @@ async fn run(State(api): State<Arc<Api>>, Form(f): Form<RunForm>) -> Response {
     else {
         return json("Invaild unixtime was sent".into());
     };
-    if !api.client.health().online {
+    if !api.ctx.client.health().online {
         return json("No bot connected yet".into());
     }
     let command = f.commandName.unwrap_or_default();
@@ -90,7 +89,7 @@ async fn run(State(api): State<Arc<Api>>, Form(f): Form<RunForm>) -> Response {
     }
     let (ran, value) = match tokio::time::timeout(
         COMMAND_DEADLINE,
-        commands::run(&api.client, &command, &args),
+        commands::run(&api.ctx, &command, &args),
     )
     .await
     {
@@ -108,7 +107,7 @@ async fn run(State(api): State<Arc<Api>>, Form(f): Form<RunForm>) -> Response {
 
 /// `GET /health`: in world or not, and nothing more (no secret needed, nothing to learn).
 async fn health(State(api): State<Arc<Api>>) -> Response {
-    if api.client.health().online {
+    if api.ctx.client.health().online {
         (axum::http::StatusCode::OK, "ok").into_response()
     } else {
         (axum::http::StatusCode::SERVICE_UNAVAILABLE, "offline").into_response()
@@ -122,9 +121,9 @@ async fn other() -> Response {
 
 /// Serve the API until the bot stops. A port already in use is logged, and the bot goes on
 /// without its API, as SecondBot does.
-pub async fn serve(client: Client, port: u16, secret: String, window: u64) {
+pub async fn serve(ctx: Ctx, port: u16, secret: String, window: u64) {
     let api = Arc::new(Api {
-        client,
+        ctx,
         secret,
         window,
     });

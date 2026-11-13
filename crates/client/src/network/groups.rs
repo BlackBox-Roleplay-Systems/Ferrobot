@@ -509,7 +509,7 @@ impl Session<'_> {
 
 /// MAX_MSG_BUF_SIZE (1024, with its terminating zero): longer texts go in parts, cut between
 /// characters.
-fn split_message(text: &str) -> Vec<&str> {
+pub(super) fn split_message(text: &str) -> Vec<&str> {
     const MAX: usize = 1023;
     let mut parts = Vec::new();
     let mut rest = text;

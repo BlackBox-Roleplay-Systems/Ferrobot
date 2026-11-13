@@ -817,4 +817,129 @@ mod api {
         bot.terminate();
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
+
+    /// SecondBot's Chat and Groupchat commands, and the history behind them.
+    #[tokio::test]
+    async fn chat_commands_and_their_history() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("in 2 groups").await;
+
+        // local chat, both ways
+        grid.say("Other Avatar", "hello bot");
+        bot.wait_log("[chat] Other Avatar: hello bot").await;
+        assert_eq!(api.reply("Say", &["0", "hello world"]).await, "ok");
+        assert_eq!(api.reply("Shout", &["0", "LOUD"]).await, "ok");
+        assert_eq!(api.reply("Whisper", &["7", "psst"]).await, "ok");
+        assert_eq!(
+            api.failure("Say", &["zero", "x"]).await.0,
+            "Invaild channel"
+        );
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                [("hello world", 0, 1), ("LOUD", 0, 2), ("psst", 7, 0)]
+                    .iter()
+                    .all(|(m, ch, t)| {
+                        seen.contains(&Seen::Chat {
+                            message: (*m).into(),
+                            channel: *ch,
+                            chat_type: *t,
+                        })
+                    })
+            })
+            .await,
+            "{:?}",
+            grid.seen()
+        );
+        let local: Vec<String> =
+            serde_json::from_str(&api.reply("LocalChatHistory", &[]).await).expect("list");
+        assert_eq!(local[0], "{Av} Other Avatar: hello bot");
+        assert_eq!(local[1], "{BOT} Test Bot: hello world");
+
+        // IMs: one received opens a window, unread until read
+        assert_eq!(api.reply("haveunreadims", &[]).await, "False");
+        grid.im("Other Avatar", "are you there?");
+        bot.wait_log("[im] Other Avatar: are you there?").await;
+        assert_eq!(api.reply("haveunreadims", &[]).await, "True");
+        let unread: Vec<String> =
+            serde_json::from_str(&api.reply("listwithunread", &[]).await).expect("list");
+        assert_eq!(unread.len(), 1);
+        let windows: Value =
+            serde_json::from_str(&api.reply("chatwindows", &[]).await).expect("map");
+        assert_eq!(windows[&unread[0]], "Other Avatar");
+        let lines: Vec<String> =
+            serde_json::from_str(&api.reply("getimchat", &[&unread[0]]).await).expect("list");
+        assert_eq!(lines, vec!["Other Avatar: are you there?"]);
+        assert_eq!(api.reply("haveunreadims", &[]).await, "False");
+        assert_eq!(
+            api.failure("getimchat", &["nope"]).await.0,
+            "avatar UUID invaild"
+        );
+
+        // an IM sent by name
+        assert_eq!(api.reply("IM", &["Other Avatar", "yes, here"]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::Im {
+                    to: uuid_from(0x5eed_0002),
+                    message: "yes, here".into()
+                })
+            .await
+        );
+        assert_eq!(
+            api.failure("IM", &["Nobody Here", "x"]).await.0,
+            "avatar lookup"
+        );
+
+        // group chat, both ways
+        let group = TEST_GROUP.to_string();
+        assert_eq!(
+            api.reply("Groupchat", &[&group, "hello group"]).await,
+            "Sending"
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::GroupChatSend {
+                    group: TEST_GROUP,
+                    message: "hello group".into()
+                })
+            .await
+        );
+        assert_eq!(api.reply("GroupchatAnyUnread", &[]).await, "False");
+        let some = ferro_testgrid::Resident {
+            id: uuid_from(0x5eed_0001),
+            first: "Some".into(),
+            last: "Resident".into(),
+        };
+        grid.group_chat(&some, TEST_GROUP, "welcome");
+        bot.wait_log("[group Test Group] Some Resident: welcome")
+            .await;
+        assert_eq!(api.reply("GroupchatAnyUnread", &[]).await, "True");
+        assert_eq!(
+            api.reply("GroupchatGroupHasUnread", &[&group]).await,
+            "True"
+        );
+        let groups: Vec<String> =
+            serde_json::from_str(&api.reply("GroupchatListAllUnreadGroups", &[]).await)
+                .expect("list");
+        assert_eq!(groups, vec![group.clone()]);
+        let lines: Vec<String> =
+            serde_json::from_str(&api.reply("GroupchatHistory", &[&group]).await).expect("list");
+        assert_eq!(lines, vec!["Bot: hello group", "Some Resident: welcome"]);
+        assert_eq!(
+            api.reply("GroupchatGroupHasUnread", &[&group]).await,
+            "False"
+        );
+        assert_eq!(api.reply("GroupchatClearAll", &[]).await, "ok");
+        assert_eq!(api.reply("GroupchatHistory", &[&group]).await, "[]");
+        let third = ferro_testgrid::THIRD_GROUP.to_string();
+        assert_eq!(
+            api.failure("Groupchat", &[&third, "x"]).await.0,
+            "Unknown group"
+        );
+
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
 }

@@ -32,5 +32,6 @@ these files follow its behaviour closely, its commands' names, replies and check
 | Ferrobot | Follows SecondBot | SecondBot commit |
 |---|---|---|
 | `crates/ferrobot/src/api/` | `SecondBotEvents/Services/HttpService.cs`, `CommandsService.cs` (SignedCommand, RunCommand) | `a2377e5` (branch `update-libremetaverse`) |
-| `crates/ferrobot/src/commands/` | `SecondBotEvents/Commands/Group.cs`, `Info.cs`, `Avatars.cs` | `a2377e5` (branch `update-libremetaverse`) |
+| `crates/ferrobot/src/commands/` | `SecondBotEvents/Commands/Group.cs`, `Info.cs`, `Avatars.cs`, `Chat.cs` | `a2377e5` (branch `update-libremetaverse`) |
+| `crates/ferrobot/src/history.rs` | the chat history of `SecondBotEvents/Services/DataStoreService.cs` | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/services/lures.rs`, `group_invites.rs` | `SecondBotEvents/Services/InteractionService.cs` | `a2377e5` (branch `update-libremetaverse`) |

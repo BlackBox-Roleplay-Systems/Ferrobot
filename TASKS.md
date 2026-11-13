@@ -113,7 +113,11 @@ region).
 
 ## Phase 5 - Talking and listening
 
-- ⬜ Send chat, IMs, group chat; history commands
+- 🟡 Send chat, IMs, group chat; history commands (`Client::chat`, `im`; src/history.rs as
+  SecondBot's DataStoreService; its Chat and Groupchat commands: LocalChatHistory, Say, Shout,
+  Whisper, IM, chatwindows, listwithunread, haveunreadims, getimchat, Groupchat,
+  GroupchatHistory, GroupchatListAllUnreadGroups, GroupchatGroupHasUnread, GroupchatAnyUnread,
+  GroupchatClearAll); tested through the API against the test grid
 - ⬜ Masters and interactions (friends, teleports, inventory, group invites)
 - ⬜ Commands from masters in chat / IM
 - ⬜ Script dialogs

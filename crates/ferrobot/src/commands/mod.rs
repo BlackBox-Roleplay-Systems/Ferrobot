@@ -3,13 +3,23 @@
 //! A deliberate difference is noted on the command.
 
 mod avatars;
+mod chat;
 mod groups;
 mod info;
 pub mod reply;
 
+use crate::history::History;
 use ferro_client::Client;
 use reply::Answer;
+use std::sync::Arc;
 use uuid::Uuid;
+
+/// What the commands work with.
+#[derive(Clone)]
+pub struct Ctx {
+    pub client: Client,
+    pub history: Arc<History>,
+}
 
 /// The commands, with their number of arguments (SecondBot checks the count first).
 const COMMANDS: &[(&str, usize)] = &[
@@ -25,10 +35,26 @@ const COMMANDS: &[(&str, usize)] = &[
     ("GroupEject", 2),
     ("GroupAddRole", 3),
     ("GroupRemoveRole", 3),
+    ("LocalChatHistory", 0),
+    ("Say", 2),
+    ("Shout", 2),
+    ("Whisper", 2),
+    ("IM", 2),
+    ("chatwindows", 0),
+    ("listwithunread", 0),
+    ("haveunreadims", 0),
+    ("getimchat", 1),
+    ("GroupchatListAllUnreadGroups", 0),
+    ("GroupchatGroupHasUnread", 1),
+    ("GroupchatAnyUnread", 0),
+    ("GroupchatClearAll", 0),
+    ("GroupchatHistory", 1),
+    ("Groupchat", 2),
 ];
 
 /// What CommandsService.RunCommand answers: whether the command ran, and its answer (or why not).
-pub async fn run(client: &Client, name: &str, args: &[String]) -> (bool, String) {
+pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
+    let client = &ctx.client;
     // command names do not depend on case
     let Some(&(command, expected)) = COMMANDS.iter().find(|(c, _)| c.eq_ignore_ascii_case(name))
     else {
@@ -57,6 +83,19 @@ pub async fn run(client: &Client, name: &str, args: &[String]) -> (bool, String)
         "GroupEject" => groups::group_eject(client, a(0), a(1)).await,
         "GroupAddRole" => groups::group_add_role(client, a(0), a(1), a(2)).await,
         "GroupRemoveRole" => groups::group_remove_role(client, a(0), a(1), a(2)).await,
+        "LocalChatHistory" => chat::local_chat_history(ctx),
+        "Say" | "Shout" | "Whisper" => chat::speak(ctx, command, a(0), a(1)).await,
+        "IM" => chat::im(ctx, a(0), a(1)).await,
+        "chatwindows" => chat::chat_windows(ctx),
+        "listwithunread" => chat::list_with_unread(ctx),
+        "haveunreadims" => chat::have_unread_ims(ctx),
+        "getimchat" => chat::get_im_chat(ctx, a(0)),
+        "GroupchatListAllUnreadGroups" => chat::group_chat_unread_groups(ctx),
+        "GroupchatGroupHasUnread" => chat::group_chat_has_unread(ctx, a(0)),
+        "GroupchatAnyUnread" => chat::group_chat_any_unread(ctx),
+        "GroupchatClearAll" => chat::group_chat_clear_all(ctx),
+        "GroupchatHistory" => chat::group_chat_history(ctx, a(0)),
+        "Groupchat" => chat::group_chat(ctx, a(0), a(1)).await,
         _ => return (false, "Unknown command".into()),
     };
     (true, answer)
@@ -95,6 +134,10 @@ mod tests {
     async fn unknown_commands_and_argument_counts() {
         let http = reqwest::Client::new();
         let (client, _network) = Client::new(http);
+        let client = Ctx {
+            client,
+            history: Arc::default(),
+        };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,
             (false, "Unknown command".to_owned())

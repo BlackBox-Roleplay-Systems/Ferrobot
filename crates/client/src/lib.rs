@@ -73,6 +73,19 @@ pub(crate) enum Request {
         ids: Vec<Uuid>,
         reply: oneshot::Sender<Result<Vec<DisplayName>, String>>,
     },
+    /// Local chat (ChatFromViewer): whisper, say or shout, on a channel.
+    Chat {
+        message: String,
+        channel: i32,
+        chat_type: u8,
+        reply: oneshot::Sender<()>,
+    },
+    /// A plain IM to an avatar (IM_NOTHING_SPECIAL).
+    Im {
+        to: Uuid,
+        message: String,
+        reply: oneshot::Sender<()>,
+    },
     /// Groups: roles, members, invitations, ejections, role changes.
     Group(network::GroupRequest),
     /// A teleport; answered with the region arrived in, or the grid's reason.
@@ -327,5 +340,29 @@ impl Client {
             position,
         })
         .await
+    }
+
+    /// Say something in local chat: `chat_type` is [`events::chat_type`]'s WHISPER, SAY or SHOUT;
+    /// channel 0 is the one avatars hear.
+    pub async fn chat(
+        &self,
+        message: &str,
+        channel: i32,
+        chat_type: u8,
+    ) -> Result<(), ClientError> {
+        let message = message.to_owned();
+        self.ask(|reply| Request::Chat {
+            message,
+            channel,
+            chat_type,
+            reply,
+        })
+        .await
+    }
+
+    /// Send an IM to an avatar.
+    pub async fn im(&self, to: Uuid, message: &str) -> Result<(), ClientError> {
+        let message = message.to_owned();
+        self.ask(|reply| Request::Im { to, message, reply }).await
     }
 }

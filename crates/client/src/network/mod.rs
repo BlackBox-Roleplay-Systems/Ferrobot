@@ -425,6 +425,38 @@ impl Session<'_> {
             }
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
             Request::Group(r) => self.on_group_request(r),
+            Request::Chat {
+                message,
+                channel,
+                chat_type,
+                reply,
+            } => {
+                // LLChatBar::sendChatFromViewer, a long text in parts
+                for part in groups::split_message(&message) {
+                    let mut m = ChatFromViewer::default();
+                    m.agent_data.agent_id = self.login.agent_id;
+                    m.agent_data.session_id = self.login.session_id;
+                    m.chat_data.message = str_field(part);
+                    m.chat_data.type_ = chat_type;
+                    m.chat_data.channel = channel;
+                    self.send(&m, true);
+                }
+                let _ = reply.send(());
+            }
+            Request::Im { to, message, reply } => {
+                // a 1:1 session's id: the two agents' ids xored (LLIMMgr::computeSessionID)
+                let session = Uuid::from_u128(self.login.agent_id.as_u128() ^ to.as_u128());
+                for part in groups::split_message(&message) {
+                    self.send_im(
+                        to,
+                        crate::events::dialog::NOTHING_SPECIAL,
+                        session,
+                        part,
+                        Vec::new(),
+                    );
+                }
+                let _ = reply.send(());
+            }
             Request::DisplayNames { ids, reply } => match self.caps.get("GetDisplayNames") {
                 Some(cap) => {
                     tokio::spawn(fetch_display_names(

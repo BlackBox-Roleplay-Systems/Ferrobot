@@ -449,6 +449,14 @@ impl Region {
                     });
                 }
             }
+        } else if id == ChatFromViewer::ID {
+            if let Ok(m) = pkt.decode::<ChatFromViewer>() {
+                self.shared.saw(Seen::Chat {
+                    message: field_str(&m.chat_data.message),
+                    channel: m.chat_data.channel,
+                    chat_type: m.chat_data.type_,
+                });
+            }
         } else if id == ImprovedInstantMessage::ID {
             if let Ok(m) = pkt.decode::<ImprovedInstantMessage>() {
                 let b = &m.message_block;
@@ -474,6 +482,10 @@ impl Region {
                         self.shared
                             .queue_event(n, "ChatterBoxSessionStartReply", Llsd::Map(body));
                     }
+                    0 => self.shared.saw(Seen::Im {
+                        to: b.to_agent_id,
+                        message: field_str(&b.message),
+                    }),
                     17 => self.shared.saw(Seen::GroupChatSend {
                         group,
                         message: field_str(&b.message),

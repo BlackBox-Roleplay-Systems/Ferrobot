@@ -240,6 +240,17 @@ pub enum Seen {
     GroupChatLeave {
         group: Uuid,
     },
+    /// The bot spoke in local chat.
+    Chat {
+        message: String,
+        channel: i32,
+        chat_type: u8,
+    },
+    /// The bot sent a plain IM.
+    Im {
+        to: Uuid,
+        message: String,
+    },
     TeleportLureRequest {
         session: u32,
         lure: Uuid,

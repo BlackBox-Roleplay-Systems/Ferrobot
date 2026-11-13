@@ -36,7 +36,10 @@ wins when both are set. `http_DisableCommandValidation` is ignored: commands are
 SecondBot's: `{"Key": true, "Value": "{\"command\":…,\"reply\":…,\"status\":true}"}`, or a plain-text
 refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `Name`, `Name2Key`,
 `GetGroupList`, `GetGroupRoles`, `GetGroupMembers`, `GetGroupRoleMembers`, `IsGroupMember`,
-`GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`.
+`GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`; and SecondBot's chat commands:
+`LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,
+`haveunreadims`, `getimchat`, `Groupchat`, `GroupchatHistory`, `GroupchatListAllUnreadGroups`,
+`GroupchatGroupHasUnread`, `GroupchatAnyUnread`, `GroupchatClearAll`.
 
 ### Behind a Cloudflare Tunnel
 

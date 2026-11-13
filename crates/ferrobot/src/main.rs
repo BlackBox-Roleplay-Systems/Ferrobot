@@ -3,6 +3,7 @@
 mod api;
 mod commands;
 mod config;
+mod history;
 mod services;
 
 use config::Config;
@@ -56,10 +57,16 @@ async fn main() -> std::process::ExitCode {
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     tokio::spawn(services::lures::run(client.clone(), cfg.masters.clone()));
     tokio::spawn(services::restart::run(client.clone()));
+    let history = std::sync::Arc::new(history::History::default());
+    tokio::spawn(history::run(client.clone(), history.clone()));
+    let ctx = commands::Ctx {
+        client: client.clone(),
+        history,
+    };
     match (&cfg.shared_secret, cfg.http_enabled) {
         (Some(secret), true) => {
             tokio::spawn(api::serve(
-                client.clone(),
+                ctx,
                 cfg.http_port,
                 secret.clone(),
                 cfg.time_window,
