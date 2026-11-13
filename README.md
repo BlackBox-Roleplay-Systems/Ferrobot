@@ -74,6 +74,11 @@ docker run --rm -e FERRO_USERNAME='Bot Name' -e FERRO_PASSWORD='…' ferrobot
 
 See `NOTICE.md` for what comes from where.
 
+## Trying it without Second Life
+
+`cargo run -p ferro-testgrid --example serve` starts the test grid, a fake grid on localhost, and
+prints the settings to log the bot in to it (its own test account, not a Second Life one).
+
 ## Plan and contributing
 
 - [ROADMAP.md](ROADMAP.md) - the plan, phase by phase
