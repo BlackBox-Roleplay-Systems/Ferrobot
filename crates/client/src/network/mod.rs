@@ -229,6 +229,12 @@ struct Session<'a> {
     /// Control flags in every agent update (fly), and the ones for the next only (stand up…).
     controls: u32,
     controls_once: u32,
+    /// The flags of the last agent update, to confirm a change with one more.
+    sent_flags: crate::walking::SentFlags,
+    /// A movement key held, until when.
+    walking: Option<crate::walking::Walking>,
+    /// An avatar being followed.
+    follow: Option<crate::walking::Follow>,
     /// The body's rotation in the agent updates.
     rotation: Quat,
     /// Inventory items being created, by callback number.
@@ -314,8 +320,90 @@ impl Session<'_> {
         a.camera_left_axis = self.rotation * Vec3::Y;
         a.camera_up_axis = Vec3::Z;
         a.far = 64.0;
-        a.control_flags = self.controls | std::mem::take(&mut self.controls_once);
+        a.control_flags = self.flags();
+        self.controls_once = 0;
+        self.sent_flags.sent(a.control_flags);
+        self.last_update = Instant::now();
         self.send(&m, false);
+    }
+
+    /// The control flags of the next agent update.
+    fn flags(&self) -> u32 {
+        self.controls | self.walking.map_or(0, |w| w.flags) | self.controls_once
+    }
+
+    /// Face a place of the region (the autopilot's way, as SecondBot's TurnToward before it).
+    fn face(&mut self, to: Vec3) {
+        let d = to - self.position;
+        if d.x != 0.0 || d.y != 0.0 {
+            self.rotation = Quat::from_rotation_z(d.y.atan2(d.x));
+        }
+    }
+
+    /// The region walks the bot to a place of the region: GenericMessage "autopilot" in global
+    /// coordinates, the region's corner plus the place (LibreMetaverse's AutoPilot).
+    fn send_autopilot(&mut self, target: Vec3) {
+        let handle = self.shared.state().region.as_ref().map_or(0, |r| r.handle);
+        let (gx, gy) = ((handle >> 32) as f64, (handle & 0xffff_ffff) as f64);
+        let mut m = GenericMessage::default();
+        m.agent_data.agent_id = self.login.agent_id;
+        m.agent_data.session_id = self.login.session_id;
+        m.method_data.method = str_field("autopilot");
+        m.param_list = [
+            format!("{}", (gx + f64::from(target.x)) as u64),
+            format!("{}", (gy + f64::from(target.y)) as u64),
+            format!("{}", target.z),
+        ]
+        .iter()
+        .map(|p| generic_message::ParamList {
+            parameter: str_field(p),
+        })
+        .collect();
+        self.send(&m, true);
+    }
+
+    /// A new movement order: the key held is let go and the follow ends. Nothing is sent.
+    fn end_walks(&mut self) {
+        self.walking = None;
+        if let Some(f) = self.follow.take() {
+            log::info!("no longer following {}", f.leader);
+        }
+    }
+
+    /// The follow's step: autopilot toward the leader, stop near it, end when it is gone.
+    fn follow_step(&mut self, now: Instant) {
+        use crate::walking::FollowStep;
+        let Some(leader) = self.follow.as_ref().map(|f| f.leader) else {
+            return;
+        };
+        let (at, flying) = {
+            let st = self.shared.state();
+            let at = st.avatars.get(&leader).or(st.nearby_positions.get(&leader));
+            (at.copied(), st.flying)
+        };
+        let me = self.position;
+        let Some(step) = self.follow.as_mut().map(|f| f.step(now, me, at, flying)) else {
+            return;
+        };
+        match step {
+            FollowStep::Wait => {}
+            FollowStep::Go(to) => {
+                self.face(to);
+                self.send_agent_update();
+                self.send_autopilot(to);
+            }
+            FollowStep::Stop => {
+                if let Some(at) = at {
+                    self.face(at);
+                }
+                self.controls_once |= crate::walking::control::STOP;
+                self.send_agent_update();
+            }
+            FollowStep::Lost => {
+                log::info!("{leader} is out of sight: the follow ends");
+                self.follow = None;
+            }
+        }
     }
 
     /// An instant message of any dialog, from the bot (LLIMModel::sendMessage's pack_instant_message).
@@ -541,14 +629,8 @@ impl Session<'_> {
     /// sent at once, or the messages the viewer sends.
     fn move_body(&mut self, mv: crate::Move) {
         use crate::Move;
-        // AGENT_CONTROL_* (agent.h)
-        const FLY: u32 = 0x0000_2000;
-        const STOP: u32 = 0x0000_4000;
-        const STAND_UP: u32 = 0x0001_0000;
-        const SIT_ON_GROUND: u32 = 0x0002_0000;
-        // AGENT_CONTROL_AWAY, bit 27 (0x0200_0000 is TURN_LEFT); ANIM_AGENT_AWAY
-        // (llanimationstates.h)
-        const AWAY: u32 = 0x0800_0000;
+        use crate::walking::control::{AWAY, FLY, SIT_ON_GROUND, STAND_UP, STOP};
+        // ANIM_AGENT_AWAY (llanimationstates.h)
         const AWAY_ANIMATION: Uuid = Uuid::from_u128(0xfd037134_85d4_f241_72c6_4f42164fedee);
         let (agent, session) = (self.login.agent_id, self.login.session_id);
         match mv {
@@ -586,45 +668,62 @@ impl Session<'_> {
                 self.send(&m, true);
                 return;
             }
-            Move::SitOnGround => self.controls_once |= SIT_ON_GROUND,
+            Move::SitOnGround => {
+                self.end_walks();
+                self.controls_once |= SIT_ON_GROUND;
+            }
             Move::SitOn(target) => {
+                // the agent update after it lets go of a key held
+                self.end_walks();
                 let mut m = AgentRequestSit::default();
                 m.agent_data.agent_id = agent;
                 m.agent_data.session_id = session;
                 m.target_object.target_id = target;
                 self.send(&m, true);
-                return;
             }
             Move::Stand => {
                 self.controls_once |= STAND_UP;
                 self.shared.state_mut().sitting_on = None;
             }
             Move::AutoPilot(target) => {
-                // global coordinates: the region's corner plus the place
-                let handle = self.shared.state().region.as_ref().map_or(0, |r| r.handle);
-                let (gx, gy) = ((handle >> 32) as f64, (handle & 0xffff_ffff) as f64);
-                let mut m = GenericMessage::default();
-                m.agent_data.agent_id = agent;
-                m.agent_data.session_id = session;
-                m.method_data.method = str_field("autopilot");
-                m.param_list = [
-                    format!("{}", (gx + f64::from(target.x)) as u64),
-                    format!("{}", (gy + f64::from(target.y)) as u64),
-                    format!("{}", target.z),
-                ]
-                .iter()
-                .map(|p| generic_message::ParamList {
-                    parameter: str_field(p),
-                })
-                .collect();
-                self.send(&m, true);
-                return;
+                // the agent update after it lets go of a key held
+                self.end_walks();
+                self.send_autopilot(target);
             }
-            Move::Stop => self.controls_once |= STOP,
+            Move::Stop => {
+                self.end_walks();
+                self.controls_once |= STOP;
+            }
             Move::Face(heading) => {
                 // a heading clockwise from north is a yaw counter-clockwise from east
                 let yaw = (90.0 - heading).to_radians();
                 self.rotation = Quat::from_rotation_z(yaw);
+            }
+            Move::Turn(degrees) => {
+                // the body turns, as the viewer's turn keys turn it (LLAgent::yaw); the region
+                // takes the body rotation of the agent update
+                self.rotation = Quat::from_rotation_z(-degrees.to_radians()) * self.rotation;
+            }
+            Move::Walk(key, hold) => {
+                // the region's autopilot of a follow stops before the key is held: a STOP in
+                // the same update would brake the walk too
+                if self.follow.is_some() {
+                    self.end_walks();
+                    self.controls_once |= STOP;
+                    self.send_agent_update();
+                }
+                self.walking = Some(crate::walking::Walking::new(key, hold, Instant::now()));
+            }
+            Move::WalkStop => self.walking = None,
+            Move::Follow { avatar, distance } => {
+                self.end_walks();
+                log::info!("following {avatar}, {distance} m behind");
+                self.follow = Some(crate::walking::Follow::new(avatar, distance));
+                self.follow_step(Instant::now());
+            }
+            Move::FollowStop => {
+                self.end_walks();
+                self.controls_once |= STOP;
             }
         }
         self.send_agent_update();
@@ -744,6 +843,8 @@ impl Session<'_> {
     }
 
     fn send_logout_request(&mut self) {
+        // no key held in the updates sent while the region logs the bot out
+        self.end_walks();
         let mut m = LogoutRequest::default();
         m.agent_data.agent_id = self.login.agent_id;
         m.agent_data.session_id = self.login.session_id;
@@ -883,6 +984,8 @@ impl Session<'_> {
             let _ = reply.send(Err("a teleport is already under way".into()));
             return;
         }
+        // SecondBot cancels the autopilot before a teleport
+        self.end_walks();
         let (agent_id, session_id) = (self.login.agent_id, self.login.session_id);
         match to {
             TeleportTo::Lure(lure) => {
@@ -1123,9 +1226,23 @@ impl Session<'_> {
             m.ping_id.oldest_unacked = oldest;
             self.send(&m, false);
         }
-        if self.arrived && now.duration_since(self.last_update) >= AGENT_UPDATE_INTERVAL {
-            self.last_update = now;
-            self.send_agent_update();
+        if self.arrived {
+            if self.walking.is_some_and(|w| w.over(now)) {
+                log::debug!("walking: key let go");
+                self.walking = None;
+            }
+            // One a second keeps the agent alive; a change of the flags is confirmed by one more
+            // (Aurora's agent_update.rs). While a key is held, one each tick (10 a second): the
+            // viewer sends one whenever its camera, which follows the walking avatar, moves, and
+            // LibreMetaverse's walk commands every 100 ms.
+            if self.walking.is_some()
+                || self.sent_flags.confirm()
+                || self.flags() != self.sent_flags.last()
+                || now.duration_since(self.last_update) >= AGENT_UPDATE_INTERVAL
+            {
+                self.send_agent_update();
+            }
+            self.follow_step(now);
         }
         self.ask_properties(now);
         // callers that gave up waiting
@@ -1967,6 +2084,9 @@ async fn run(
         next_callback: 0,
         controls: 0,
         controls_once: 0,
+        sent_flags: Default::default(),
+        walking: None,
+        follow: None,
         rotation: Quat::IDENTITY,
     };
     s.send_use_circuit_code();
