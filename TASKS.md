@@ -34,8 +34,10 @@
 - ✅ Tests (`crates/ferrobot/tests/testgrid.rs`, the real binary): login, arrival, chat, IM, events,
   pings, SIGTERM logout (exit 0), kick and closed circuit then relog, no relog (exit 1), wrong
   password (exit 2), start location, a closed event queue that neither ends the session nor spins
-- ⬜ Test grid: a region that goes silent (the 100 s timeout), and an event queue that gives up;
-  both need the bot's timeouts settable for tests
+- ✅ Test grid: a region that goes silent (`TestGrid::silence_region`) is lost after
+  FERRO_REGION_TIMEOUT, and an event queue that fails every poll (`fail_event_queue`) is given up
+  after FERRO_EVENT_QUEUE_ERRORS; then the relog, or exit 1 without relog. Both settings keep the
+  viewer's and Aurora's 100 s and 15 errors by default (`ferro_client::Timeouts`)
 - 🟡 GitHub CI (`.github/workflows/ci.yml`): `check.sh`, the Docker image built and started, its
   size in the run summary; runs on the first PR
 - 🟡 Published image (`.github/workflows/publish.yml`): `ghcr.io/blackbox-roleplay-systems/ferrobot`, amd64 and
@@ -163,7 +165,9 @@ baking: the bot says so and goes on.
   AllowDiscordCommands), the lists answer as JSON (SecondBot prints C# type names), the inverted id
   checks of four commands fixed, no voice (no audio library in the container)
 - ⬜ Discord: to try on a real server (human)
-- ⬜ Test grid: a login sometimes takes 5 s (seen in any test, Discord or not)
+- ✅ Test grid: a login sometimes took 5 s (seen in any test, Discord or not): the dropped first
+  UseCircuitCode and its 5 s resend, fixed by waiting for the UDP socket (PR #4). Five runs of the
+  test-grid suite: 245 logins, none over 0.12 s; with the wait taken out, 46 of 145 took 5.1 s
 - ⬜ Relays: RabbitMQ targets
 - 🟡 Homebound (services/homebound.rs, SecondBot's HomeboundService): home sim after
   FERRO_HOME_AFTER minutes away, backup sim when home fails, evacuation on a restart, the spot at
