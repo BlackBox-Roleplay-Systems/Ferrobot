@@ -211,7 +211,14 @@ baking: the bot says so and goes on.
   by xfer as Aurora's session_social.rs), SetAway (the viewer's setAFK: the away animation and
   AGENT_CONTROL_AWAY); tested on the test grid. Deliberate difference: FriendsGetLocation waits up
   to 3 s for the map's first answer (SecondBot fails the first call and answers the next)
-- ⬜ Profiles, animations and gestures, parcels, estate
+- 🟡 The parcel the bot stands on (crates/client/src/parcels.rs from Aurora's land.rs:
+  ParcelProperties with sequence 0, asked for with ParcelPropertiesRequest when missing; its
+  dwell by ParcelDwellRequest, its global key by RemoteParcelRequest): SecondBot's
+  GetCurrentParcelId, GetCurrentParcelUUID, GetCurrentParcelSize, GetParcelDesc, GetParcelFlags,
+  GetParcelPrimCounts, GetParcelSaleDetails, GetParcelTraffic; tested on the test grid.
+  Deliberate difference: GetParcelTraffic asks the region (SecondBot prints 0 until something did)
+- ⬜ Parcel changes, parcel access (eject, ban, freeze, return), the estate commands
+- ⬜ Profiles, animations and gestures
 
 ## Phase 8 - Running it for real
 

@@ -29,6 +29,27 @@ pub async fn handle(
         ("chatsessionrequest", "POST") => chat_session_request(shared, body),
         ("groupapi", "GET" | "POST") => group_api(shared, method, query, body),
         ("appearance", "POST") => appearance(shared, body),
+        ("remoteparcel", "POST") => {
+            let mut m = Map::new();
+            m.insert("parcel_id".into(), crate::parcels::PARCEL_ID.into());
+            llsd_reply(&Llsd::Map(m))
+        }
+        ("parcelupdate", "POST") => {
+            let Ok(v) = from_xml(body) else {
+                return Response::status(400);
+            };
+            let parcel = {
+                let mut st = shared.state();
+                st.parcel.apply(&v);
+                st.parcel.clone()
+            };
+            shared.saw(Seen::ParcelUpdate {
+                parcel: Box::new(parcel.clone()),
+            });
+            // the region answers with the parcel as it is now
+            shared.queue_event(n, "ParcelProperties", parcel.properties(0, shared.agent_id));
+            llsd_reply(&Llsd::Map(Map::new()))
+        }
         ("preferences", "POST") => {
             let Ok(v) = from_xml(body) else {
                 return Response::status(400);
@@ -138,6 +159,8 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         ("FetchInventory2", "fetchitems"),
         ("UpdateNotecardAgentInventory", "notecardsave"),
         ("AgentPreferences", "preferences"),
+        ("RemoteParcelRequest", "remoteparcel"),
+        ("ParcelPropertiesUpdate", "parcelupdate"),
     ] {
         if caps.iter().any(|c| c == cap) {
             m.insert(

@@ -30,6 +30,7 @@ crates/
     src/objects.rs         where objects and the bot stand, from the object updates (from Aurora)
     src/transfer.rs        protected asset downloads (TransferRequest) and notecard text (from Aurora)
     src/mutes.rs           the mute list: its download by xfer and its file (from Aurora)
+    src/parcels.rs         a parcel's record (ParcelProperties) and its update (from Aurora)
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables

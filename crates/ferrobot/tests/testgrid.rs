@@ -1613,6 +1613,50 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// The parcel the bot stands on, as SecondBot's parcel getters tell it.
+    #[tokio::test]
+    async fn parcel_getters() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+
+        assert_eq!(api.reply("GetCurrentParcelId", &[]).await, "7");
+        assert_eq!(
+            api.reply("GetCurrentParcelUUID", &[]).await,
+            ferro_testgrid::parcels::PARCEL_ID.to_string()
+        );
+        assert_eq!(api.reply("GetCurrentParcelSize", &[]).await, "128,128");
+        assert_eq!(api.reply("GetParcelDesc", &[]).await, "The test parcel");
+        let flags: Value =
+            serde_json::from_str(&api.reply("GetParcelFlags", &[]).await).expect("json");
+        assert_eq!(flags["AllowFly"], "True");
+        assert_eq!(flags["AllowLandmark"], "True");
+        assert_eq!(flags["ForSale"], "False");
+        assert_eq!(flags.as_object().expect("map").len(), 31);
+        assert!(
+            api.reply("GetParcelFlags", &[])
+                .await
+                .starts_with(r#"{"AllowFly":"True","AllowOtherScripts":"False","ForSale""#),
+            "in LibreMetaverse's order"
+        );
+        assert_eq!(
+            api.reply("GetParcelPrimCounts", &[]).await,
+            r#"{"TotalPrims":"12","GroupPrims":"0","OwnerPrims":"10","OtherPrims":"2","MaxPrims":"3750","ParcelPrimBonus":"1.5"}"#
+        );
+        assert_eq!(
+            api.reply("GetParcelSaleDetails", &[]).await,
+            format!(
+                r#"{{"ForSale":"False","Cost":"0","SaleTarget":"{}"}}"#,
+                uuid::Uuid::nil()
+            )
+        );
+        assert_eq!(api.reply("GetParcelTraffic", &[]).await, "42.5");
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

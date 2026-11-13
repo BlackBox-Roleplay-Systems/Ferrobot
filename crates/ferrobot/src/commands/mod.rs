@@ -11,6 +11,7 @@ mod info;
 mod inventory;
 mod movement;
 mod notecard;
+mod parcel;
 pub mod reply;
 mod world;
 
@@ -154,6 +155,14 @@ const COMMANDS: &[(&str, usize)] = &[
     ("GetSimTexture", 1),
     ("GetMuteList", 1),
     ("SetAway", 1),
+    ("GetCurrentParcelId", 0),
+    ("GetCurrentParcelUUID", 0),
+    ("GetCurrentParcelSize", 0),
+    ("GetParcelDesc", 0),
+    ("GetParcelFlags", 0),
+    ("GetParcelPrimCounts", 0),
+    ("GetParcelSaleDetails", 0),
+    ("GetParcelTraffic", 0),
     ("GetRealUUID", 1),
     ("CreateInventoryFolder", 2),
     ("RenameInventory", 2),
@@ -286,6 +295,14 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "GetSimTexture" => world::sim_texture(ctx, a(0)).await,
         "GetMuteList" => bot::mute_list(ctx, a(0)).await,
         "SetAway" => bot::set_away(ctx, a(0)).await,
+        "GetCurrentParcelId" => parcel::current_id(ctx).await,
+        "GetCurrentParcelUUID" => parcel::current_uuid(ctx).await,
+        "GetCurrentParcelSize" => parcel::current_size(ctx).await,
+        "GetParcelDesc" => parcel::desc(ctx).await,
+        "GetParcelFlags" => parcel::flags(ctx).await,
+        "GetParcelPrimCounts" => parcel::prim_counts(ctx).await,
+        "GetParcelSaleDetails" => parcel::sale_details(ctx).await,
+        "GetParcelTraffic" => parcel::traffic(ctx).await,
         "GetRealUUID" => inventory::real_uuid(ctx, a(0)).await,
         "CreateInventoryFolder" => inventory::create_folder(ctx, a(0), a(1)).await,
         "RenameInventory" => inventory::rename(ctx, a(0), a(1)).await,

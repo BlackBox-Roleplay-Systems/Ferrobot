@@ -294,6 +294,13 @@ impl Region {
         let at = m.data.position;
         self.send(to, &m, true);
         self.avatar_update(to, at, 0);
+        // the parcel the agent arrives on
+        let body = self
+            .shared
+            .state()
+            .parcel
+            .properties(0, self.shared.agent_id);
+        self.shared.queue_event(n, "ParcelProperties", body);
         // the residents, standing in a row to the west, as the coarse updates place them
         let residents: Vec<Uuid> = self.shared.cfg.residents.iter().map(|r| r.id).collect();
         let blocks = residents
@@ -554,6 +561,26 @@ impl Region {
                     let r = g::titles_reply(&grp, bot, m.agent_data.request_id);
                     self.send(from, &r, true);
                 }
+            }
+        } else if id == ParcelPropertiesRequest::ID {
+            if let Ok(m) = pkt.decode::<ParcelPropertiesRequest>() {
+                let sequence = m.parcel_data.sequence_id;
+                self.shared.saw(Seen::ParcelPropertiesRequest { sequence });
+                let body = self
+                    .shared
+                    .state()
+                    .parcel
+                    .properties(sequence, self.shared.agent_id);
+                self.shared.queue_event(n, "ParcelProperties", body);
+            }
+        } else if id == ParcelDwellRequest::ID {
+            if let Ok(m) = pkt.decode::<ParcelDwellRequest>() {
+                let mut r = ParcelDwellReply::default();
+                r.agent_data.agent_id = self.shared.agent_id;
+                r.data.local_id = m.data.local_id;
+                r.data.parcel_id = crate::parcels::PARCEL_ID;
+                r.data.dwell = crate::parcels::DWELL;
+                self.send(from, &r, true);
             }
         } else if id == AgentAnimation::ID {
             if let Ok(m) = pkt.decode::<AgentAnimation>() {

@@ -34,6 +34,8 @@ pub struct State {
     pub friend_locations: std::collections::HashMap<Uuid, FriendLocation>,
     /// The mute list, once the grid has sent it.
     pub mute_list: Option<Vec<crate::mutes::Mute>>,
+    /// The parcel the bot stands on (ParcelProperties).
+    pub parcel: Option<crate::parcels::ParcelInfo>,
     /// Marked away (SetAway).
     pub away: bool,
     /// The object the bot sits on (AvatarSitResponse), until it stands.
@@ -54,6 +56,8 @@ pub struct State {
 pub struct Region {
     pub name: String,
     pub handle: u64,
+    /// The region's id (RegionHandshake).
+    pub id: Uuid,
 }
 
 /// Where "home" is (the login reply's `home`).

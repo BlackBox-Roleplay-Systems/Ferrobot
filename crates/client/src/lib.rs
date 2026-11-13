@@ -22,6 +22,7 @@ pub mod mutes;
 pub mod names;
 mod network;
 pub mod objects;
+pub mod parcels;
 pub mod region_restart;
 pub mod state;
 mod transfer;
@@ -103,6 +104,7 @@ pub(crate) enum Request {
         reply: oneshot::Sender<Result<i32, String>>,
     },
     /// A region's handle by its name (MapNameRequest); `None` when there is no such region.
+    Parcel(network::ParcelRequest),
     FindRegion {
         name: String,
         reply: oneshot::Sender<Option<MapRegion>>,
@@ -568,6 +570,48 @@ impl Client {
     pub async fn find_region(&self, name: &str) -> Result<Option<MapRegion>, ClientError> {
         let name = name.trim().to_owned();
         self.ask(|reply| Request::FindRegion { name, reply }).await
+    }
+
+    /// The parcel the bot stands on: the one the region told, else asked for (waiting up to
+    /// `wait`).
+    pub async fn parcel(
+        &self,
+        wait: std::time::Duration,
+    ) -> Result<Option<parcels::ParcelInfo>, ClientError> {
+        if let Some(p) = self.shared.state().parcel.clone() {
+            return Ok(Some(p));
+        }
+        match self
+            .ask_within(wait, |reply| {
+                Request::Parcel(network::ParcelRequest::Properties { reply })
+            })
+            .await
+        {
+            Ok(p) => Ok(Some(p)),
+            Err(ClientError::Timeout) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// A parcel's dwell, its traffic.
+    pub async fn parcel_dwell(&self, local_id: i32) -> Result<f32, ClientError> {
+        self.ask(|reply| Request::Parcel(network::ParcelRequest::Dwell { local_id, reply }))
+            .await
+    }
+
+    /// The global key of the parcel the bot stands on.
+    pub async fn parcel_global_id(&self) -> Result<Uuid, ClientError> {
+        self.ask(|reply| Request::Parcel(network::ParcelRequest::GlobalId { reply }))
+            .await?
+            .map_err(ClientError::Refused)
+    }
+
+    /// Change a parcel: `parcel` is what it should be, from a ParcelInfo the region sent.
+    pub async fn update_parcel(&self, parcel: parcels::ParcelInfo) -> Result<(), ClientError> {
+        let parcel = Box::new(parcel);
+        self.ask(|reply| Request::Parcel(network::ParcelRequest::Update { parcel, reply }))
+            .await?
+            .map_err(ClientError::Refused)
     }
 
     /// Ask where a friend is, when they let the bot see them on the map (FindAgent); the answer

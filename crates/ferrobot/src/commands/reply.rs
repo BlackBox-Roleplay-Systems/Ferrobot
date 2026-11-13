@@ -59,6 +59,29 @@ pub fn cs_number(v: f64) -> serde_json::Value {
     }
 }
 
+/// A JSON object of text values in the order given, as C# writes a Dictionary<string, string>.
+pub fn json_pairs(pairs: &[(&str, String)]) -> String {
+    let body: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("{}:{}", json(k), json(v)))
+        .collect();
+    format!("{{{}}}", body.join(","))
+}
+
+/// A float as C#'s ToString writes it: "128", "64.5".
+pub fn cs_float(v: f32) -> String {
+    if v.fract() == 0.0 && v.abs() < 1e9 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+/// A bool as C#'s ToString writes it.
+pub fn cs_bool_text(b: bool) -> String {
+    if b { "True" } else { "False" }.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

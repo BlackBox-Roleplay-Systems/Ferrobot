@@ -19,7 +19,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GetDisplayNames",
     "GroupAPIv1",
     "GroupMemberData",
+    "ParcelPropertiesUpdate",
     "ReadOfflineMsgs",
+    "RemoteParcelRequest",
     "UpdateAvatarAppearance",
     "UpdateNotecardAgentInventory",
 ];

@@ -20,6 +20,7 @@ pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GRO
 pub use region::{MAPPABLE_FRIEND, SEAT_POSITION, map_tile};
 mod http;
 mod login;
+pub mod parcels;
 mod region;
 mod xmlrpc;
 
@@ -356,6 +357,13 @@ pub enum Seen {
     XferConfirmed {
         packet: u32,
     },
+    ParcelPropertiesRequest {
+        sequence: i32,
+    },
+    /// ParcelPropertiesUpdate: the parcel as it is now.
+    ParcelUpdate {
+        parcel: Box<parcels::GridParcel>,
+    },
     /// An inventory asset asked for, by its item.
     TransferRequest {
         item: Uuid,
@@ -442,6 +450,8 @@ struct State {
     fail_teleport: Option<String>,
     /// The groups as they are now: ejections, role changes and accepted invitations change them.
     groups: Vec<GridGroup>,
+    /// The test region's parcel, as updates change it.
+    parcel: parcels::GridParcel,
     /// Group invitations sent to the bot: transaction to group.
     group_invites: HashMap<Uuid, Uuid>,
     /// The group chats the bot is in.
@@ -617,6 +627,7 @@ impl TestGrid {
                 lures: HashSet::new(),
                 fail_teleport: None,
                 groups,
+                parcel: parcels::GridParcel::default(),
                 group_invites: HashMap::new(),
                 group_chats: HashSet::new(),
                 active_group,
@@ -885,6 +896,10 @@ impl TestGrid {
     }
 
     /// The bot's inventory as it is now.
+    pub fn parcel(&self) -> parcels::GridParcel {
+        self.shared.state().parcel.clone()
+    }
+
     pub fn inventory(&self) -> inventory::Inventory {
         self.shared.state().inventory.clone()
     }
