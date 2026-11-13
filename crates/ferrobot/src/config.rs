@@ -48,6 +48,8 @@ pub struct Config {
     pub relays: Vec<crate::services::relays::Relay>,
     /// The Funds commands: off by default (SecondBot's AllowFundsCommands).
     pub allow_funds: bool,
+    /// The service control commands: off by default (SecondBot's AllowServiceControl).
+    pub allow_service_control: bool,
     /// Commands that change things in world, per minute (0: no limit).
     pub rate_limit: u32,
     /// Homebound: off unless a home sim is given (SecondBot's HomeboundConfig).
@@ -95,6 +97,7 @@ impl std::fmt::Debug for Config {
             .field("homebound", &self.homebound)
             .field("rate_limit", &self.rate_limit)
             .field("allow_funds", &self.allow_funds)
+            .field("allow_service_control", &self.allow_service_control)
             .field("relays", &self.relays.len())
             .field("discord", &self.discord)
             .field("rabbit", &self.rabbit)
@@ -127,25 +130,74 @@ pub enum ConfigError {
     Invalid(&'static str, String),
 }
 
-/// A setting by its Ferrobot name, else by SecondBot's (`<file>_<Setting>`, as its Config class
-/// reads the environment), so that a SecondBot container's settings work as they are. Returns the
-/// name it was found under, for the error messages.
-fn setting(ferro: &'static str, secondbot: &'static str) -> Option<(&'static str, String)> {
-    let read = |name: &'static str| {
-        std::env::var(name)
-            .ok()
-            .map(|v| v.trim().to_owned())
-            .filter(|v| !v.is_empty())
-            .map(|v| (name, v))
-    };
-    read(ferro).or_else(|| read(secondbot))
+/// Where the settings are read: the values ChangeConfigValue changed at runtime first, then the
+/// environment. A changed value is kept under SecondBot's name for it (`<file>_<Setting>`, as its
+/// Config class reads the environment) and wins over both names in the environment. Secrets (the
+/// password, the shared secret, tokens) are never read from here: only from the environment.
+#[derive(Clone, Default)]
+pub struct Source {
+    changed: std::collections::HashMap<String, String>,
 }
 
-fn var(name: &'static str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|v| v.trim().to_owned())
-        .filter(|v| !v.is_empty())
+impl Source {
+    /// A value changed at runtime, under SecondBot's name.
+    pub fn change(&mut self, name: String, value: String) {
+        self.changed.insert(name, value);
+    }
+
+    fn is_changed(&self, name: &str) -> bool {
+        self.changed.contains_key(name)
+    }
+
+    /// A setting by this name, trimmed; an empty one is no setting. A change to "" unsets it.
+    fn get(&self, name: &str) -> Option<String> {
+        let trimmed = |v: &str| Some(v.trim().to_owned()).filter(|v| !v.is_empty());
+        match self.changed.get(name) {
+            Some(v) => trimmed(v),
+            None => std::env::var(name).ok().and_then(|v| trimmed(&v)),
+        }
+    }
+
+    /// A setting by its Ferrobot name, else by SecondBot's (`<file>_<Setting>`), so that a
+    /// SecondBot container's settings work as they are; a runtime change (under SecondBot's name)
+    /// wins over both. Returns the name it was found under, for the error messages.
+    fn setting(
+        &self,
+        ferro: &'static str,
+        secondbot: &'static str,
+    ) -> Option<(&'static str, String)> {
+        if self.is_changed(secondbot) {
+            return self.get(secondbot).map(|v| (secondbot, v));
+        }
+        let read = |name: &'static str| self.get(name).map(|v| (name, v));
+        read(ferro).or_else(|| read(secondbot))
+    }
+
+    fn var(&self, name: &'static str) -> Option<String> {
+        self.get(name)
+    }
+
+    fn setting_flag(
+        &self,
+        ferro: &'static str,
+        secondbot: &'static str,
+        default: bool,
+    ) -> Result<bool, ConfigError> {
+        self.setting(ferro, secondbot)
+            .map_or(Ok(default), |(name, v)| parse_flag(name, &v))
+    }
+
+    fn flag(&self, name: &'static str, default: bool) -> Result<bool, ConfigError> {
+        self.var(name).map_or(Ok(default), |v| parse_flag(name, &v))
+    }
+}
+
+/// A secret, from the environment only and taken as it is (spaces included): the first of these
+/// names that is set.
+fn secret(names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|v| !v.is_empty()))
 }
 
 fn parse_flag(name: &'static str, v: &str) -> Result<bool, ConfigError> {
@@ -157,14 +209,6 @@ fn parse_flag(name: &'static str, v: &str) -> Result<bool, ConfigError> {
             format!("\"{v}\" is not true or false"),
         )),
     }
-}
-
-fn setting_flag(
-    ferro: &'static str,
-    secondbot: &'static str,
-    default: bool,
-) -> Result<bool, ConfigError> {
-    setting(ferro, secondbot).map_or(Ok(default), |(name, v)| parse_flag(name, &v))
 }
 
 /// Discord IDs, comma-separated (FERRO_DISCORD_MASTERS).
@@ -182,11 +226,11 @@ fn discord_ids(name: &'static str, v: &str) -> Result<Vec<u64>, ConfigError> {
 /// Discord (SecondBot's DiscordConfig): on with FERRO_DISCORD (discord_Enabled), a server
 /// (FERRO_DISCORD_SERVER / discord_ServerID) and the bot's token (FERRO_DISCORD_TOKEN /
 /// discord_ClientToken, a secret).
-fn discord() -> Result<Option<crate::discord::Settings>, ConfigError> {
-    if !setting_flag("FERRO_DISCORD", "discord_Enabled", false)? {
+pub fn discord(s: &Source) -> Result<Option<crate::discord::Settings>, ConfigError> {
+    if !s.setting_flag("FERRO_DISCORD", "discord_Enabled", false)? {
         return Ok(None);
     }
-    let server = match setting("FERRO_DISCORD_SERVER", "discord_ServerID") {
+    let server = match s.setting("FERRO_DISCORD_SERVER", "discord_ServerID") {
         Some((name, v)) => v
             .parse::<u64>()
             .ok()
@@ -195,42 +239,40 @@ fn discord() -> Result<Option<crate::discord::Settings>, ConfigError> {
         None => return Err(ConfigError::Missing("FERRO_DISCORD_SERVER")),
     };
     // the token is taken as it is
-    let token = ["FERRO_DISCORD_TOKEN", "discord_ClientToken"]
-        .iter()
-        .find_map(|name| {
-            std::env::var(name)
-                .ok()
-                .map(|t| t.trim().to_owned())
-                .filter(|t| !t.is_empty())
-        })
+    let token = secret(&["FERRO_DISCORD_TOKEN", "discord_ClientToken"])
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
         .ok_or(ConfigError::Missing("FERRO_DISCORD_TOKEN"))?;
-    let masters = match var("FERRO_DISCORD_MASTERS") {
+    let masters = match s.var("FERRO_DISCORD_MASTERS") {
         Some(v) => discord_ids("FERRO_DISCORD_MASTERS", &v)?,
         None => Vec::new(),
     };
-    let interaction = if setting_flag(
+    let interaction = if s.setting_flag(
         "FERRO_DISCORD_INTERACTION",
         "discord_InteractionEnabled",
         false,
     )? {
-        let url = setting(
-            "FERRO_DISCORD_INTERACTION_URL",
-            "discord_InteractionHttpTarget",
-        )
-        .map(|(_, v)| v)
-        .filter(|v| v.starts_with("http"));
-        let channel = setting(
-            "FERRO_DISCORD_INTERACTION_CHANNEL",
-            "discord_InteractionChannelNumber",
-        )
-        .and_then(|(_, v)| v.parse::<u64>().ok());
+        let url = s
+            .setting(
+                "FERRO_DISCORD_INTERACTION_URL",
+                "discord_InteractionHttpTarget",
+            )
+            .map(|(_, v)| v)
+            .filter(|v| v.starts_with("http"));
+        let channel = s
+            .setting(
+                "FERRO_DISCORD_INTERACTION_CHANNEL",
+                "discord_InteractionChannelNumber",
+            )
+            .and_then(|(_, v)| v.parse::<u64>().ok());
         match (url, channel) {
             (Some(url), Some(channel)) => Some(crate::discord::Interaction {
-                name: setting(
-                    "FERRO_DISCORD_INTERACTION_NAME",
-                    "discord_InteractionCommandName",
-                )
-                .map_or_else(|| "Go".to_owned(), |(_, v)| v),
+                name: s
+                    .setting(
+                        "FERRO_DISCORD_INTERACTION_NAME",
+                        "discord_InteractionCommandName",
+                    )
+                    .map_or_else(|| "Go".to_owned(), |(_, v)| v),
                 url,
                 channel,
             }),
@@ -245,20 +287,20 @@ fn discord() -> Result<Option<crate::discord::Settings>, ConfigError> {
     Ok(Some(crate::discord::Settings {
         token,
         server,
-        commands: setting_flag(
+        commands: s.setting_flag(
             "FERRO_DISCORD_COMMANDS",
             "discord_AllowDiscordCommands",
             false,
         )?,
         masters,
-        hide_names: setting_flag("FERRO_DISCORD_HIDE_NAMES", "discord_hideChatterName", false)?,
-        clear_on_connect: setting_flag(
+        hide_names: s.setting_flag("FERRO_DISCORD_HIDE_NAMES", "discord_hideChatterName", false)?,
+        clear_on_connect: s.setting_flag(
             "FERRO_DISCORD_CLEAR_ON_CONNECT",
             "discord_ClearChatOnConnect",
             true,
         )?,
         interaction,
-        stand_in: var("FERRO_DISCORD_STAND_IN"),
+        stand_in: s.var("FERRO_DISCORD_STAND_IN"),
     }))
 }
 
@@ -269,22 +311,24 @@ fn discord() -> Result<Option<crate::discord::Settings>, ConfigError> {
 /// the queues read FERRO_RABBIT_NOTECARD_QUEUE, _COMMAND_QUEUE, _IM_QUEUE, _GROUP_IM_QUEUE
 /// (rabbit_NotecardQueue, rabbit_CommandQueue, rabbit_ImQueue, rabbit_GroupImQueue). SecondBot's
 /// rabbit_LogDebug and rabbit_HideStatusOutput are not read: RUST_LOG sets what is logged.
-fn rabbit() -> Result<Option<crate::rabbit::Settings>, ConfigError> {
+fn rabbit(s: &Source) -> Result<Option<crate::rabbit::Settings>, ConfigError> {
     use crate::rabbit::{Queues, Settings, check_queue_name};
-    if !setting_flag("FERRO_RABBIT", "rabbit_Enabled", false)? {
+    if !s.setting_flag("FERRO_RABBIT", "rabbit_Enabled", false)? {
         return Ok(None);
     }
-    let tls = flag("FERRO_RABBIT_TLS", false)?;
-    let queue = |ferro: &'static str, secondbot: &'static str, default: String| match setting(
-        ferro, secondbot,
-    ) {
+    let tls = s.flag("FERRO_RABBIT_TLS", false)?;
+    let queue = |ferro: &'static str, secondbot: &'static str, default: String| match s
+        .setting(ferro, secondbot)
+    {
         None => Ok(default),
         Some((name, v)) => check_queue_name(&v)
             .map(|()| v)
             .map_err(|e| ConfigError::Invalid(name, e)),
     };
     let defaults = Queues::default();
-    let vhost = var("FERRO_RABBIT_VHOST").unwrap_or_else(|| "/".to_owned());
+    let vhost = s
+        .var("FERRO_RABBIT_VHOST")
+        .unwrap_or_else(|| "/".to_owned());
     if vhost.len() > 255 {
         return Err(ConfigError::Invalid(
             "FERRO_RABBIT_VHOST",
@@ -292,14 +336,16 @@ fn rabbit() -> Result<Option<crate::rabbit::Settings>, ConfigError> {
         ));
     }
     Ok(Some(Settings {
-        host: setting("FERRO_RABBIT_HOST", "rabbit_HostIP")
+        host: s
+            .setting("FERRO_RABBIT_HOST", "rabbit_HostIP")
             .map_or_else(|| "127.0.0.1".to_owned(), |(_, v)| v),
         port: number(
-            setting("FERRO_RABBIT_PORT", "rabbit_HostPort"),
+            s.setting("FERRO_RABBIT_PORT", "rabbit_HostPort"),
             if tls { 5671 } else { 5672 },
             "a port number",
         )?,
-        username: setting("FERRO_RABBIT_USERNAME", "rabbit_HostUsername")
+        username: s
+            .setting("FERRO_RABBIT_USERNAME", "rabbit_HostUsername")
             .map_or_else(|| "guest".to_owned(), |(_, v)| v),
         // the password is taken as it is, spaces included
         password: ["FERRO_RABBIT_PASSWORD", "rabbit_HostPassword"]
@@ -333,9 +379,9 @@ fn rabbit() -> Result<Option<crate::rabbit::Settings>, ConfigError> {
 /// (chatgpt_Enabled). The key (FERRO_CHATGPT_API_KEY / chatgpt_ApiKey) is a secret, taken as it
 /// is; "none", SecondBot's default, is no key. A cooldown and the history size are held in
 /// SecondBot's ranges (1 to 10 s, 3 to 10 lines).
-fn chatgpt() -> Result<Option<crate::services::chatgpt::Settings>, ConfigError> {
+fn chatgpt(s: &Source) -> Result<Option<crate::services::chatgpt::Settings>, ConfigError> {
     use crate::services::chatgpt::{self as ai, in_range};
-    if !setting_flag("FERRO_CHATGPT", "chatgpt_Enabled", false)? {
+    if !s.setting_flag("FERRO_CHATGPT", "chatgpt_Enabled", false)? {
         return Ok(None);
     }
     let none = |v: String| (!v.eq_ignore_ascii_case("none")).then_some(v);
@@ -348,7 +394,7 @@ fn chatgpt() -> Result<Option<crate::services::chatgpt::Settings>, ConfigError> 
                 .filter(|k| !k.is_empty())
         })
         .and_then(none);
-    let provider = setting("FERRO_CHATGPT_PROVIDER", "chatgpt_Provider");
+    let provider = s.setting("FERRO_CHATGPT_PROVIDER", "chatgpt_Provider");
     let (provider_name, provider) =
         provider.unwrap_or(("FERRO_CHATGPT_PROVIDER", ai::OPENAI.to_owned()));
     let endpoint = ai::endpoint(&provider).map_err(|e| ConfigError::Invalid(provider_name, e))?;
@@ -360,21 +406,22 @@ fn chatgpt() -> Result<Option<crate::services::chatgpt::Settings>, ConfigError> 
         Ok(u64::try_from(in_range(n, 1, ai::MAX_COOLDOWN as i64)).unwrap_or(1))
     };
     let history: i64 = number(
-        setting("FERRO_CHATGPT_HISTORY", "chatgpt_ChatHistoryMessages"),
+        s.setting("FERRO_CHATGPT_HISTORY", "chatgpt_ChatHistoryMessages"),
         5,
         "a number of lines",
     )?;
     let timeout: u64 = number(
-        setting(
+        s.setting(
             "FERRO_CHATGPT_HISTORY_TIMEOUT",
             "chatgpt_ChatHistoryTimeout",
         ),
         15,
         "a number of minutes",
     )?;
-    let group = if setting_flag("FERRO_CHATGPT_GROUP", "chatgpt_AllowGroupReplys", false)? {
+    let group = if s.setting_flag("FERRO_CHATGPT_GROUP", "chatgpt_AllowGroupReplys", false)? {
         // SecondBot's default group is "none": no group answered
-        match setting("FERRO_CHATGPT_GROUP_KEY", "chatgpt_GroupReplyForGroup")
+        match s
+            .setting("FERRO_CHATGPT_GROUP_KEY", "chatgpt_GroupReplyForGroup")
             .filter(|(_, v)| !v.eq_ignore_ascii_case("none"))
         {
             Some((name, v)) => Some(
@@ -389,52 +436,56 @@ fn chatgpt() -> Result<Option<crate::services::chatgpt::Settings>, ConfigError> 
     } else {
         None
     };
-    if flag("chatgpt_UseRedis", false)? {
+    if s.flag("chatgpt_UseRedis", false)? {
         log::warn!("chatgpt_UseRedis is ignored: the conversations are kept in memory");
     }
     let settings = ai::Settings {
         api_key,
-        organization: setting("FERRO_CHATGPT_ORGANIZATION", "chatgpt_OrganizationId")
+        organization: s
+            .setting("FERRO_CHATGPT_ORGANIZATION", "chatgpt_OrganizationId")
             .map(|(_, v)| v)
             .and_then(none),
         endpoint,
-        model: setting("FERRO_CHATGPT_MODEL", "chatgpt_UseModel")
+        model: s
+            .setting("FERRO_CHATGPT_MODEL", "chatgpt_UseModel")
             .map_or_else(|| ai::DEFAULT_MODEL.to_owned(), |(_, v)| v),
-        prompt: setting("FERRO_CHATGPT_PROMPT", "chatgpt_ChatPrompt")
+        prompt: s
+            .setting("FERRO_CHATGPT_PROMPT", "chatgpt_ChatPrompt")
             .map_or_else(|| ai::DEFAULT_PROMPT.to_owned(), |(_, v)| v),
-        name: setting("FERRO_CHATGPT_NAME", "chatgpt_CustomName")
+        name: s
+            .setting("FERRO_CHATGPT_NAME", "chatgpt_CustomName")
             .map(|(_, v)| v)
             .filter(|v| v != "<!FIRSTNAME!>"),
         history: usize::try_from(in_range(history, 3, 10)).unwrap_or(5),
         history_timeout: std::time::Duration::from_secs(timeout.saturating_mul(60)),
-        localchat: setting_flag("FERRO_CHATGPT_LOCALCHAT", "chatgpt_LocalchatReply", false)?,
+        localchat: s.setting_flag("FERRO_CHATGPT_LOCALCHAT", "chatgpt_LocalchatReply", false)?,
         localchat_cooldown: seconds(
-            setting(
+            s.setting(
                 "FERRO_CHATGPT_LOCALCHAT_COOLDOWN",
                 "chatgpt_LocalchatRateLimiter",
             ),
             "a number of seconds",
         )?,
-        im: setting_flag("FERRO_CHATGPT_IM", "chatgpt_AllowImReplys", false)?,
-        im_friends_only: setting_flag(
+        im: s.setting_flag("FERRO_CHATGPT_IM", "chatgpt_AllowImReplys", false)?,
+        im_friends_only: s.setting_flag(
             "FERRO_CHATGPT_IM_FRIENDS_ONLY",
             "chatgpt_ImReplyFriendsOnly",
             false,
         )?,
         im_cooldown: seconds(
-            setting("FERRO_CHATGPT_IM_COOLDOWN", "chatgpt_ImReplyRateLimiter"),
+            s.setting("FERRO_CHATGPT_IM_COOLDOWN", "chatgpt_ImReplyRateLimiter"),
             "a number of seconds",
         )?,
         group,
         group_cooldown: seconds(
-            setting(
+            s.setting(
                 "FERRO_CHATGPT_GROUP_COOLDOWN",
                 "chatgpt_GroupReplyRateLimiter",
             ),
             "a number of seconds",
         )?,
-        debug: setting_flag("FERRO_CHATGPT_DEBUG", "chatgpt_ShowDebug", false)?,
-        typing: setting_flag("FERRO_CHATGPT_TYPING", "chatgpt_FakeTypeDelay", true)?,
+        debug: s.setting_flag("FERRO_CHATGPT_DEBUG", "chatgpt_ShowDebug", false)?,
+        typing: s.setting_flag("FERRO_CHATGPT_TYPING", "chatgpt_FakeTypeDelay", true)?,
         provider,
     };
     if !settings.localchat && !settings.im && settings.group.is_none() {
@@ -563,7 +614,7 @@ fn smtp_from(
 /// The relays: FERRO_RELAY_1, FERRO_RELAY_2… in SecondBot's short form, then SecondBot's own
 /// (relay_count, and for each relay_<n>_enabled, _extended, _source_type, _source_option,
 /// _target_type, _target_option, or relay_<n>_RelayConfig with relay_UseShortEncoder).
-fn relays() -> Result<Vec<crate::services::relays::Relay>, ConfigError> {
+pub fn relays(s: &Source) -> Result<Vec<crate::services::relays::Relay>, ConfigError> {
     use crate::services::relays::Relay;
     let mut out = Vec::new();
     for n in 1.. {
@@ -576,16 +627,12 @@ fn relays() -> Result<Vec<crate::services::relays::Relay>, ConfigError> {
         ))?);
     }
     let count: u32 = number(
-        var("relay_count").map(|v| ("relay_count", v)),
+        s.var("relay_count").map(|v| ("relay_count", v)),
         0,
         "a number",
     )?;
-    let short = flag("relay_UseShortEncoder", false)?;
-    let get = |n: u32, k: &str| {
-        std::env::var(format!("relay_{n}_{k}"))
-            .ok()
-            .map(|v| v.trim().to_owned())
-    };
+    let short = s.flag("relay_UseShortEncoder", false)?;
+    let get = |n: u32, k: &str| s.get(&format!("relay_{n}_{k}"));
     for n in 1..=count {
         if short {
             if let Some(r) = get(n, "RelayConfig").and_then(|v| Relay::parse_short(&v)) {
@@ -733,15 +780,18 @@ fn custom_commands_from(
 }
 
 /// Homebound's settings: on with a home sim (FERRO_HOME_SIM, or SecondBot's homebound_Enabled
-/// with homebound_HomeSimSlUrl).
-fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigError> {
+/// with homebound_HomeSimSlUrl). homebound_Enabled changed at runtime turns it on or off either way.
+pub fn homebound(s: &Source) -> Result<Option<crate::services::homebound::Settings>, ConfigError> {
     use crate::services::homebound::{Place, Settings};
-    let home = match var("FERRO_HOME_SIM") {
-        Some(v) => Some(("FERRO_HOME_SIM", v)),
-        None if setting_flag("FERRO_HOMEBOUND", "homebound_Enabled", false)? => {
-            setting("FERRO_HOME_SIM", "homebound_HomeSimSlUrl")
-        }
-        None => None,
+    let on = if s.is_changed("homebound_Enabled") || s.var("FERRO_HOME_SIM").is_none() {
+        s.setting_flag("FERRO_HOMEBOUND", "homebound_Enabled", false)?
+    } else {
+        true
+    };
+    let home = if on {
+        s.setting("FERRO_HOME_SIM", "homebound_HomeSimSlUrl")
+    } else {
+        None
     };
     let Some((name, home)) = home else {
         return Ok(None);
@@ -749,12 +799,12 @@ fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigErr
     let place = |name: &'static str, v: &str| {
         Place::parse(v).ok_or(ConfigError::Invalid(name, "Region Name/x/y/z".into()))
     };
-    let backup = match setting("FERRO_BACKUP_SIM", "homebound_BackupSimSLUrl") {
+    let backup = match s.setting("FERRO_BACKUP_SIM", "homebound_BackupSimSLUrl") {
         Some((name, v)) => Some(place(name, &v)?),
         None => None,
     };
     let minutes: u64 = number(
-        setting("FERRO_HOME_AFTER", "homebound_ReturnToHomeSimAfterMins"),
+        s.setting("FERRO_HOME_AFTER", "homebound_ReturnToHomeSimAfterMins"),
         1,
         "a number of minutes",
     )?;
@@ -762,9 +812,9 @@ fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigErr
         home: place(name, &home)?,
         backup,
         after: std::time::Duration::from_secs(minutes * 60),
-        seek: setting_flag("FERRO_HOME_SEEK", "homebound_AtHomeSeekLocation", true)?,
+        seek: s.setting_flag("FERRO_HOME_SEEK", "homebound_AtHomeSeekLocation", true)?,
         // SecondBot's default is the nil key: no seat
-        sit: match setting("FERRO_HOME_SIT", "homebound_AtHomeAutoSitUuid") {
+        sit: match s.setting("FERRO_HOME_SIT", "homebound_AtHomeAutoSitUuid") {
             None => None,
             Some((name, v)) => Some(
                 uuid::Uuid::parse_str(&v)
@@ -789,23 +839,24 @@ fn seconds(found: Option<(&'static str, String)>, default: u64) -> Result<Durati
 
 /// SecondBot's events service (EventsConfig): on with FERRO_EVENTS (events_Enabled), each event
 /// on unless turned off, as SecondBot's defaults.
-fn events() -> Result<Option<crate::services::events::Settings>, ConfigError> {
-    if !setting_flag("FERRO_EVENTS", "events_Enabled", false)? {
+fn events(s: &Source) -> Result<Option<crate::services::events::Settings>, ConfigError> {
+    if !s.setting_flag("FERRO_EVENTS", "events_Enabled", false)? {
         return Ok(None);
     }
     let key = |ferro: &'static str, secondbot: &'static str| {
-        setting(ferro, secondbot)
+        s.setting(ferro, secondbot)
             .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok())
             .filter(|id| !id.is_nil())
     };
     let channel: i32 = number(
-        setting("FERRO_EVENTS_CHANNEL", "events_OutputChannel"),
+        s.setting("FERRO_EVENTS_CHANNEL", "events_OutputChannel"),
         -1,
         "a channel number",
     )?;
     // SecondBot's defaults: "example" names no place, "n/a" no address
     let name = |ferro: &'static str, secondbot: &'static str| {
-        setting(ferro, secondbot).map_or_else(|| "example".to_owned(), |(_, v)| v)
+        s.setting(ferro, secondbot)
+            .map_or_else(|| "example".to_owned(), |(_, v)| v)
     };
     let secret = ["FERRO_EVENTS_SECRET", "events_OutputSecret"]
         .iter()
@@ -815,35 +866,46 @@ fn events() -> Result<Option<crate::services::events::Settings>, ConfigError> {
     }
     Ok(Some(crate::services::events::Settings {
         group: key("FERRO_EVENTS_GROUP", "events_GroupMemberEventsGroupUUID"),
-        group_joins: setting_flag("FERRO_EVENTS_GROUP_JOINS", "events_GroupMemberJoins", true)?,
-        group_leaves: setting_flag(
+        group_joins: s.setting_flag("FERRO_EVENTS_GROUP_JOINS", "events_GroupMemberJoins", true)?,
+        group_leaves: s.setting_flag(
             "FERRO_EVENTS_GROUP_LEAVES",
             "events_GroupMemberLeaves",
             true,
         )?,
         group_every: seconds(
-            var("FERRO_EVENTS_GROUP_CHECK").map(|v| ("FERRO_EVENTS_GROUP_CHECK", v)),
+            s.var("FERRO_EVENTS_GROUP_CHECK")
+                .map(|v| ("FERRO_EVENTS_GROUP_CHECK", v)),
             120,
         )?,
-        guest_enters: setting_flag("FERRO_EVENTS_GUEST_ENTERS", "events_GuestEntersArea", true)?,
-        guest_leaves: setting_flag("FERRO_EVENTS_GUEST_LEAVES", "events_GuestLeavesArea", true)?,
+        guest_enters: s.setting_flag(
+            "FERRO_EVENTS_GUEST_ENTERS",
+            "events_GuestEntersArea",
+            true,
+        )?,
+        guest_leaves: s.setting_flag(
+            "FERRO_EVENTS_GUEST_LEAVES",
+            "events_GuestLeavesArea",
+            true,
+        )?,
         guest_sim: name("FERRO_EVENTS_GUEST_SIM", "events_GuestTrackingSimname"),
         guest_parcel: name(
             "FERRO_EVENTS_GUEST_PARCEL",
             "events_GuestTrackingParcelname",
         ),
         guest_every: seconds(
-            var("FERRO_EVENTS_GUEST_CHECK").map(|v| ("FERRO_EVENTS_GUEST_CHECK", v)),
+            s.var("FERRO_EVENTS_GUEST_CHECK")
+                .map(|v| ("FERRO_EVENTS_GUEST_CHECK", v)),
             30,
         )?,
-        alerts: setting_flag("FERRO_EVENTS_ALERTS", "events_SimAlertMessage", true)?,
-        status: setting_flag("FERRO_EVENTS_STATUS", "events_StatusMessage", true)?,
-        money: setting_flag("FERRO_EVENTS_MONEY", "events_MoneyEvent", true)?,
-        change_sim: setting_flag("FERRO_EVENTS_CHANGE_SIM", "events_ChangeSim", true)?,
-        change_parcel: setting_flag("FERRO_EVENTS_CHANGE_PARCEL", "events_ChangeParcel", true)?,
+        alerts: s.setting_flag("FERRO_EVENTS_ALERTS", "events_SimAlertMessage", true)?,
+        status: s.setting_flag("FERRO_EVENTS_STATUS", "events_StatusMessage", true)?,
+        money: s.setting_flag("FERRO_EVENTS_MONEY", "events_MoneyEvent", true)?,
+        change_sim: s.setting_flag("FERRO_EVENTS_CHANGE_SIM", "events_ChangeSim", true)?,
+        change_parcel: s.setting_flag("FERRO_EVENTS_CHANGE_PARCEL", "events_ChangeParcel", true)?,
         channel: (channel >= 0).then_some(channel),
         avatar: key("FERRO_EVENTS_AVATAR", "events_OutputIMuuid"),
-        url: setting("FERRO_EVENTS_HTTP", "events_OutputHttpURL")
+        url: s
+            .setting("FERRO_EVENTS_HTTP", "events_OutputHttpURL")
             .map(|(_, v)| v)
             .filter(|v| v.starts_with("http")),
         secret: secret.unwrap_or_else(|| "donttellanyone".to_owned()),
@@ -923,8 +985,8 @@ fn on_event_triggers() -> Result<Vec<crate::on_event::Trigger>, ConfigError> {
 
 /// Commands run on events (SecondBot's OnEventConfig): on with FERRO_ON_EVENT (onevent_Enabled)
 /// and at least one event that holds together.
-fn on_event() -> Result<Option<crate::services::on_event::Settings>, ConfigError> {
-    if !setting_flag("FERRO_ON_EVENT", "onevent_Enabled", false)? {
+fn on_event(s: &Source) -> Result<Option<crate::services::on_event::Settings>, ConfigError> {
+    if !s.setting_flag("FERRO_ON_EVENT", "onevent_Enabled", false)? {
         return Ok(None);
     }
     let triggers = on_event_triggers()?;
@@ -933,41 +995,98 @@ fn on_event() -> Result<Option<crate::services::on_event::Settings>, ConfigError
         return Ok(None);
     }
     let wait: u64 = number(
-        setting("FERRO_ON_EVENT_WAIT", "onevent_WaitSecsToStart"),
+        s.setting("FERRO_ON_EVENT_WAIT", "onevent_WaitSecsToStart"),
         10,
         "a number of seconds",
     )?;
     Ok(Some(crate::services::on_event::Settings {
         triggers,
         wait: Duration::from_secs(wait),
-        debug: setting_flag("FERRO_ON_EVENT_DEBUG", "onevent_DebugMe", false)?,
+        debug: s.setting_flag("FERRO_ON_EVENT_DEBUG", "onevent_DebugMe", false)?,
         guest_every: seconds(
-            var("FERRO_ON_EVENT_GUEST_CHECK").map(|v| ("FERRO_ON_EVENT_GUEST_CHECK", v)),
+            s.var("FERRO_ON_EVENT_GUEST_CHECK")
+                .map(|v| ("FERRO_ON_EVENT_GUEST_CHECK", v)),
             10,
         )?,
         group_every: seconds(
-            var("FERRO_ON_EVENT_GROUP_CHECK").map(|v| ("FERRO_ON_EVENT_GROUP_CHECK", v)),
+            s.var("FERRO_ON_EVENT_GROUP_CHECK")
+                .map(|v| ("FERRO_ON_EVENT_GROUP_CHECK", v)),
             15 * 60,
         )?,
     }))
 }
 
+/// Where script dialogs are relayed (SecondBot's DialogRelayConfig).
+pub fn dialog_relay(s: &Source) -> Result<crate::dialogs::Targets, ConfigError> {
+    Ok(crate::dialogs::Targets {
+        channel: number(
+            s.setting("FERRO_DIALOG_CHANNEL", "dialogrelay_RelayChannel"),
+            -1,
+            "a channel number",
+        )
+        .map(|c: i32| (c >= 0).then_some(c))?,
+        avatar: s
+            .setting("FERRO_DIALOG_AVATAR", "dialogrelay_RelayAvatar")
+            .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok()),
+        url: s
+            .setting("FERRO_DIALOG_HTTP", "dialogrelay_RelayHttpurl")
+            .map(|(_, v)| v)
+            .filter(|v| v.starts_with("http")),
+        owner_only: s
+            .setting("FERRO_DIALOG_OWNER", "dialogrelay_RelayObjectOwnerOnly")
+            .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok()),
+    })
+}
+
+/// What the bot accepts from whom (SecondBot's InteractionConfig).
+pub fn interactions(s: &Source) -> Result<Rules, ConfigError> {
+    Ok(Rules {
+        teleports: rule(
+            s,
+            ("FERRO_ACCEPT_TELEPORTS", "interaction_AcceptTeleports"),
+            ("FERRO_TELEPORT_LEVEL", "interaction_TeleportRequestLevel"),
+        )?,
+        group_invites: rule(
+            s,
+            (
+                "FERRO_ACCEPT_GROUP_INVITES",
+                "interaction_AcceptGroupInvites",
+            ),
+            ("FERRO_GROUP_INVITE_LEVEL", "interaction_GroupInviteLevel"),
+        )?,
+        inventory: rule(
+            s,
+            ("FERRO_ACCEPT_INVENTORY", "interaction_AcceptInventory"),
+            (
+                "FERRO_INVENTORY_LEVEL",
+                "interaction_InventoryTransferLevel",
+            ),
+        )?,
+        friendships: rule(
+            s,
+            ("FERRO_ACCEPT_FRIENDS", "interaction_AcceptFriendRequests"),
+            ("FERRO_FRIEND_LEVEL", "interaction_FriendRequestLevel"),
+        )?,
+    })
+}
+
 /// The interaction events' target: off by default, as SecondBot's EnableJsonOutputEvents, and
 /// off when on without a target ("none", SecondBot's default target, sends nowhere).
-fn interaction_events() -> Result<Option<String>, ConfigError> {
-    if !setting_flag(
+pub fn interaction_events(s: &Source) -> Result<Option<String>, ConfigError> {
+    if !s.setting_flag(
         "FERRO_INTERACTION_EVENTS",
         "interaction_EnableJsonOutputEvents",
         false,
     )? {
         return Ok(None);
     }
-    let target = setting(
-        "FERRO_INTERACTION_EVENTS_TARGET",
-        "interaction_JsonOutputEventsTarget",
-    )
-    .map(|(_, v)| v)
-    .filter(|v| !v.eq_ignore_ascii_case("none"));
+    let target = s
+        .setting(
+            "FERRO_INTERACTION_EVENTS_TARGET",
+            "interaction_JsonOutputEventsTarget",
+        )
+        .map(|(_, v)| v)
+        .filter(|v| !v.eq_ignore_ascii_case("none"));
     if target.is_none() {
         log::warn!("interaction events off: they need a target (FERRO_INTERACTION_EVENTS_TARGET)");
     }
@@ -976,12 +1095,13 @@ fn interaction_events() -> Result<Option<String>, ConfigError> {
 
 /// An interaction rule: its switch (on by default) and its level ("Owner" by default).
 fn rule(
+    s: &Source,
     switch: (&'static str, &'static str),
     level: (&'static str, &'static str),
 ) -> Result<Rule, ConfigError> {
     Ok(Rule {
-        enabled: setting_flag(switch.0, switch.1, true)?,
-        level: match setting(level.0, level.1) {
+        enabled: s.setting_flag(switch.0, switch.1, true)?,
+        level: match s.setting(level.0, level.1) {
             None => Level::Owner,
             Some((name, v)) => Level::parse(&v).ok_or(ConfigError::Invalid(
                 name,
@@ -993,10 +1113,11 @@ fn rule(
 
 /// FERRO_REGION_TIMEOUT (seconds of silence, 100) and FERRO_EVENT_QUEUE_ERRORS (fast failures in
 /// a row, 15): the viewer's limits, which the tests shorten so that they need not wait minutes.
-fn timeouts() -> Result<ferro_client::Timeouts, ConfigError> {
+fn timeouts(s: &Source) -> Result<ferro_client::Timeouts, ConfigError> {
     let default = ferro_client::Timeouts::default();
     let silence: u64 = number(
-        var("FERRO_REGION_TIMEOUT").map(|v| ("FERRO_REGION_TIMEOUT", v)),
+        s.var("FERRO_REGION_TIMEOUT")
+            .map(|v| ("FERRO_REGION_TIMEOUT", v)),
         default.region_silence.as_secs(),
         "a number of seconds, at least 1",
     )?;
@@ -1009,15 +1130,12 @@ fn timeouts() -> Result<ferro_client::Timeouts, ConfigError> {
     Ok(ferro_client::Timeouts {
         region_silence: std::time::Duration::from_secs(silence),
         event_queue_errors: number(
-            var("FERRO_EVENT_QUEUE_ERRORS").map(|v| ("FERRO_EVENT_QUEUE_ERRORS", v)),
+            s.var("FERRO_EVENT_QUEUE_ERRORS")
+                .map(|v| ("FERRO_EVENT_QUEUE_ERRORS", v)),
             default.event_queue_errors,
             "a number of errors",
         )?,
     })
-}
-
-fn flag(name: &'static str, default: bool) -> Result<bool, ConfigError> {
-    var(name).map_or(Ok(default), |v| parse_flag(name, &v))
 }
 
 fn number<T: std::str::FromStr>(
@@ -1050,7 +1168,8 @@ impl Config {
     /// (basic_Username, basic_Password, basic_LoginURI, commands_MastersCSV, http_Enabled,
     /// http_Port, commands_SharedSecret, commands_TimeWindowSecs).
     pub fn from_env() -> Result<Config, ConfigError> {
-        let start = match var("FERRO_START") {
+        let s = &Source::default();
+        let start = match s.var("FERRO_START") {
             None => StartLocation::Last,
             Some(s) => parse_start(&s).ok_or(ConfigError::Invalid(
                 "FERRO_START",
@@ -1058,122 +1177,97 @@ impl Config {
             ))?,
         };
         let relog_delay = number(
-            setting("FERRO_RELOG_DELAY", "FERRO_RELOG_DELAY"),
+            s.setting("FERRO_RELOG_DELAY", "FERRO_RELOG_DELAY"),
             60,
             "a number of seconds",
         )?;
-        let timeouts = timeouts()?;
+        let timeouts = timeouts(s)?;
         // the password is taken as it is, spaces included
-        let password = ["FERRO_PASSWORD", "basic_Password"]
-            .iter()
-            .find_map(|name| std::env::var(name).ok().filter(|p| !p.is_empty()))
+        let password = secret(&["FERRO_PASSWORD", "basic_Password"])
             .ok_or(ConfigError::Missing("FERRO_PASSWORD"))?;
-        let http_enabled = match setting("FERRO_HTTP", "http_Enabled") {
+        let http_enabled = match s.setting("FERRO_HTTP", "http_Enabled") {
             None => true,
             Some((name, v)) => parse_flag(name, &v)?,
         };
-        if setting("FERRO_HTTP_NO_VALIDATION", "http_DisableCommandValidation")
+        if s.setting("FERRO_HTTP_NO_VALIDATION", "http_DisableCommandValidation")
             .is_some_and(|(_, v)| v.eq_ignore_ascii_case("true"))
         {
             // Every command from outside is authenticated (AGENTS.md section 5): not followed.
             log::warn!("http_DisableCommandValidation is ignored: commands are always signed");
         }
         Ok(Config {
-            login_uri: setting("FERRO_LOGIN_URI", "basic_LoginURI")
+            login_uri: s
+                .setting("FERRO_LOGIN_URI", "basic_LoginURI")
                 .map_or_else(|| SL_MAIN_GRID.to_owned(), |(_, v)| login_uri(&v)),
-            username: setting("FERRO_USERNAME", "basic_Username")
+            username: s
+                .setting("FERRO_USERNAME", "basic_Username")
                 .map(|(_, v)| v)
                 .ok_or(ConfigError::Missing("FERRO_USERNAME"))?,
             password,
             start,
-            relog: flag("FERRO_RELOG", true)?,
+            relog: s.flag("FERRO_RELOG", true)?,
             relog_delay,
             timeouts,
-            masters: setting("FERRO_MASTERS", "commands_MastersCSV")
+            masters: s
+                .setting("FERRO_MASTERS", "commands_MastersCSV")
                 .map(|(_, v)| parse_masters(&v))
                 .unwrap_or_default(),
             http_enabled,
-            http_port: number(setting("FERRO_HTTP_PORT", "http_Port"), 80, "a port number")?,
+            http_port: number(
+                s.setting("FERRO_HTTP_PORT", "http_Port"),
+                80,
+                "a port number",
+            )?,
             http_bind: number(
-                var("FERRO_HTTP_BIND").map(|v| ("FERRO_HTTP_BIND", v)),
+                s.var("FERRO_HTTP_BIND").map(|v| ("FERRO_HTTP_BIND", v)),
                 std::net::IpAddr::from([0, 0, 0, 0]),
                 "an IP address, such as 127.0.0.1",
             )?,
-            shared_secret: ["FERRO_SHARED_SECRET", "commands_SharedSecret"]
-                .iter()
-                .find_map(|name| std::env::var(name).ok().filter(|s| !s.is_empty())),
+            shared_secret: secret(&["FERRO_SHARED_SECRET", "commands_SharedSecret"]),
             time_window: number(
-                setting("FERRO_TIME_WINDOW", "commands_TimeWindowSecs"),
+                s.setting("FERRO_TIME_WINDOW", "commands_TimeWindowSecs"),
                 35,
                 "a number of seconds",
             )?,
-            im_commands: setting_flag("FERRO_IM_COMMANDS", "commands_AllowIMcontrol", true)?,
-            enforce_time_window: setting_flag(
+            im_commands: s.setting_flag("FERRO_IM_COMMANDS", "commands_AllowIMcontrol", true)?,
+            enforce_time_window: s.setting_flag(
                 "FERRO_ENFORCE_TIME_WINDOW",
                 "commands_EnforceTimeWindow",
                 false,
             )?,
-            object_master_optout: setting_flag(
+            object_master_optout: s.setting_flag(
                 "FERRO_OBJECT_MASTER_OPTOUT",
                 "commands_ObjectMasterOptout",
                 false,
             )?,
-            homebound: homebound()?,
-            discord: discord()?,
-            rabbit: rabbit()?,
-            chatgpt: chatgpt()?,
-            events: events()?,
-            on_event: on_event()?,
+            homebound: homebound(s)?,
+            discord: discord(s)?,
+            rabbit: rabbit(s)?,
+            chatgpt: chatgpt(s)?,
+            events: events(s)?,
+            on_event: on_event(s)?,
             smtp: smtp()?,
-            relays: relays()?,
+            relays: relays(s)?,
             custom_commands: custom_commands()?,
-            allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
-            rlv: setting_flag("FERRO_RLV", "rlv_Enabled", false)?,
+            allow_funds: s.setting_flag(
+                "FERRO_ALLOW_FUNDS",
+                "commands_AllowFundsCommands",
+                false,
+            )?,
+            allow_service_control: s.setting_flag(
+                "FERRO_ALLOW_SERVICE_CONTROL",
+                "commands_AllowServiceControl",
+                false,
+            )?,
+            rlv: s.setting_flag("FERRO_RLV", "rlv_Enabled", false)?,
             rate_limit: number(
-                var("FERRO_RATE_LIMIT").map(|v| ("FERRO_RATE_LIMIT", v)),
+                s.var("FERRO_RATE_LIMIT").map(|v| ("FERRO_RATE_LIMIT", v)),
                 60,
                 "a number of commands per minute",
             )?,
-            dialog_relay: crate::dialogs::Targets {
-                channel: number(
-                    setting("FERRO_DIALOG_CHANNEL", "dialogrelay_RelayChannel"),
-                    -1,
-                    "a channel number",
-                )
-                .map(|c: i32| (c >= 0).then_some(c))?,
-                avatar: setting("FERRO_DIALOG_AVATAR", "dialogrelay_RelayAvatar")
-                    .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok()),
-                url: setting("FERRO_DIALOG_HTTP", "dialogrelay_RelayHttpurl")
-                    .map(|(_, v)| v)
-                    .filter(|v| v.starts_with("http")),
-                owner_only: setting("FERRO_DIALOG_OWNER", "dialogrelay_RelayObjectOwnerOnly")
-                    .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok()),
-            },
-            interaction_events: interaction_events()?,
-            interactions: Rules {
-                teleports: rule(
-                    ("FERRO_ACCEPT_TELEPORTS", "interaction_AcceptTeleports"),
-                    ("FERRO_TELEPORT_LEVEL", "interaction_TeleportRequestLevel"),
-                )?,
-                group_invites: rule(
-                    (
-                        "FERRO_ACCEPT_GROUP_INVITES",
-                        "interaction_AcceptGroupInvites",
-                    ),
-                    ("FERRO_GROUP_INVITE_LEVEL", "interaction_GroupInviteLevel"),
-                )?,
-                inventory: rule(
-                    ("FERRO_ACCEPT_INVENTORY", "interaction_AcceptInventory"),
-                    (
-                        "FERRO_INVENTORY_LEVEL",
-                        "interaction_InventoryTransferLevel",
-                    ),
-                )?,
-                friendships: rule(
-                    ("FERRO_ACCEPT_FRIENDS", "interaction_AcceptFriendRequests"),
-                    ("FERRO_FRIEND_LEVEL", "interaction_FriendRequestLevel"),
-                )?,
-            },
+            dialog_relay: dialog_relay(s)?,
+            interaction_events: interaction_events(s)?,
+            interactions: interactions(s)?,
         })
     }
 }
