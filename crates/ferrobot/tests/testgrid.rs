@@ -2346,6 +2346,66 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SetEstateTerrainRaw: a RAW file downloaded, then uploaded to the region by xfer.
+    #[tokio::test]
+    async fn terrain_upload() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+
+        // a 256 m region's file, 852 packets of the xfer
+        let raw: Vec<u8> = (0..13 * 256 * 256u32)
+            .map(|i| (i.wrapping_mul(31) % 251) as u8)
+            .collect();
+        let sum = ferro_testgrid::checksum(&raw);
+        let url = grid.serve_file("island.raw", raw);
+        let reply = api.reply("SetEstateTerrainRaw", &[&url]).await;
+        assert!(reply.starts_with("ok uploading with uuid "), "{reply}");
+        wait_for(&grid, &bot, "the terrain message", |s| {
+            matches!(s, Seen::EstateMessage { method, params }
+                if method == "terrain" && *params == ["upload filename", "island.raw"])
+        })
+        .await;
+        wait_for(&grid, &bot, "the whole file", |s| {
+            *s == Seen::TerrainUploaded {
+                name: "island.raw".into(),
+                announced: 851_968,
+                len: 851_968,
+                checksum: sum,
+            }
+        })
+        .await;
+        bot.wait_log("the terrain file is uploaded").await;
+
+        // SecondBot's checks, then the file's
+        assert_eq!(
+            api.failure("SetEstateTerrainRaw", &["ftp://example.test/a.raw"])
+                .await
+                .0,
+            "url must start with http:// or https://"
+        );
+        let missing = url.replace("island.raw", "missing.raw");
+        assert_eq!(
+            api.failure("SetEstateTerrainRaw", &[&missing]).await.0,
+            "Unable to download terrain data from url error Response status code does not \
+             indicate success: 404 (Not Found)."
+        );
+        let small = grid.serve_file("small.raw", vec![0; 1000]);
+        assert_eq!(
+            api.failure("SetEstateTerrainRaw", &[&small]).await.0,
+            "Not a terrain RAW file: 1000 bytes, a 256 m region's is 851968 (13 x 256 x 256)"
+        );
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::EstateMessage { method, .. } if method == "terrain")),
+            1,
+            "no upload for a file refused"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// Gestures, animations, pointing, and which scripts may animate the bot.
     #[tokio::test]
     async fn animation_commands() {
