@@ -1407,6 +1407,9 @@ impl Session<'_> {
         } else if id == AvatarPropertiesReply::ID {
             let m: AvatarPropertiesReply = pkt.decode()?;
             self.on_avatar_properties(&m);
+        } else if id == AvatarPicksReply::ID {
+            let m: AvatarPicksReply = pkt.decode()?;
+            self.on_avatar_picks(&m);
         } else if id == AvatarAnimation::ID {
             // the animations the region plays on the bot (SignaledAnimations)
             let m: AvatarAnimation = pkt.decode()?;

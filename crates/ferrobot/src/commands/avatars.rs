@@ -51,6 +51,39 @@ struct NearMeDetails {
     range: serde_json::Value,
 }
 
+/// GetProfilePicks: the avatar's picks, `[{id, name}]` in the grid's order; "No reply from the
+/// grid [Retry later]" after SecondBot's 10 s.
+pub async fn profile_picks(client: &Client, who: &str) -> Answer {
+    const C: &str = "GetProfilePicks";
+    let args = super::owned(&[who]);
+    let Some(id) = super::avatar(client, who).await else {
+        return super::reply::failure(C, "Invaild avatar uuid", &args);
+    };
+    match client.picks(id).await {
+        Ok(picks) => {
+            let list: Vec<Pick> = picks
+                .into_iter()
+                .map(|(id, name)| Pick {
+                    id: id.to_string(),
+                    name,
+                })
+                .collect();
+            basic(C, &super::reply::json(&list), &args)
+        }
+        Err(e) => {
+            log::debug!("{C}: {e}");
+            super::reply::failure(C, "No reply from the grid [Retry later]", &args)
+        }
+    }
+}
+
+/// A pick as SecondBot lists it: a Dictionary<string, string> of id, then name.
+#[derive(serde::Serialize)]
+struct Pick {
+    id: String,
+    name: String,
+}
+
 /// SecondBot's text when the profile has not come (two spaces, as it writes it).
 const RETRY: &str = "Requesting avatar details  [Retry later]";
 
