@@ -35,7 +35,9 @@ crates/
     src/estate.rs          the estate's info, access lists and changes (from Aurora)
     src/terrain.rs         a terrain RAW file and its upload by xfer (from Aurora)
     src/gesture.rs         gesture assets (from Aurora) and their playing
-    src/profile.rs         avatar profiles (AgentProfile, AvatarPropertiesReply)
+    src/profile.rs         avatar profiles and picks (AgentProfile, AvatarPropertiesReply)
+    src/upload.rs          asset uploads through NewFileAgentInventory (from Aurora)
+    src/sound.rs           an Ogg Vorbis sound's pages and headers checked, never decoded
     src/outfit.rs          attachments and outfits, by the Current Outfit Folder's links
     src/walking.rs         keys held in the agent updates, following an avatar by the autopilot
   ferrobot/   ferrobot     the bot
@@ -62,6 +64,7 @@ crates/
     src/caps.rs            the seed capability and the held EventQueueGet poll
     src/http.rs, xmlrpc.rs a minimal HTTP/1.1 server (and files to download), the grid's side of
                            XML-RPC
+    src/sound.rs           Ogg Vorbis files for the tests to serve
 ```
 
 One tokio runtime. `Network::session` owns the UDP socket and the circuit, and `select!`s over the

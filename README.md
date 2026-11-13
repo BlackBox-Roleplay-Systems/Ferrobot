@@ -55,7 +55,7 @@ All settings come from environment variables.
 | `FERRO_RABBIT_VHOST` | `/` | Its virtual host |
 | `FERRO_RABBIT_TLS` | `false` | amqps: TLS, the certificate checked as for HTTPS |
 | `FERRO_RABBIT_NOTECARD_QUEUE`, `…_COMMAND_QUEUE`, `…_IM_QUEUE`, `…_GROUP_IM_QUEUE` | `notecards`, `commands`, `ims`, `groupims` | The queues the bot reads (signed messages only) |
-| `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy) |
+| `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy, GroupCreate, and UploadMediaWave unless the grid's sounds are free) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
@@ -159,7 +159,7 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`; the other group commands:
 `Groupnotice`, `GroupnoticeWithAttachment`, `GetGroupBanList`, `GroupBan`, `GetGroupTitles`,
 `GroupActiveTitle`, `GroupActiveGroup`, `GroupJoin`, `GroupLeave`, `GetGroupMemberRoles`,
-`ForceLoadGroups`; `RebakeAppearance`; the inventory: `InventoryFolders`,
+`ForceLoadGroups`, `GroupCreate` (L$100, a Funds command); `RebakeAppearance`; the inventory: `InventoryFolders`,
 `InventoryFoldersLimited`, `InventoryContents`, `SendItem`, `SendFolder`, `SendItemByPath`,
 `SendFolderByPath`, `SendItemDirect`, `GetRealUUID`,
 `CreateInventoryFolder`, `RenameInventory`, `DeleteInventoryItem` (to the Trash),
@@ -168,6 +168,10 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `InventoryContentsCatched` (the whole tree, fetched when asked: Ferrobot keeps no cache),
 `InventoryPreloadCount`, `InventoryPreloadDone` (always "Ready": Ferrobot fetches on demand),
 `SetInventoryUpdate` (a target hears of each item of a type that comes into the inventory);
+`UploadMediaWave` (unlike SecondBot's, which encodes a WAV file from its own disk: an Ogg Vorbis
+sound from an http(s) URL, mono, 44100 Hz, 30 s at most, 2 MiB at most, uploaded to the Sounds
+folder; it costs what the grid asks for a sound, so it is a Funds command unless the login says
+sounds are free);
 `SetPermFlag` (grants an avatar's friendships, group invites, teleports, items, animations or
 commands by IM, once or lasting: see "Grants" below); `AcceptNext`, `IsOnAcceptNext` (SecondBot's
 one-time accept list); `ListSculptys` (owners and names asked of the region);
@@ -191,7 +195,7 @@ manager): `EstateKickUser`, `EstateTeleportHomeUser`, `AddEstateManager`, `Remov
 `GetEstateCovenant`, `SetExtendedRegionInfo`, `SetRegionFlags`, `SetEstateConfig`,
 `SetEstateTerrainRaw` (a RAW file from an http(s) URL, uploaded to the region); animations:
 `PlayGesture`, `PlayGestureDirect`, `ResetAnimations`, `PointAt`, `AddToAllowAnimations` (that
-avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileImage`,
+avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileImage`, `GetProfilePicks`,
 `SetProfileAbout`, `SetProfileImage`; objects: `RezObject`, `RezObjectOnPos`, `RezObjectParcelCenter`,
 `AsyncRezObject`, `AsyncRezObjectOnPos`, `AsyncRezObjectParcelCenter`, `ClickObject`, `UnRezObject`,
 `GetObjectsInParcel` (with each object's owner and name, asked of the region),
