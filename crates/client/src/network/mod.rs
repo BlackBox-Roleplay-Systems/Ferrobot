@@ -29,7 +29,7 @@ pub(crate) use inventory::InventoryRequest;
 
 use crate::caps::{self, EqEvent, EqMessage};
 use crate::circuit::{Circuit, Resend};
-use crate::events::{ChatMessage, Event, InstantMessage};
+use crate::events::{ChatMessage, Event, InstantMessage, MoneyBalance};
 use crate::login::LoginResponse;
 use crate::names::DisplayName;
 use crate::region_restart::{self, Restart};
@@ -1536,9 +1536,27 @@ impl Session<'_> {
             }
         } else if id == MoneyBalanceReply::ID {
             let m: MoneyBalanceReply = pkt.decode()?;
-            let mut st = self.shared.state_mut();
-            st.balance = Some(m.money_data.money_balance);
-            st.balance_updates += 1;
+            {
+                let mut st = self.shared.state_mut();
+                st.balance = Some(m.money_data.money_balance);
+                st.balance_updates += 1;
+            }
+            // every reply, a plain balance too, as LibreMetaverse's MoneyBalanceReply event (Aurora
+            // tells the transaction apart when its type is not 0)
+            let (d, t) = (&m.money_data, &m.transaction_info);
+            self.shared.emit(Event::Money(MoneyBalance {
+                transaction_id: d.transaction_id,
+                success: d.transaction_success,
+                balance: d.money_balance,
+                description: field_str(&d.description),
+                transaction_type: t.transaction_type,
+                source_id: t.source_id,
+                source_is_group: t.is_source_group,
+                dest_id: t.dest_id,
+                dest_is_group: t.is_dest_group,
+                amount: t.amount,
+                item_description: field_str(&t.item_description),
+            }));
         } else if id == CoarseLocationUpdate::ID {
             // the avatars in the region (LLWorld::processCoarseUpdate), the bot left out
             let m: CoarseLocationUpdate = pkt.decode()?;
@@ -1619,6 +1637,12 @@ impl Session<'_> {
             let m: AlertMessage = pkt.decode()?;
             // OpenSim pads its messages with spaces and newlines
             let message = field_str(&m.alert_data.message).trim().to_owned();
+            // the message as it comes, with its notification's name (LibreMetaverse's
+            // AlertMessageHandler: the first AlertInfo's Message)
+            self.shared.emit(Event::AlertMessage {
+                message: message.clone(),
+                notification_id: m.alert_info.first().map(|i| field_str(&i.message)),
+            });
             // a named notification (AlertInfo) first, then OpenSim's system messages
             // (attempt_standard_notification, process_alert_core; Aurora's session)
             let named = m.alert_info.first().and_then(|info| {
@@ -1653,6 +1677,10 @@ impl Session<'_> {
             let m: AgentAlertMessage = pkt.decode()?;
             let message = field_str(&m.alert_data.message).trim().to_owned();
             log::info!("alert: {message}");
+            self.shared.emit(Event::AlertMessage {
+                message: message.clone(),
+                notification_id: None,
+            });
             self.shared.emit(Event::Alert(message));
         } else if id == AgentDataUpdate::ID {
             // LLAgent::processAgentDataUpdate

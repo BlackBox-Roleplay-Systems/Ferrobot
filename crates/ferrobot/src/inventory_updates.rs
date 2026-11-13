@@ -8,16 +8,14 @@
 //! and a type may be named as SecondBot's hints name it ("Callcard", "Lslbyte") as well as by
 //! LibreMetaverse's name; both mean the same type.
 
-use crate::api::signing::sign_with;
 use crate::commands::reply::json_pairs;
-use crate::smart_reply::form_encode;
-use ferro_client::events::{AddedItem, chat_type};
+use crate::event_output;
+use ferro_client::events::AddedItem;
 use ferro_client::{Client, Event};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
-use uuid::Uuid;
 
 /// LibreMetaverse's AssetType name of a type (what SecondBot's events name it).
 pub fn asset_type_name(t: i32) -> Option<&'static str> {
@@ -95,56 +93,6 @@ fn event_json(item: &AddedItem, type_name: &str) -> String {
     ])
 }
 
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
-}
-
-async fn send(client: &Client, http: &reqwest::Client, secret: &str, target: &str, output: &str) {
-    if let Ok(avatar) = Uuid::parse_str(target.trim()) {
-        if !avatar.is_nil() {
-            let _ = client.im(avatar, output).await;
-        }
-        return;
-    }
-    if target.starts_with("http") {
-        let st = client.state();
-        let unixtime = now();
-        // sha1(unixtime + "EventService" + the bot's key + the event + the secret)
-        let token = sign_with(
-            &format!("{unixtime}EventService{}{output}", st.agent_id),
-            &[],
-            None,
-            secret,
-        );
-        let body = format!(
-            "token={}&unixtime={unixtime}&method=Inventory&action=Update&botname={}&event={}",
-            form_encode(&token),
-            form_encode(&st.name),
-            form_encode(output)
-        );
-        // RestSharp's base address joined with the resource
-        let url = format!("{}/Inventory/Update", target.trim_end_matches('/'));
-        let sent = http
-            .post(&url)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .timeout(std::time::Duration::from_secs(30))
-            .body(body)
-            .send()
-            .await;
-        if let Err(e) = sent {
-            log::warn!("inventory update by HTTP failed: {}", e.without_url());
-        }
-        return;
-    }
-    if let Ok(channel) = target.trim().parse::<i32>()
-        && channel >= 0
-    {
-        let _ = client.chat(output, channel, chat_type::SAY).await;
-    }
-}
-
 /// Tells the targets of each item that comes into the inventory.
 pub async fn run(
     client: Client,
@@ -168,7 +116,15 @@ pub async fn run(
                     }
                     let output = event_json(&item, &type_name);
                     for target in targets {
-                        send(&client, &http, &secret, &target, &output).await;
+                        event_output::to_target(
+                            &client,
+                            &http,
+                            &secret,
+                            &target,
+                            event_output::INVENTORY_UPDATE,
+                            &output,
+                        )
+                        .await;
                     }
                 }
             }
@@ -182,6 +138,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn type_names_as_secondbot_writes_them() {

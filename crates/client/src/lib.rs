@@ -697,6 +697,47 @@ impl Client {
         Ok(out)
     }
 
+    /// The parcel at a place of the bot's region (LibreMetaverse's GetParcelLocalID, then the
+    /// parcel): the bot's own parcel or the region's parcels when one of them covers the place's
+    /// 4 m cell, else the region is asked for that cell's parcel (waiting up to 2 s; `None` when
+    /// it does not answer).
+    pub async fn parcel_at(
+        &self,
+        at: glam::Vec3,
+    ) -> Result<Option<parcels::ParcelInfo>, ClientError> {
+        let cell = |v: f32| ((v / 4.0).floor().max(0.0) as usize).min(parcels::MAP_SIZE - 1);
+        let (x, y) = (cell(at.x), cell(at.y));
+        {
+            let st = self.shared.state();
+            if let Some(p) = st
+                .parcel
+                .as_ref()
+                .filter(|p| parcels::covers(&p.bitmap, x, y))
+            {
+                return Ok(Some(p.clone()));
+            }
+            if let Some(all) = &st.region_parcels
+                && let Some(id) = all
+                    .map
+                    .get(y * parcels::MAP_SIZE + x)
+                    .filter(|id| **id != 0)
+                && let Some(p) = all.parcels.iter().find(|p| p.local_id == *id)
+            {
+                return Ok(Some(p.clone()));
+            }
+        }
+        match self
+            .ask_within(Duration::from_secs(2), |reply| {
+                Request::Parcel(network::ParcelRequest::Cell { x, y, reply })
+            })
+            .await
+        {
+            Ok(p) => Ok(Some(p)),
+            Err(ClientError::Timeout) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Land for sale (DirLandQuery): LibreMetaverse's StartLandSearch, its flags and kind.
     pub async fn land_search(
         &self,

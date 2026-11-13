@@ -732,6 +732,17 @@ enum RegionCommand {
         group: Uuid,
         text: String,
     },
+    /// A plain AlertMessage, with a notification's name or not.
+    Alert {
+        message: String,
+        notification: Option<String>,
+    },
+    /// A resident pays the bot: MoneyBalanceReply with its transaction (TRANS_GIFT).
+    Paid {
+        from: Uuid,
+        amount: i32,
+        balance: i32,
+    },
     /// A resident walks to a place, or leaves (`None`).
     MoveResident {
         index: usize,
@@ -1125,6 +1136,52 @@ impl TestGrid {
             index,
             to: Some(to),
         });
+    }
+
+    /// The region sends an AlertMessage, with a notification's name (AlertInfo) or not.
+    pub fn alert(&self, message: &str, notification: Option<&str>) {
+        self.command(RegionCommand::Alert {
+            message: message.to_owned(),
+            notification: notification.map(str::to_owned),
+        });
+    }
+
+    /// A resident pays the bot `amount` L$: its balance grows, and the region tells it
+    /// (MoneyBalanceReply with the transaction, TRANS_GIFT).
+    pub fn pay_bot(&self, from: Uuid, amount: i32) {
+        let balance = {
+            let mut st = self.shared.state();
+            st.balance += amount;
+            st.balance
+        };
+        self.command(RegionCommand::Paid {
+            from,
+            amount,
+            balance,
+        });
+    }
+
+    /// A resident joins a group (the member lists answer with it from now on).
+    pub fn join_group(&self, group: Uuid, member: Uuid) {
+        let mut st = self.shared.state();
+        if let Some(g) = st.groups.iter_mut().find(|g| g.id == group)
+            && !g.members.iter().any(|m| m.id == member)
+        {
+            g.members.push(GridMember {
+                id: member,
+                roles: Vec::new(),
+                owner: false,
+                last_login: "Online".into(),
+            });
+        }
+    }
+
+    /// A member leaves a group.
+    pub fn leave_group(&self, group: Uuid, member: Uuid) {
+        let mut st = self.shared.state();
+        if let Some(g) = st.groups.iter_mut().find(|g| g.id == group) {
+            g.members.retain(|m| m.id != member);
+        }
     }
 
     /// A resident leaves the region: its object is killed, and the coarse updates leave it out.

@@ -3,6 +3,7 @@
 use crate::commands::custom::{CustomCommand, Step};
 use crate::services::interactions::{Level, Rule, Rules};
 use ferro_client::login::{SL_MAIN_GRID, StartLocation};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Config {
@@ -59,6 +60,10 @@ pub struct Config {
     pub chatgpt: Option<crate::services::chatgpt::Settings>,
     /// The operator's custom commands (SecondBot's CustomCommandsConfig).
     pub custom_commands: Vec<CustomCommand>,
+    /// SecondBot's events service: off unless on (EventsConfig).
+    pub events: Option<crate::services::events::Settings>,
+    /// Commands run on events: off unless on, with events (SecondBot's OnEventConfig).
+    pub on_event: Option<crate::services::on_event::Settings>,
 }
 
 impl std::fmt::Debug for Config {
@@ -98,6 +103,11 @@ impl std::fmt::Debug for Config {
                     .iter()
                     .map(|c| c.trigger.as_str())
                     .collect::<Vec<_>>(),
+            )
+            .field("events", &self.events)
+            .field(
+                "on_event",
+                &self.on_event.as_ref().map(|o| o.triggers.len()),
             )
             .finish_non_exhaustive()
     }
@@ -644,6 +654,183 @@ fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigErr
     }))
 }
 
+/// Seconds, at least 1.
+fn seconds(found: Option<(&'static str, String)>, default: u64) -> Result<Duration, ConfigError> {
+    let n: u64 = number(found, default, "a number of seconds, at least 1")?;
+    if n == 0 {
+        return Err(ConfigError::Invalid(
+            "a check's pace",
+            "a number of seconds, at least 1".into(),
+        ));
+    }
+    Ok(Duration::from_secs(n))
+}
+
+/// SecondBot's events service (EventsConfig): on with FERRO_EVENTS (events_Enabled), each event
+/// on unless turned off, as SecondBot's defaults.
+fn events() -> Result<Option<crate::services::events::Settings>, ConfigError> {
+    if !setting_flag("FERRO_EVENTS", "events_Enabled", false)? {
+        return Ok(None);
+    }
+    let key = |ferro: &'static str, secondbot: &'static str| {
+        setting(ferro, secondbot)
+            .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok())
+            .filter(|id| !id.is_nil())
+    };
+    let channel: i32 = number(
+        setting("FERRO_EVENTS_CHANNEL", "events_OutputChannel"),
+        -1,
+        "a channel number",
+    )?;
+    // SecondBot's defaults: "example" names no place, "n/a" no address
+    let name = |ferro: &'static str, secondbot: &'static str| {
+        setting(ferro, secondbot).map_or_else(|| "example".to_owned(), |(_, v)| v)
+    };
+    let secret = ["FERRO_EVENTS_SECRET", "events_OutputSecret"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|s| !s.is_empty()));
+    if secret.is_none() {
+        log::warn!("events: no FERRO_EVENTS_SECRET, SecondBot's default one signs them");
+    }
+    Ok(Some(crate::services::events::Settings {
+        group: key("FERRO_EVENTS_GROUP", "events_GroupMemberEventsGroupUUID"),
+        group_joins: setting_flag("FERRO_EVENTS_GROUP_JOINS", "events_GroupMemberJoins", true)?,
+        group_leaves: setting_flag(
+            "FERRO_EVENTS_GROUP_LEAVES",
+            "events_GroupMemberLeaves",
+            true,
+        )?,
+        group_every: seconds(
+            var("FERRO_EVENTS_GROUP_CHECK").map(|v| ("FERRO_EVENTS_GROUP_CHECK", v)),
+            120,
+        )?,
+        guest_enters: setting_flag("FERRO_EVENTS_GUEST_ENTERS", "events_GuestEntersArea", true)?,
+        guest_leaves: setting_flag("FERRO_EVENTS_GUEST_LEAVES", "events_GuestLeavesArea", true)?,
+        guest_sim: name("FERRO_EVENTS_GUEST_SIM", "events_GuestTrackingSimname"),
+        guest_parcel: name(
+            "FERRO_EVENTS_GUEST_PARCEL",
+            "events_GuestTrackingParcelname",
+        ),
+        guest_every: seconds(
+            var("FERRO_EVENTS_GUEST_CHECK").map(|v| ("FERRO_EVENTS_GUEST_CHECK", v)),
+            30,
+        )?,
+        alerts: setting_flag("FERRO_EVENTS_ALERTS", "events_SimAlertMessage", true)?,
+        status: setting_flag("FERRO_EVENTS_STATUS", "events_StatusMessage", true)?,
+        money: setting_flag("FERRO_EVENTS_MONEY", "events_MoneyEvent", true)?,
+        change_sim: setting_flag("FERRO_EVENTS_CHANGE_SIM", "events_ChangeSim", true)?,
+        change_parcel: setting_flag("FERRO_EVENTS_CHANGE_PARCEL", "events_ChangeParcel", true)?,
+        channel: (channel >= 0).then_some(channel),
+        avatar: key("FERRO_EVENTS_AVATAR", "events_OutputIMuuid"),
+        url: setting("FERRO_EVENTS_HTTP", "events_OutputHttpURL")
+            .map(|(_, v)| v)
+            .filter(|v| v.starts_with("http")),
+        secret: secret.unwrap_or_else(|| "donttellanyone".to_owned()),
+    }))
+}
+
+/// The events of the commands run on events: FERRO_ON_EVENT_<n>_SOURCE, _MONITOR, _WHERE_<m>,
+/// _ACTION_<m> (and _ENABLED, true by default), then SecondBot's (onevent_Count, and for each
+/// onevent_Event<n>Enabled, Source, Monitor, WhereCount, Where<m>, ActionCount, Action<m>). An
+/// event that does not hold together is left out and logged, as SecondBot does.
+fn on_event_triggers() -> Result<Vec<crate::on_event::Trigger>, ConfigError> {
+    use crate::on_event::{Raw, Trigger};
+    let get = |name: String| std::env::var(name).ok().map(|v| v.trim().to_owned());
+    // until the first one missing
+    let list = |prefix: &str| -> Vec<String> {
+        (1..).map_while(|m| get(format!("{prefix}{m}"))).collect()
+    };
+    let mut raws: Vec<(String, Raw)> = Vec::new();
+    for n in 1.. {
+        let Some(source) = get(format!("FERRO_ON_EVENT_{n}_SOURCE")) else {
+            break;
+        };
+        let p = format!("FERRO_ON_EVENT_{n}_");
+        let enabled = match get(format!("{p}ENABLED")) {
+            None => true,
+            Some(v) => parse_flag("FERRO_ON_EVENT_<n>_ENABLED", &v)?,
+        };
+        if !enabled {
+            log::info!("on event FERRO_ON_EVENT_{n}: not enabled");
+            continue;
+        }
+        raws.push((
+            format!("FERRO_ON_EVENT_{n}"),
+            Raw {
+                source,
+                monitor: get(format!("{p}MONITOR")).unwrap_or_default(),
+                wheres: list(&format!("{p}WHERE_")),
+                actions: list(&format!("{p}ACTION_")),
+            },
+        ));
+    }
+    let count = |name: String| get(name).and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    for n in 1..=count("onevent_Count".into()) {
+        let p = format!("onevent_Event{n}");
+        // bool.TryParse, false when it is not one
+        if get(format!("{p}Enabled")).and_then(|v| crate::commands::cs_bool(&v)) != Some(true) {
+            log::info!("on event {n}: not enabled");
+            continue;
+        }
+        let numbered = |what: &str| -> Vec<String> {
+            (1..=count(format!("{p}{what}Count")))
+                .map(|m| get(format!("{p}{what}{m}")).unwrap_or_default())
+                .collect()
+        };
+        raws.push((
+            format!("{n}"),
+            Raw {
+                source: get(format!("{p}Source")).unwrap_or_default(),
+                monitor: get(format!("{p}Monitor")).unwrap_or_default(),
+                wheres: numbered("Where"),
+                actions: numbered("Action"),
+            },
+        ));
+    }
+    let mut out = Vec::new();
+    for (i, (name, raw)) in raws.iter().enumerate() {
+        match Trigger::parse(i + 1, raw) {
+            Ok(t) => {
+                log::info!("on event {name}: event {} here", t.n);
+                out.push(t);
+            }
+            Err(why) => log::warn!("on event {name} left out: {why}"),
+        }
+    }
+    Ok(out)
+}
+
+/// Commands run on events (SecondBot's OnEventConfig): on with FERRO_ON_EVENT (onevent_Enabled)
+/// and at least one event that holds together.
+fn on_event() -> Result<Option<crate::services::on_event::Settings>, ConfigError> {
+    if !setting_flag("FERRO_ON_EVENT", "onevent_Enabled", false)? {
+        return Ok(None);
+    }
+    let triggers = on_event_triggers()?;
+    if triggers.is_empty() {
+        log::warn!("on event: no events, off");
+        return Ok(None);
+    }
+    let wait: u64 = number(
+        setting("FERRO_ON_EVENT_WAIT", "onevent_WaitSecsToStart"),
+        10,
+        "a number of seconds",
+    )?;
+    Ok(Some(crate::services::on_event::Settings {
+        triggers,
+        wait: Duration::from_secs(wait),
+        debug: setting_flag("FERRO_ON_EVENT_DEBUG", "onevent_DebugMe", false)?,
+        guest_every: seconds(
+            var("FERRO_ON_EVENT_GUEST_CHECK").map(|v| ("FERRO_ON_EVENT_GUEST_CHECK", v)),
+            10,
+        )?,
+        group_every: seconds(
+            var("FERRO_ON_EVENT_GROUP_CHECK").map(|v| ("FERRO_ON_EVENT_GROUP_CHECK", v)),
+            15 * 60,
+        )?,
+    }))
+}
+
 /// The interaction events' target: off by default, as SecondBot's EnableJsonOutputEvents, and
 /// off when on without a target ("none", SecondBot's default target, sends nowhere).
 fn interaction_events() -> Result<Option<String>, ConfigError> {
@@ -814,6 +1001,8 @@ impl Config {
             discord: discord()?,
             rabbit: rabbit()?,
             chatgpt: chatgpt()?,
+            events: events()?,
+            on_event: on_event()?,
             relays: relays()?,
             custom_commands: custom_commands()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
