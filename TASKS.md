@@ -12,6 +12,9 @@
 - ✅ Region session: UseCircuitCode, CompleteAgentMovement, AgentThrottle, RegionHandshakeReply
   (flags 0x7, as Aurora and LibreMetaverse), pings, AgentUpdate every second, seed capability,
   EventQueueGet
+- 🟡 The UDP socket is waited on until writable before the first packet: tokio refuses a send
+  ("would block") until its reactor has seen the new socket, so UseCircuitCode was dropped now
+  and then and the login waited 5 s for its resend (Aurora's circuit has the same send)
 - ✅ Chat and IMs received are logged
 - ✅ SIGTERM / Ctrl-C log out; a lost connection or a kick logs in again after `FERRO_RELOG_DELAY`
 - 🟡 Staying power, as Aurora's session: the region is lost after 100 s of silence (not 60), the

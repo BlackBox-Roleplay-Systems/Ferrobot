@@ -1841,6 +1841,11 @@ async fn run(
         Ok(sock) => sock,
         Err(e) => return End::Lost(format!("no UDP socket: {e}")),
     };
+    // tokio only knows the socket is writable once its reactor has seen it: until then a send
+    // "would block" and the packet is dropped (UseCircuitCode then waited for its resend, 5 s)
+    if let Err(e) = sock.writable().await {
+        return End::Lost(format!("UDP socket: {e}"));
+    }
     let (_, eq_rx) = mpsc::unbounded_channel();
     let mut s = Session {
         caps: HashMap::new(),
