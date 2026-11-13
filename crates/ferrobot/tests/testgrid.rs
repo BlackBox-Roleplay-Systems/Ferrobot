@@ -1872,6 +1872,331 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    const AT_POS: u32 = 0x1;
+    const AT_NEG: u32 = 0x2;
+    const LEFT_NEG: u32 = 0x8;
+    const FAST_AT: u32 = 0x400;
+    const FAST_LEFT: u32 = 0x800;
+    const STOP: u32 = 0x4000;
+    /// The keys: forward, back, to the side.
+    const KEYS: u32 = 0xf;
+
+    /// The index of the first `what` seen from `from` on, once seen.
+    async fn seen_from(
+        grid: &TestGrid,
+        bot: &Bot,
+        from: usize,
+        what: &str,
+        matches: impl Fn(&Seen) -> bool,
+    ) -> usize {
+        let found = |seen: &[Seen]| seen.iter().skip(from).position(&matches);
+        if !grid.wait_until(WAIT, |seen| found(seen).is_some()).await {
+            panic!(
+                "the grid never saw {what}; it saw {:?}\nthe bot's log:\n{}",
+                &grid.seen()[from..],
+                bot.log()
+            );
+        }
+        from + found(&grid.seen()).expect("seen")
+    }
+
+    fn controls(f: impl Fn(u32) -> bool) -> impl Fn(&Seen) -> bool {
+        move |s| matches!(s, Seen::Controls { flags } if f(*flags))
+    }
+
+    /// Asks until the resident is seen: the region places it at the arrival and every ping.
+    async fn follow_when_seen(api: &Api, who: &str, distance: &str) {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            let (_, inner) = api.run("Follow", &[who, distance]).await;
+            if inner["status"] == true {
+                assert_eq!(inner["reply"], "ok");
+                return;
+            }
+            assert_eq!(inner["reply"], "Unable to see avatar");
+            assert!(tokio::time::Instant::now() < deadline, "{inner}");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    fn autopilot(x: u32, y: u32, z: u32) -> Seen {
+        Seen::AutoPilot {
+            params: vec![
+                (256_000 + x).to_string(),
+                (256_000 + y).to_string(),
+                z.to_string(),
+            ],
+        }
+    }
+
+    /// Ferrobot's walking and following: a key held in the agent updates (ten a second) and let
+    /// go, turning, and a follow that goes after the resident, stops near it, aims again when it
+    /// walks away and ends when it leaves.
+    #[tokio::test]
+    async fn walking_and_following() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+
+        // forward for a second: the key held, its FAST_AT too, then let go
+        let from = grid.seen().len();
+        assert_eq!(api.reply("Walk", &["forward", "1"]).await, "ok");
+        let held = seen_from(
+            &grid,
+            &bot,
+            from,
+            "the forward key",
+            controls(|f| f & KEYS == AT_POS && f & FAST_AT != 0),
+        )
+        .await;
+        let let_go = seen_from(
+            &grid,
+            &bot,
+            held,
+            "the key let go",
+            controls(|f| f & KEYS == 0),
+        )
+        .await;
+        let updates = grid.seen()[held..let_go]
+            .iter()
+            .filter(|s| matches!(s, Seen::AgentUpdate { .. }))
+            .count();
+        assert!(
+            updates >= 5,
+            "{updates} agent updates in a second of walking"
+        );
+
+        // back for a while, stopped early
+        let from = grid.seen().len();
+        assert_eq!(api.reply("Walk", &["Back", "30"]).await, "ok");
+        let held = seen_from(
+            &grid,
+            &bot,
+            from,
+            "the back key",
+            controls(|f| f & KEYS == AT_NEG),
+        )
+        .await;
+        assert_eq!(api.reply("WalkStop", &[]).await, "ok");
+        seen_from(
+            &grid,
+            &bot,
+            held,
+            "the key let go",
+            controls(|f| f & KEYS == 0),
+        )
+        .await;
+        // a step to the right, stopped by AutoPilotStop
+        let from = grid.seen().len();
+        assert_eq!(api.reply("Walk", &["right", "30"]).await, "ok");
+        let held = seen_from(
+            &grid,
+            &bot,
+            from,
+            "the right key",
+            controls(|f| f & KEYS == LEFT_NEG && f & FAST_LEFT != 0),
+        )
+        .await;
+        assert_eq!(api.reply("AutoPilotStop", &[]).await, "ok");
+        seen_from(
+            &grid,
+            &bot,
+            held,
+            "the key let go",
+            controls(|f| f & KEYS == 0),
+        )
+        .await;
+
+        assert_eq!(
+            api.failure("Walk", &["up", "1"]).await.0,
+            "Invaild direction"
+        );
+        assert_eq!(
+            api.failure("Walk", &["forward", "0"]).await.0,
+            "seconds value out of range 0-60"
+        );
+        assert_eq!(
+            api.failure("Walk", &["forward", "61"]).await.0,
+            "seconds value out of range 0-60"
+        );
+        assert_eq!(
+            api.failure("Walk", &["forward", "soon"]).await.0,
+            "Convert to float has failed"
+        );
+
+        // turning: from north, right a quarter, then back left by half of it
+        let from = grid.seen().len();
+        assert_eq!(api.reply("RotateTo", &["0"]).await, "ok");
+        let north = seen_from(&grid, &bot, from, "north", |s| {
+            *s == Seen::Facing { heading: 0 }
+        })
+        .await;
+        assert_eq!(api.reply("Turn", &["right", "90"]).await, "ok");
+        let east = seen_from(&grid, &bot, north, "east", |s| {
+            *s == Seen::Facing { heading: 90 }
+        })
+        .await;
+        assert_eq!(api.reply("Turn", &["LEFT", "45"]).await, "ok");
+        seen_from(&grid, &bot, east, "north-east", |s| {
+            *s == Seen::Facing { heading: 45 }
+        })
+        .await;
+        assert_eq!(
+            api.failure("Turn", &["around", "90"]).await.0,
+            "Invaild direction"
+        );
+        assert_eq!(
+            api.failure("Turn", &["left", "lots"]).await.0,
+            "Unable to process rotation"
+        );
+        assert_eq!(
+            api.failure("Turn", &["left", "400"]).await.0,
+            "degrees value out of range 0-360"
+        );
+
+        // following the resident 30 m to the west: two metres short of it, then stopped there
+        let from = grid.seen().len();
+        follow_when_seen(&api, "Some Resident", "2").await;
+        let went = seen_from(&grid, &bot, from, "the autopilot to the resident", |s| {
+            *s == autopilot(100, 128, 25)
+        })
+        .await;
+        seen_from(
+            &grid,
+            &bot,
+            went,
+            "a stop near it",
+            controls(|f| f & STOP != 0),
+        )
+        .await;
+        // it walks away: after it
+        let from = grid.seen().len();
+        grid.move_resident(0, glam::Vec3::new(60.0, 128.0, 25.0));
+        seen_from(&grid, &bot, from, "the autopilot after the resident", |s| {
+            *s == autopilot(62, 128, 25)
+        })
+        .await;
+        // it leaves the region: the follow ends a few seconds later
+        grid.remove_resident(0);
+        bot.wait_log("out of sight").await;
+        // back, it is no longer followed
+        let from = grid.seen().len();
+        grid.move_resident(0, glam::Vec3::new(98.0, 128.0, 25.0));
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(
+            !grid.seen()[from..]
+                .iter()
+                .any(|s| matches!(s, Seen::AutoPilot { .. })),
+            "{:?}",
+            &grid.seen()[from..]
+        );
+
+        // FollowStop, and a walk that ends a follow
+        let from = grid.seen().len();
+        follow_when_seen(&api, "00000000-0000-0000-0000-00005eed0001", "3").await;
+        let went = seen_from(&grid, &bot, from, "the autopilot to the resident", |s| {
+            *s == autopilot(95, 128, 25)
+        })
+        .await;
+        seen_from(
+            &grid,
+            &bot,
+            went,
+            "a stop near it",
+            controls(|f| f & STOP != 0),
+        )
+        .await;
+        assert_eq!(api.reply("FollowStop", &[]).await, "ok");
+        bot.wait_log("no longer following").await;
+        follow_when_seen(&api, "Other Avatar", "5").await;
+        assert_eq!(api.reply("Walk", &["forward", "1"]).await, "ok");
+        assert_eq!(
+            bot.log().matches("no longer following").count(),
+            2,
+            "{}",
+            bot.log()
+        );
+
+        assert_eq!(
+            api.failure("Follow", &["Some Resident", "50"]).await.0,
+            "distance value out of range 0.5-20"
+        );
+        assert_eq!(
+            api.failure("Follow", &["Some Resident", "close"]).await.0,
+            "Convert to float has failed"
+        );
+        assert_eq!(
+            api.failure("Follow", &[&uuid_from(0xdead).to_string(), "2"])
+                .await
+                .0,
+            "Unable to see avatar"
+        );
+        assert_eq!(api.reply("FollowStop", &[]).await, "ok");
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
+    /// A walk and a follow end with their session: after a relog the bot holds no key and
+    /// follows nobody.
+    #[tokio::test]
+    async fn walking_and_following_end_with_the_session() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+
+        // following, then kicked
+        let from = grid.seen().len();
+        follow_when_seen(&api, "Some Resident", "2").await;
+        seen_from(&grid, &bot, from, "the autopilot to the resident", |s| {
+            *s == autopilot(100, 128, 25)
+        })
+        .await;
+        grid.kick("Kicked for a test.");
+        let login = seen_from(&grid, &bot, from, "the second login", |s| {
+            matches!(s, Seen::Login { .. })
+        })
+        .await;
+        arrived(&grid, &bot, 2).await;
+        // back at the arrival, 30 m from the resident: a follow left over would go after it
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(
+            !grid.seen()[login..]
+                .iter()
+                .any(|s| matches!(s, Seen::AutoPilot { .. })),
+            "{:?}",
+            &grid.seen()[login..]
+        );
+
+        // walking, then kicked
+        let from = grid.seen().len();
+        assert_eq!(api.reply("Walk", &["forward", "30"]).await, "ok");
+        seen_from(
+            &grid,
+            &bot,
+            from,
+            "the forward key",
+            controls(|f| f & KEYS == AT_POS),
+        )
+        .await;
+        grid.kick("Kicked for a test.");
+        let login = seen_from(&grid, &bot, from, "the third login", |s| {
+            matches!(s, Seen::Login { .. })
+        })
+        .await;
+        arrived(&grid, &bot, 3).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(
+            !grid.seen()[login..].iter().any(controls(|f| f & KEYS != 0)),
+            "{:?}",
+            &grid.seen()[login..]
+        );
+        assert!(grid.count(|s| *s == Seen::AgentUpdate { session: 3 }) > 0);
+
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// The smaller commands: avatars near with their places, a friend on the map, regions on the
     /// map, the mute list, away, and the Async… inventory commands.
     #[tokio::test]

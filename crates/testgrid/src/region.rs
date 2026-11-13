@@ -49,6 +49,8 @@ struct Region {
     avatar_at: HashMap<SocketAddr, Vec3>,
     /// A terrain file each bot is uploading.
     terrain: HashMap<SocketAddr, TerrainIn>,
+    /// Where the residents stand, in the order of the grid's settings; `None` once gone.
+    residents: Vec<Option<Vec3>>,
 }
 
 /// A terrain file coming in by xfer, as a region receives one (LLXferManager::processReceiveData,
@@ -355,14 +357,8 @@ impl Region {
         };
         self.send(to, &m, true);
         // the residents, standing in a row to the west, as the coarse updates place them
-        let residents: Vec<Uuid> = self.shared.cfg.residents.iter().map(|r| r.id).collect();
-        let blocks = residents
-            .iter()
-            .enumerate()
-            .map(|(i, id)| {
-                let at = Vec3::new(98.0 - 10.0 * i as f32, 128.0, 25.0);
-                object_block(RESIDENT_LOCAL_ID + i as u32, *id, 0, LL_PCODE_AVATAR, at)
-            })
+        let blocks = (0..self.residents.len())
+            .filter_map(|i| self.resident_block(i))
             .collect();
         let m = ObjectUpdate {
             region_data: object_update::RegionData {
@@ -473,6 +469,19 @@ impl Region {
             ..Default::default()
         }];
         self.send(to, &m, true);
+    }
+
+    /// A resident's avatar where it stands, unless it is gone.
+    fn resident_block(&self, i: usize) -> Option<object_update::ObjectData> {
+        let at = self.residents.get(i).copied().flatten()?;
+        let id = self.shared.cfg.residents.get(i)?.id;
+        Some(object_block(
+            RESIDENT_LOCAL_ID + i as u32,
+            id,
+            0,
+            LL_PCODE_AVATAR,
+            at,
+        ))
     }
 
     /// The bot's avatar in a full ObjectUpdate, standing or seated on `parent`.
@@ -1833,27 +1842,25 @@ impl Region {
         self.forget_departed();
         // the avatars in the region (CoarseLocationUpdate): the residents and the bot
         let bot = self.shared.agent_id;
-        let ids: Vec<Uuid> = self
+        // the residents still here, then the bot, last; the height by 4 m
+        let (ids, places): (Vec<Uuid>, Vec<Vec3>) = self
             .shared
             .cfg
             .residents
             .iter()
-            .map(|r| r.id)
-            .chain(std::iter::once(bot))
-            .collect();
+            .zip(&self.residents)
+            .filter_map(|(r, at)| at.map(|at| (r.id, at)))
+            .chain(std::iter::once((bot, ARRIVAL)))
+            .unzip();
         let addrs: Vec<SocketAddr> = self.clients.keys().copied().collect();
         for addr in &addrs {
             let m = CoarseLocationUpdate {
-                // the residents in a row to the west of the bot, which is last
-                location: (0..ids.len())
-                    .map(|i| coarse_location_update::Location {
-                        x: if i + 1 == ids.len() {
-                            128
-                        } else {
-                            (98 - 10 * i) as u8
-                        },
-                        y: 128,
-                        z: 6,
+                location: places
+                    .iter()
+                    .map(|at| coarse_location_update::Location {
+                        x: at.x as u8,
+                        y: at.y as u8,
+                        z: (at.z / 4.0) as u8,
                     })
                     .collect(),
                 index: coarse_location_update::Index {
@@ -2048,6 +2055,35 @@ impl Region {
                 self.send(to, &DisableSimulator::default(), false);
                 self.drop_client(to);
             }
+            RegionCommand::MoveResident { index, to: at } => {
+                let Some(place) = self.residents.get_mut(index) else {
+                    return;
+                };
+                *place = at;
+                let handle = self.shared.regions[self.index].handle();
+                match self.resident_block(index) {
+                    // a full update where it stands now
+                    Some(block) => {
+                        let m = ObjectUpdate {
+                            region_data: object_update::RegionData {
+                                region_handle: handle,
+                                time_dilation: u16::MAX,
+                            },
+                            object_data: vec![block],
+                        };
+                        self.send(to, &m, true);
+                    }
+                    // gone: its object killed, and no longer in the coarse updates
+                    None => {
+                        let k = KillObject {
+                            object_data: vec![kill_object::ObjectData {
+                                id: RESIDENT_LOCAL_ID + index as u32,
+                            }],
+                        };
+                        self.send(to, &k, true);
+                    }
+                }
+            }
         }
     }
 }
@@ -2059,6 +2095,10 @@ pub async fn run(
     mut commands: mpsc::UnboundedReceiver<RegionCommand>,
 ) {
     let mut ping = tokio::time::interval(shared.cfg.ping_interval);
+    // the residents stand in a row to the west
+    let residents = (0..shared.cfg.residents.len())
+        .map(|i| Some(Vec3::new(98.0 - 10.0 * i as f32, 128.0, 25.0)))
+        .collect();
     let mut r = Region {
         index,
         sock,
@@ -2072,6 +2112,7 @@ pub async fn run(
         attached: HashMap::new(),
         avatar_at: HashMap::new(),
         terrain: HashMap::new(),
+        residents,
     };
     let mut data = vec![0u8; 8192];
     let mut ping_id = 0u8;
