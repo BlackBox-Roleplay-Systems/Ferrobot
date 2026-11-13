@@ -17,6 +17,27 @@ pub const BOX: Uuid = Uuid::from_u128(0x2000_0002);
 pub const LINK: Uuid = Uuid::from_u128(0x2000_0003);
 pub const NOTECARD_ASSET: Uuid = Uuid::from_u128(0x3000_0001);
 
+/// The Welcome notecard's text: an embedded item in it, and long enough for several packets.
+pub fn welcome_text() -> String {
+    let mut t = String::from("Welcome\u{F0000} to the test grid.\n");
+    for i in 0..150 {
+        t.push_str(&format!("line {i:03}\n"));
+    }
+    t
+}
+
+/// The assets behind the items: the Welcome notecard's.
+pub fn asset(id: Uuid) -> Option<Vec<u8>> {
+    (id == NOTECARD_ASSET).then(|| {
+        let text = welcome_text();
+        format!(
+            "Linden text version 2\n{{\nLLEmbeddedItems version 1\n{{\ncount 0\n}}\nText length {}\n{text}}}\n",
+            text.len()
+        )
+        .into_bytes()
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Folder {
     pub id: Uuid,

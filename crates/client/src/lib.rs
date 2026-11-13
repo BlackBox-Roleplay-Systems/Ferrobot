@@ -23,6 +23,7 @@ mod network;
 pub mod objects;
 pub mod region_restart;
 pub mod state;
+mod transfer;
 mod xmlrpc;
 
 pub use events::{ChatMessage, Event, InstantMessage, ScriptDialog};

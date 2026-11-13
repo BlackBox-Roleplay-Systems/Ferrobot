@@ -82,7 +82,7 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `SendFolderByPath`, `SendItemDirect`, `GetRealUUID`,
 `CreateInventoryFolder`, `RenameInventory`, `DeleteInventoryItem` (to the Trash),
 `DeleteInventoryFolder`, `MoveInventoryItem`, `MoveInventoryFolder`; notecards: `NotecardAdd`,
-`NotecardClear`, `NotecardSend`, `NotecardDirectSend`; `Teleport`, `TeleportSLURL`,
+`NotecardClear`, `NotecardSend`, `NotecardDirectSend`, `NotecardRead` (the text to a reply target); `Teleport`, `TeleportSLURL`,
 `SendTeleportLure`, `RequestTeleport`, `Key2Name`, `GetDisplayName`, `Nearme`, `Friendslist`,
 `FriendRequest`, `FriendFullPerms`, `Balance`, `PayAvatar`, `PayObject`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,

@@ -6,19 +6,16 @@
 //! The text is SignedCommand's: `command|||arg~#~arg#|#reply target@@@signature;|;unixtime`, or a
 //! JSON object `{cmd, args, reply, signing, unixtime}`. The signature leaves the time out unless
 //! FERRO_ENFORCE_TIME_WINDOW is on (then the command must be recent too). The answer goes to the
-//! reply target, when there is one (SmartCommandReply): a channel number in local chat, an
-//! avatar's key or name by IM, an http(s) address as a POST of `reply` and `command`. SecondBot's
-//! e-mail replies are not followed (Ferrobot sends no e-mail).
+//! reply target, when there is one (crate::smart_reply).
 
 use crate::api::signing::{same, sign_with};
 use crate::commands::{self, Ctx};
 use crate::masters::Masters;
-use ferro_client::events::{chat_type, dialog};
+use ferro_client::events::dialog;
 use ferro_client::{Event, InstantMessage};
 use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
-use uuid::Uuid;
 
 /// IM_FROM_TASK (llinstantmessage.h): llInstantMessage from an object.
 const FROM_TASK: u8 = 19;
@@ -110,61 +107,6 @@ fn now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
-/// SmartCommandReply: where the answer goes.
-async fn reply(ctx: &Ctx, http: &reqwest::Client, target: &str, output: &str, command: &str) {
-    let target = target.trim();
-    let lower = target.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
-        let body = format!(
-            "reply={}&command={}",
-            form_encode(output),
-            form_encode(command)
-        );
-        let sent = http
-            .post(target)
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .timeout(std::time::Duration::from_secs(30))
-            .body(body)
-            .send()
-            .await;
-        if let Err(e) = sent {
-            log::warn!("command reply by HTTP failed: {}", e.without_url());
-        }
-        return;
-    }
-    if let Ok(avatar) = Uuid::parse_str(target) {
-        let _ = ctx.client.im(avatar, output).await;
-        return;
-    }
-    if target.split_whitespace().count() == 2 {
-        if let Ok(Some(avatar)) = ctx.client.find_avatar(target).await {
-            let _ = ctx.client.im(avatar, output).await;
-        }
-        return;
-    }
-    if target.contains('@') {
-        log::warn!("command reply by e-mail: not supported");
-        return;
-    }
-    if let Ok(channel) = target.parse::<i32>() {
-        // "output Channel must be zero or higher"
-        let channel = if channel < 0 { 999 } else { channel };
-        let _ = ctx.client.chat(output, channel, chat_type::SAY).await;
-    }
-}
-
-fn form_encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            b' ' => "+".to_owned(),
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
-}
-
 async fn on_im(ctx: Ctx, masters: Arc<Masters>, settings: Arc<Settings>, im: InstantMessage) {
     let me = ctx.client.state().agent_id;
     if im.from_agent_id == me || im.from_group {
@@ -216,8 +158,7 @@ async fn on_im(ctx: Ctx, masters: Arc<Masters>, settings: Arc<Settings>, im: Ins
         }
     );
     if let Some(target) = &u.reply {
-        let http = reqwest::Client::new();
-        reply(&ctx, &http, target, &value, &u.command).await;
+        crate::smart_reply::send(&ctx, target, &value, &u.command).await;
     }
 }
 

@@ -296,6 +296,53 @@ impl Region {
         self.avatar_update(to, at, 0);
     }
 
+    /// An inventory asset asked for (LLTransferSourceParamsInvItem: agent, session, owner, task,
+    /// item, asset, type): sent in packets of 1000 bytes when the item is the bot's, else refused
+    /// as the grid does (LLTS_INSUFFICIENT_PERMISSIONS).
+    fn transfer(&mut self, to: SocketAddr, m: &TransferRequest) {
+        let t = &m.transfer_info;
+        let key = |at: usize| {
+            t.params
+                .get(at..at + 16)
+                .and_then(|b| Uuid::from_slice(b).ok())
+                .unwrap_or_default()
+        };
+        let (owner, item, asset) = (key(32), key(64), key(80));
+        self.shared.saw(Seen::TransferRequest { item });
+        let bot = self.shared.agent_id;
+        let found = self
+            .shared
+            .state()
+            .inventory
+            .items
+            .iter()
+            .any(|i| i.id == item && i.asset_id == asset);
+        let data = (found && owner == bot)
+            .then(|| crate::inventory::asset(asset))
+            .flatten();
+        let mut info = TransferInfo::default();
+        info.transfer_info.transfer_id = t.transfer_id;
+        info.transfer_info.channel_type = t.channel_type;
+        info.transfer_info.params = t.params.clone();
+        let Some(data) = data else {
+            info.transfer_info.status = -3;
+            self.send(to, &info, true);
+            return;
+        };
+        info.transfer_info.size = data.len() as i32;
+        self.send(to, &info, true);
+        let chunks: Vec<&[u8]> = data.chunks(1000).collect();
+        for (n, chunk) in chunks.iter().enumerate() {
+            let mut p = TransferPacket::default();
+            p.transfer_data.transfer_id = t.transfer_id;
+            p.transfer_data.channel_type = t.channel_type;
+            p.transfer_data.packet = n as i32;
+            p.transfer_data.status = i32::from(n + 1 == chunks.len());
+            p.transfer_data.data = chunk.to_vec();
+            self.send(to, &p, true);
+        }
+    }
+
     /// The bot's avatar in a full ObjectUpdate, standing or seated on `parent`.
     fn avatar_update(&mut self, to: SocketAddr, position: Vec3, parent: u32) {
         self.avatar_at.insert(to, position);
@@ -489,6 +536,10 @@ impl Region {
                     let r = g::titles_reply(&grp, bot, m.agent_data.request_id);
                     self.send(from, &r, true);
                 }
+            }
+        } else if id == TransferRequest::ID {
+            if let Ok(m) = pkt.decode::<TransferRequest>() {
+                self.transfer(from, &m);
             }
         } else if id == AgentRequestSit::ID {
             if let Ok(m) = pkt.decode::<AgentRequestSit>() {

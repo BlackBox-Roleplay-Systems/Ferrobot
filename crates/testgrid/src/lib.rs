@@ -343,6 +343,10 @@ pub enum Seen {
     AlwaysRun {
         on: bool,
     },
+    /// An inventory asset asked for, by its item.
+    TransferRequest {
+        item: Uuid,
+    },
     /// GenericMessage "autopilot": its parameters.
     AutoPilot {
         params: Vec<String>,

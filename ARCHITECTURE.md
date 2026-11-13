@@ -28,6 +28,7 @@ crates/
     src/names.rs           key <-> name cache
     src/region_restart.rs  region restart notices (from Aurora)
     src/objects.rs         where objects and the bot stand, from the object updates (from Aurora)
+    src/transfer.rs        protected asset downloads (TransferRequest) and notecard text (from Aurora)
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
@@ -37,6 +38,7 @@ crates/
     src/dialogs.rs         script dialogs: kept, relayed, answered (SecondBot's DialogService)
     src/store.rs           key-value store, command history, counts, rate limit
     src/history.rs         what the bot heard: local chat, IM and group windows (SecondBot's store)
+    src/smart_reply.rs     where a command's answer goes when it names a reply target
     src/services/          one service per job, on the client's events (chat_log, health, homebound, im_commands, interactions, relays, restart)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)

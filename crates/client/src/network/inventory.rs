@@ -53,6 +53,11 @@ pub(crate) enum InventoryRequest {
         inv_type: i8,
         reply: oneshot::Sender<Uuid>,
     },
+    /// A protected asset of the bot's (a notecard, a script), over UDP (TransferRequest).
+    ReadAsset {
+        item: InvItem,
+        reply: oneshot::Sender<Result<Vec<u8>, String>>,
+    },
     /// A notecard's text saved (UpdateNotecardAgentInventory, then its uploader).
     UploadNotecard {
         item: Uuid,
@@ -65,6 +70,12 @@ impl Session<'_> {
     pub(super) fn on_inventory_request(&mut self, r: InventoryRequest) {
         let (agent, session) = (self.login.agent_id, self.login.session_id);
         match r {
+            InventoryRequest::ReadAsset { item, reply } => {
+                let m = crate::transfer::request(agent, session, Uuid::nil(), &item);
+                if self.transfers.start(m.transfer_info.transfer_id, reply) {
+                    self.send(&m, true);
+                }
+            }
             InventoryRequest::CreateItem {
                 folder,
                 name,

@@ -7,6 +7,7 @@ mod dialogs;
 mod history;
 mod masters;
 mod services;
+mod smart_reply;
 mod store;
 
 use config::Config;
@@ -115,6 +116,7 @@ async fn main() -> std::process::ExitCode {
         stop: stop_tx.clone(),
         homebound: homebound.clone(),
         allow_funds: cfg.allow_funds,
+        http: http.clone(),
     };
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(

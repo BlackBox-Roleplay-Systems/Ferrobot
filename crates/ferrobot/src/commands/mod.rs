@@ -38,6 +38,8 @@ pub struct Ctx {
     pub homebound: Arc<crate::services::homebound::Homebound>,
     /// The Funds commands (FERRO_ALLOW_FUNDS).
     pub allow_funds: bool,
+    /// For the replies that go out by HTTP (smart replies).
+    pub http: reqwest::Client,
 }
 
 /// The commands that change things in world: under the rate limit.
@@ -167,6 +169,7 @@ const COMMANDS: &[(&str, usize)] = &[
     ("PayAvatar", 2),
     ("PayObject", 3),
     ("NotecardAdd", 2),
+    ("NotecardRead", 2),
     ("NotecardClear", 1),
     ("NotecardSend", 3),
     ("NotecardDirectSend", 3),
@@ -289,6 +292,7 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "PayAvatar" => world::pay_avatar(ctx, a(0), a(1)).await,
         "PayObject" => world::pay_object(ctx, a(0), a(1), a(2)).await,
         "NotecardAdd" => notecard::add(ctx, a(0), a(1)),
+        "NotecardRead" => notecard::read(ctx, a(0), a(1)).await,
         "NotecardClear" => notecard::clear(ctx, a(0)),
         "NotecardSend" => notecard::send(ctx, a(0), a(1), a(2)).await,
         "NotecardDirectSend" => notecard::direct_send(ctx, a(0), a(1), a(2)).await,
@@ -353,6 +357,7 @@ mod tests {
             stop: Arc::new(tokio::sync::watch::channel(false).0),
             homebound: Arc::default(),
             allow_funds: false,
+            http: reqwest::Client::new(),
         };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,

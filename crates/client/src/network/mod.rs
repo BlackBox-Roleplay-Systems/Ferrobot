@@ -197,6 +197,8 @@ struct Session<'a> {
     map_waits: Vec<(String, oneshot::Sender<Option<u64>>)>,
     /// Where the region's root objects and the bot's avatar stand (the object updates).
     places: crate::objects::Places,
+    /// Protected assets being downloaded (TransferRequest).
+    transfers: crate::transfer::Transfers,
 }
 
 impl Session<'_> {
@@ -486,6 +488,43 @@ impl Session<'_> {
         }
     }
 
+    /// TransferInfo, TransferPacket, TransferAbort: a download of ours, gathered; a failed one is
+    /// aborted (LLTransferTargetChannel).
+    fn on_transfer(&mut self, pkt: &IncomingPacket) -> Result<(), ferro_msg::DecodeError> {
+        use crate::transfer::Reply;
+        let (transfer, channel, reply) = if pkt.id == TransferInfo::ID {
+            let t = pkt.decode::<TransferInfo>()?.transfer_info;
+            let r = Reply::Info {
+                status: t.status,
+                size: t.size,
+            };
+            (t.transfer_id, t.channel_type, r)
+        } else if pkt.id == TransferPacket::ID {
+            let t = pkt.decode::<TransferPacket>()?.transfer_data;
+            let r = Reply::Packet {
+                status: t.status,
+                packet: t.packet,
+                data: t.data,
+            };
+            (t.transfer_id, t.channel_type, r)
+        } else {
+            let t = pkt.decode::<TransferAbort>()?.transfer_info;
+            (t.transfer_id, t.channel_type, Reply::Abort)
+        };
+        let (_, failed) = self.transfers.receive(transfer, channel, reply);
+        if failed {
+            self.abort_transfer(transfer);
+        }
+        Ok(())
+    }
+
+    fn abort_transfer(&mut self, transfer: Uuid) {
+        let mut m = TransferAbort::default();
+        m.transfer_info.transfer_id = transfer;
+        m.transfer_info.channel_type = crate::transfer::ASSET_CHANNEL;
+        self.send(&m, true);
+    }
+
     fn request_balance(&mut self) {
         let mut m = MoneyBalanceRequest::default();
         m.agent_data.agent_id = self.login.agent_id;
@@ -590,6 +629,7 @@ impl Session<'_> {
         self.region_name.clear();
         self.caps.clear();
         self.places.clear();
+        self.transfers.clear();
         {
             let mut st = self.shared.state_mut();
             st.region = None;
@@ -799,6 +839,9 @@ impl Session<'_> {
     fn tick(&mut self) -> Option<End> {
         let now = Instant::now();
         self.circuit.tick(&self.sock);
+        for transfer in self.transfers.expire() {
+            self.abort_transfer(transfer);
+        }
         if self.circuit.take_dropped().contains(&self.ucc_seq) {
             return Some(End::Lost(
                 "the region never acknowledged UseCircuitCode".into(),
@@ -965,6 +1008,8 @@ impl Session<'_> {
                 .filter_map(crate::objects::from_terse)
                 .collect();
             self.on_places(&placed);
+        } else if id == TransferInfo::ID || id == TransferPacket::ID || id == TransferAbort::ID {
+            self.on_transfer(pkt)?;
         } else if id == KillObject::ID {
             let m: KillObject = pkt.decode()?;
             for o in &m.object_data {
@@ -1479,6 +1524,7 @@ async fn run(
         groups: groups::GroupWaits::default(),
         map_waits: Vec::new(),
         places: Default::default(),
+        transfers: Default::default(),
         appearance_asked: false,
         created: HashMap::new(),
         next_callback: 0,

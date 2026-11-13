@@ -1448,6 +1448,69 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
+    #[tokio::test]
+    async fn notecard_read() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+
+        let (hook, caught) = super::catch_a_post().await;
+        assert_eq!(
+            api.reply("NotecardRead", &[&inv::NOTECARD.to_string(), &hook])
+                .await,
+            "Making request to get data from notecard"
+        );
+        let body = tokio::time::timeout(WAIT, caught)
+            .await
+            .expect("the reply in time")
+            .expect("a reply");
+        assert_eq!(
+            super::form_field(&body, "command").as_deref(),
+            Some("NotecardRead")
+        );
+        let reply: Value =
+            serde_json::from_str(&super::form_field(&body, "reply").expect("reply")).expect("json");
+        let text = inv::welcome_text().replace('\u{F0000}', "[ATTACHMENT]");
+        assert_eq!(
+            reply,
+            serde_json::json!({
+                "uuid": inv::NOTECARD.to_string(),
+                "name": "Welcome",
+                "content": text,
+                "status": true,
+            })
+        );
+        assert!(
+            grid.count(|s| *s
+                == Seen::TransferRequest {
+                    item: inv::NOTECARD
+                })
+                == 1
+        );
+
+        // not a notecard: refused, and the reply target is told
+        let (why, args) = api
+            .failure("NotecardRead", &[&inv::BOX.to_string(), "7"])
+            .await;
+        assert_eq!(why, "Inventory item is not a notecard");
+        assert_eq!(args, serde_json::json!([inv::BOX.to_string()]));
+        assert!(
+            grid.wait_for(WAIT, |s| matches!(s, Seen::Chat { message, channel: 7, .. }
+                if message.contains(r#""status":false"#) && message.contains("not a notecard")))
+                .await
+        );
+        assert_eq!(
+            api.failure("NotecardRead", &["nothing", "7"]).await.0,
+            "Not a vaild UUID"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's other group commands: notices, bans, titles, the active group, join and leave.
     #[tokio::test]
     async fn more_group_commands() {
@@ -2039,9 +2102,8 @@ async fn homebound_goes_home_and_leaves_before_a_restart() {
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
 
-/// Relays: local chat to a channel, an avatar's IMs to a webhook (Discord's format).
-#[tokio::test]
-async fn relays_carry_what_the_bot_hears() {
+/// A one-call HTTP endpoint: its address, and the body of the first POST it gets.
+async fn catch_a_post() -> (String, tokio::task::JoinHandle<String>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let hook = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -2077,6 +2139,36 @@ async fn relays_carry_what_the_bot_hears() {
             }
         }
     });
+    (hook_url, caught)
+}
+
+/// A form field's value (application/x-www-form-urlencoded).
+fn form_field(body: &str, name: &str) -> Option<String> {
+    let raw = body
+        .split('&')
+        .find_map(|kv| kv.strip_prefix(&format!("{name}=")))?;
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 2;
+            }
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Relays: local chat to a channel, an avatar's IMs to a webhook (Discord's format).
+#[tokio::test]
+async fn relays_carry_what_the_bot_hears() {
+    let (hook_url, caught) = catch_a_post().await;
     let other = ferro_testgrid::Resident {
         id: uuid_from(0x5eed_0002),
         first: "Other".into(),

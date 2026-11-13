@@ -178,7 +178,11 @@ baking: the bot says so and goes on.
 - 🟡 Notecards: created (CreateInventoryItem, UpdateNotecardAgentInventory's uploader, the
   "Linden text version 2" asset, as Aurora) and sent; SecondBot's NotecardAdd, NotecardClear,
   NotecardSend, NotecardDirectSend; tested on the test grid
-- ⬜ NotecardRead (downloading an asset)
+- 🟡 NotecardRead: the asset over UDP as the viewer reads a protected one (TransferRequest from
+  the inventory, crates/client/src/transfer.rs from Aurora's inventory_preview.rs), its text to the
+  reply target (SmartCommandReply, now shared with the commands by IM); tested on the test grid.
+  Deliberate difference: "[ATTACHMENT]" stands where each embedded item is (SecondBot's loop
+  drops the text before the last one)
 
 ## Phase 7 - The rest of SecondBot
 

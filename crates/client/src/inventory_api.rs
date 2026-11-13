@@ -172,6 +172,22 @@ impl Client {
         self.give(to, i.name, vec![(t, i.id)]).await
     }
 
+    /// A notecard's text (its asset downloaded as the viewer does, the region checking the
+    /// bot may read it); each embedded item becomes `embedded`.
+    pub async fn read_notecard(
+        &self,
+        item: &InvItem,
+        embedded: &str,
+    ) -> Result<String, ClientError> {
+        let item = item.clone();
+        let data = self
+            .inventory_ask(|reply| InventoryRequest::ReadAsset { item, reply })
+            .await?
+            .map_err(ClientError::Refused)?;
+        crate::transfer::notecard_text(&data, embedded)
+            .ok_or_else(|| ClientError::Refused("not a notecard".into()))
+    }
+
     /// Give an item by its key, name and asset type, without looking it up (SecondBot's
     /// SendItemDirect).
     pub async fn give_item_as(
