@@ -194,6 +194,18 @@ baking: the bot says so and goes on.
 - 🟡 AsyncSendItem, AsyncSendItemByPath, AsyncInventoryContents: a request id at once, SecondBot's
   InventoryAsyncReply to the reply target; tested on the test grid
 - ⬜ Inventory: rezzing, attaching, outfits, AsyncRez…, transfers to objects
+- 🟡 Inventory extras: SecondBot's InventoryPurgeNotecards (RemoveInventoryItem, for good, as
+  SecondBot), InventoryContentsCatched, InventoryPreloadCount, InventoryPreloadDone,
+  SetInventoryUpdate (BulkUpdateInventory on UDP and the event queue, as Aurora's
+  inventory_updates.rs, told as SecondBot's EventsService does: IM, signed POST, channel),
+  SetPermFlag, ListSculptys (PARAMS_SCULPT in full and compressed updates, as LibreMetaverse's
+  PrimType.Sculpt), FetchNextNotecard (StreamAdmin); tested on the test grid. Deliberate
+  differences: no inventory cache or preload (the tree is fetched when asked, the preload is
+  always "Ready", the count is what fetches have shown); the update watch list is always on, and
+  takes the viewer's short type names too; InventoryPurgeNotecards fails when the folder is
+  missing (SecondBot's check is inverted); SetPermFlag has no effect, as SecondBot's
+- ⬜ SetPermFlag with an effect (SecondBot's is a "@todo"): one-time and sticky accepts of
+  friendships, group invites, animations, teleports, commands and items, for an avatar
 - 🟡 Notecards: created (CreateInventoryItem, UpdateNotecardAgentInventory's uploader, the
   "Linden text version 2" asset, as Aurora) and sent; SecondBot's NotecardAdd, NotecardClear,
   NotecardSend, NotecardDirectSend; tested on the test grid

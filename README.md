@@ -113,7 +113,13 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `InventoryFoldersLimited`, `InventoryContents`, `SendItem`, `SendFolder`, `SendItemByPath`,
 `SendFolderByPath`, `SendItemDirect`, `GetRealUUID`,
 `CreateInventoryFolder`, `RenameInventory`, `DeleteInventoryItem` (to the Trash),
-`DeleteInventoryFolder`, `MoveInventoryItem`, `MoveInventoryFolder`; notecards: `NotecardAdd`,
+`DeleteInventoryFolder`, `MoveInventoryItem`, `MoveInventoryFolder`, `InventoryPurgeNotecards`
+(the root's "Notecards" folder: notecards 31 days old or more, removed for good),
+`InventoryContentsCatched` (the whole tree, fetched when asked: Ferrobot keeps no cache),
+`InventoryPreloadCount`, `InventoryPreloadDone` (always "Ready": Ferrobot fetches on demand),
+`SetInventoryUpdate` (a target hears of each item of a type that comes into the inventory);
+`SetPermFlag` (SecondBot's answer, no effect, as SecondBot's); `ListSculptys`;
+`FetchNextNotecard` (StreamAdmin's next notecard, sent); notecards: `NotecardAdd`,
 `NotecardClear`, `NotecardSend`, `NotecardDirectSend`, `NotecardRead` (the text to a reply target); `Teleport`, `TeleportSLURL`,
 `SendTeleportLure`, `RequestTeleport`, `Key2Name`, `GetDisplayName`, `Nearme`, `Friendslist`,
 `FriendRequest`, `FriendFullPerms`, `FriendsGetLocation`, `NearmeWithDetails`, `GetSimGlobalPos`,

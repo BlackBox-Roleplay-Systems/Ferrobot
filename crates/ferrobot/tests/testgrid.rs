@@ -619,15 +619,236 @@ mod api {
         }
     }
 
+    /// SecondBot's inventory extras: SetPermFlag, the inventory tree and its counts, purging old
+    /// notecards, the sculpted prims, the inventory update events and FetchNextNotecard.
+    #[tokio::test]
+    async fn inventory_extras() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_settings(&grid, &[("FERRO_MASTERS", "Some Resident")]).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let some = ferro_testgrid::Resident {
+            id: uuid_from(0x5eed_0001),
+            first: "Some".into(),
+            last: "Resident".into(),
+        };
+        let who = some.id.to_string();
+
+        // SetPermFlag answers as SecondBot's, and changes nothing
+        assert_eq!(
+            api.reply("SetPermFlag", &[&who, "group", "true", "false"])
+                .await,
+            "Added perm: group Sticky: False"
+        );
+        assert_eq!(
+            api.reply("SetPermFlag", &[&who, "inventory", "False", "TRUE"])
+                .await,
+            "Removed perm: inventory Sticky: True"
+        );
+        let nil = uuid::Uuid::nil().to_string();
+        for (args, why) in [
+            ([nil.as_str(), "group", "true", "true"], "avatar lookup"),
+            ([who.as_str(), "group", "yes", "true"], "Invaild state"),
+            ([who.as_str(), "group", "true", "1"], "Invaild sticky"),
+            ([who.as_str(), "Group", "true", "true"], "Invaild flag"),
+        ] {
+            let (reply, sent) = api.failure("SetPermFlag", &args).await;
+            assert_eq!(reply, why);
+            assert_eq!(sent, serde_json::json!(args));
+        }
+
+        // no preload: always ready; the counts grow with what is fetched
+        assert_eq!(api.reply("InventoryPreloadDone", &[]).await, "Ready");
+        let tree: Value =
+            serde_json::from_str(&api.reply("InventoryContentsCatched", &[]).await).expect("json");
+        assert_eq!(tree["Name"], "My Inventory");
+        assert_eq!(tree["UUID"], inv::ROOT.to_string());
+        assert_eq!(tree["InventoryType"], "Folder");
+        let notecards = tree["Children"]
+            .as_array()
+            .expect("children")
+            .iter()
+            .find(|c| c["Name"] == "Notecards")
+            .expect("the Notecards folder");
+        assert_eq!(
+            notecards["Children"][0],
+            serde_json::json!({
+                "UUID": inv::NOTECARD.to_string(),
+                "Name": "Welcome",
+                "Children": null,
+                "InventoryType": "Notecard",
+            })
+        );
+        let party = tree["Children"]
+            .as_array()
+            .expect("children")
+            .iter()
+            .find(|c| c["Name"] == "My Outfits")
+            .expect("My Outfits");
+        assert_eq!(party["Children"][0]["Name"], "Party");
+        let count = api.reply("InventoryPreloadCount", &[]).await;
+        let (folders, items) = count
+            .strip_prefix("folders:")
+            .and_then(|c| c.split_once(",items:"))
+            .unwrap_or_else(|| panic!("{count}"));
+        assert!(folders.parse::<usize>().expect("folders") >= 9, "{count}");
+        assert!(items.parse::<usize>().expect("items") >= 10, "{count}");
+
+        // purging: the old notecard goes for good, the Welcome notecard stays
+        assert_eq!(api.reply("InventoryPurgeNotecards", &[]).await, "Ok");
+        let old_asset = uuid_from(0x3000_0008);
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::Object {
+                    what: format!("unlink {old_asset}")
+                })
+            .await
+        );
+        let left = api
+            .reply("InventoryContents", &[&inv::NOTECARDS.to_string()])
+            .await;
+        assert!(
+            left.contains("Welcome") && !left.contains("Old Note"),
+            "{left}"
+        );
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::Object { what } if what.starts_with("unlink"))),
+            1
+        );
+
+        // the sculpted child prim, reported by its root
+        let sculpts: Value =
+            serde_json::from_str(&api.reply("ListSculptys", &[]).await).expect("json");
+        assert_eq!(
+            sculpts,
+            serde_json::json!([{
+                "name": "?",
+                "isLinked": "True",
+                "owner": who,
+                "uuid": ferro_testgrid::OBJECT.to_string(),
+                "pos": "<100, 120, 22>",
+            }])
+        );
+
+        // inventory updates: a notecard accepted is told on a channel and by HTTP
+        let (hook, caught) = super::catch_a_post().await;
+        assert_eq!(
+            api.reply("SetInventoryUpdate", &["notecard", "7"]).await,
+            "Ok"
+        );
+        assert_eq!(
+            api.reply("SetInventoryUpdate", &["Notecard", &hook]).await,
+            "Ok"
+        );
+        assert_eq!(
+            api.reply("SetInventoryUpdate", &["Object", "8"]).await,
+            "Ok"
+        );
+        grid.offer_inventory(&some, None);
+        assert!(
+            grid.wait_for(WAIT, |s| matches!(s, Seen::Chat { message, channel: 7, .. }
+                if message.starts_with(r#"{"itemname":"A notecard","itemuuid":""#)
+                    && message.ends_with(r#"","itemtype":"Notecard"}"#)))
+                .await,
+            "{}",
+            bot.log()
+        );
+        let body = tokio::time::timeout(WAIT, caught)
+            .await
+            .expect("the update in time")
+            .expect("an update");
+        assert_eq!(
+            super::form_field(&body, "method").as_deref(),
+            Some("Inventory")
+        );
+        assert_eq!(
+            super::form_field(&body, "action").as_deref(),
+            Some("Update")
+        );
+        let event = super::form_field(&body, "event").expect("event");
+        let unixtime = super::form_field(&body, "unixtime").expect("unixtime");
+        let token: String = Sha1::digest(format!(
+            "{unixtime}EventService{}{event}{SECRET}",
+            grid.agent_id()
+        ))
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+        assert_eq!(super::form_field(&body, "token"), Some(token));
+        assert!(event.contains(r#""itemtype":"Notecard""#), "{event}");
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::Chat { channel: 8, .. })),
+            0
+        );
+
+        // FetchNextNotecard: the server's next notecard, sent to whom it names
+        let answer = format!(
+            r#"{{"status":true,"message":"ok","AvatarUUID":"{who}","NotecardTitle":"Stream details","NotecardContent":"port 8000"}}"#
+        );
+        let (endpoint, asked) = super::serve_a_post("200 OK", answer).await;
+        assert_eq!(
+            api.reply("FetchNextNotecard", &[&endpoint, "a code"]).await,
+            "ok"
+        );
+        let (path, body) = asked.await.expect("the request");
+        assert_eq!(path, "/sys.php/Notecard/Next");
+        let unixtime = super::form_field(&body, "unixtime").expect("unixtime");
+        let token: String = Sha1::digest(format!("{unixtime}NotecardNexta code"))
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(super::form_field(&body, "token"), Some(token));
+        assert_eq!(
+            super::form_field(&body, "method").as_deref(),
+            Some("Notecard")
+        );
+        assert!(
+            grid.wait_for(
+                WAIT,
+                |s| matches!(s, Seen::InventoryOffer { to, name, entries }
+                if *to == some.id && name == "Stream details" && entries[0].0 == 7)
+            )
+            .await
+        );
+        let (endpoint, _) = super::serve_a_post(
+            "200 OK",
+            r#"{"status":false,"message":"nothing queued"}"#.into(),
+        )
+        .await;
+        assert_eq!(
+            api.failure("FetchNextNotecard", &[&endpoint, "a code"])
+                .await
+                .0,
+            "Bad reply: nothing queued"
+        );
+        let (endpoint, _) = super::serve_a_post("404 Not Found", String::new()).await;
+        assert_eq!(
+            api.failure("FetchNextNotecard", &[&endpoint, "a code"])
+                .await
+                .0,
+            "HTTP status code: NotFound"
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     async fn bot_with_api(grid: &TestGrid, login: Option<&str>) -> (Bot, Api) {
+        let login: Vec<(&str, &str)> = login
+            .map(|uri| ("FERRO_LOGIN_URI", uri))
+            .into_iter()
+            .collect();
+        bot_with_settings(grid, &login).await
+    }
+
+    /// The bot with its API, and these settings too.
+    async fn bot_with_settings(grid: &TestGrid, settings: &[(&str, &str)]) -> (Bot, Api) {
         let port = free_port().to_string();
         let mut env = vec![
             ("FERRO_HTTP_PORT", port.as_str()),
             ("commands_SharedSecret", SECRET),
         ];
-        if let Some(uri) = login {
-            env.push(("FERRO_LOGIN_URI", uri));
-        }
+        env.extend_from_slice(settings);
         let bot = Bot::start(grid, &env);
         bot.wait_log("HTTP API on port").await;
         let api = Api {
@@ -3554,6 +3775,53 @@ async fn catch_a_post() -> (String, tokio::task::JoinHandle<String>) {
         }
     });
     (hook_url, caught)
+}
+
+/// A one-call HTTP server that answers with this status and JSON body: its base address
+/// (ending in "/"), and the path and body of the POST it got.
+async fn serve_a_post(
+    status: &str,
+    body: String,
+) -> (String, tokio::task::JoinHandle<(String, String)>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}/", listener.local_addr().expect("address"));
+    let answer = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let served = tokio::spawn(async move {
+        let (mut s, _) = listener.accept().await.expect("the call");
+        let mut buf = vec![0u8; 8192];
+        let mut got = Vec::new();
+        loop {
+            let n = s.read(&mut buf).await.expect("read");
+            got.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&got).to_string();
+            if let Some((head, sent)) = text.split_once("\r\n\r\n") {
+                let len: usize = head
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap_or(0))
+                    })
+                    .unwrap_or(0);
+                if sent.len() >= len || n == 0 {
+                    s.write_all(answer.as_bytes()).await.expect("answer");
+                    let path = head
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .to_owned();
+                    return (path, sent.to_owned());
+                }
+            }
+        }
+    });
+    (base, served)
 }
 
 /// A form field's value (application/x-www-form-urlencoded).

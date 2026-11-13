@@ -7,6 +7,7 @@ mod config;
 mod dialogs;
 mod discord;
 mod history;
+mod inventory_updates;
 mod masters;
 mod services;
 mod smart_reply;
@@ -96,6 +97,14 @@ async fn main() -> std::process::ExitCode {
             tokio::spawn(services::restart::run(client.clone(), client.subscribe()));
         }
     }
+    let inventory_updates = std::sync::Arc::new(inventory_updates::InventoryUpdates::default());
+    tokio::spawn(inventory_updates::run(
+        client.clone(),
+        client.subscribe(),
+        inventory_updates.clone(),
+        http.clone(),
+        cfg.shared_secret.clone(),
+    ));
     let history = std::sync::Arc::new(history::History::default());
     tokio::spawn(history::run(
         client.clone(),
@@ -139,6 +148,7 @@ async fn main() -> std::process::ExitCode {
         http: http.clone(),
         animators: animators.clone(),
         discord: discord.clone(),
+        inventory_updates,
     };
     if let Some(d) = &discord {
         log::info!("discord: server {}", d.settings.server);

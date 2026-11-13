@@ -3,6 +3,7 @@
 //! MoveInventoryFolder, CreateInventoryFolder), and giving (an IM_INVENTORY_OFFERED).
 
 use super::Session;
+use crate::events::AddedItem;
 use crate::inventory::{self, FolderContents, InvItem};
 use ferro_msg::msgs::*;
 use ferro_msg::str_field;
@@ -78,6 +79,18 @@ pub(crate) enum InventoryRequest {
 }
 
 impl Session<'_> {
+    /// Items came into the inventory: told to whoever listens.
+    pub(super) fn on_inventory_added(&mut self, added: Option<Vec<AddedItem>>) {
+        match added {
+            None => log::debug!("BulkUpdateInventory for another agent, ignored"),
+            Some(items) if items.is_empty() => {}
+            Some(items) => {
+                log::debug!("{} items came into the inventory", items.len());
+                self.shared.emit(crate::Event::InventoryAdded(items));
+            }
+        }
+    }
+
     pub(super) fn on_inventory_request(&mut self, r: InventoryRequest) {
         let (agent, session) = (self.login.agent_id, self.login.session_id);
         match r {
@@ -294,4 +307,50 @@ async fn upload(
         return Err("the save was not completed".into());
     }
     Ok(ack["new_asset"].as_uuid())
+}
+
+/// What BulkUpdateInventory brings into the bot's inventory: its items, the nil ones (a folder
+/// alone) left out. `None` when the update is for another agent, as
+/// LLInventoryModel::processBulkUpdateInventory refuses it.
+pub(super) fn bulk_update(m: &BulkUpdateInventory, agent: Uuid) -> Option<Vec<AddedItem>> {
+    if m.agent_data.agent_id != agent {
+        return None;
+    }
+    Some(
+        m.item_data
+            .iter()
+            .filter(|it| !it.item_id.is_nil())
+            .map(|it| AddedItem {
+                id: it.item_id,
+                name: ferro_msg::field_str(&it.name),
+                asset_type: i32::from(it.type_),
+            })
+            .collect(),
+    )
+}
+
+/// The same, sent on the event queue as LLSD (Aurora's inventory_updates::parse_template).
+pub(super) fn bulk_update_llsd(body: &ferro_llsd::Llsd, agent: Uuid) -> Option<Vec<AddedItem>> {
+    if body["AgentData"].at(0)["AgentID"].as_uuid() != agent {
+        return None;
+    }
+    Some(
+        body["ItemData"]
+            .as_array()
+            .iter()
+            .filter(|it| !it["ItemID"].as_uuid().is_nil())
+            .map(|it| {
+                // a name is binary in the template's LLSD, a string on some grids
+                let name = match it["Name"].as_str() {
+                    "" => ferro_msg::field_str(it["Name"].as_binary()),
+                    s => s.to_owned(),
+                };
+                AddedItem {
+                    id: it["ItemID"].as_uuid(),
+                    name,
+                    asset_type: it["Type"].as_i32(),
+                }
+            })
+            .collect(),
+    )
 }

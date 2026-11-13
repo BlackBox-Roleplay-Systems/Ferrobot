@@ -16,6 +16,10 @@ pub const NOTECARD: Uuid = Uuid::from_u128(0x2000_0001);
 pub const BOX: Uuid = Uuid::from_u128(0x2000_0002);
 pub const LINK: Uuid = Uuid::from_u128(0x2000_0003);
 pub const NOTECARD_ASSET: Uuid = Uuid::from_u128(0x3000_0001);
+/// A notecard made long ago, in the Notecards folder.
+pub const OLD_NOTECARD: Uuid = Uuid::from_u128(0x2000_0006);
+/// When it was made.
+pub const LONG_AGO: i64 = 1_600_000_000;
 /// The Current Outfit Folder, My Outfits and an outfit in it.
 pub const COF: Uuid = Uuid::from_u128(0x1000_0010);
 pub const MY_OUTFITS: Uuid = Uuid::from_u128(0x1000_0011);
@@ -88,6 +92,8 @@ pub struct Item {
     pub asset_id: Uuid,
     /// A wearable's type in the low byte (LLWearableType).
     pub flags: u32,
+    /// When it was made (unix time); 0: when it is fetched.
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +113,7 @@ fn wearable(id: Uuid, name: &str, asset_type: i32, flags: u32) -> Item {
         inv_type,
         asset_id: Uuid::from_u128(id.as_u128() + 0x1000_0000),
         flags,
+        created_at: 0,
     }
 }
 
@@ -120,6 +127,7 @@ fn link(n: u128, folder: Uuid, to: &Item) -> Item {
         inv_type: to.inv_type,
         asset_id: to.id,
         flags: 0,
+        created_at: 0,
     }
 }
 
@@ -180,6 +188,7 @@ impl Default for Inventory {
                     inv_type: 7,
                     asset_id: NOTECARD_ASSET,
                     flags: 0,
+                    created_at: 0,
                 },
                 Item {
                     id: BOX,
@@ -189,6 +198,7 @@ impl Default for Inventory {
                     inv_type: 6,
                     asset_id: Uuid::from_u128(0x3000_0002),
                     flags: 0,
+                    created_at: 0,
                 },
                 Item {
                     id: SCRIPT,
@@ -198,6 +208,7 @@ impl Default for Inventory {
                     inv_type: 10,
                     asset_id: Uuid::from_u128(0x3000_0007),
                     flags: 0,
+                    created_at: 0,
                 },
                 Item {
                     id: GESTURE,
@@ -207,6 +218,7 @@ impl Default for Inventory {
                     inv_type: 20,
                     asset_id: GESTURE_ASSET,
                     flags: 0,
+                    created_at: 0,
                 },
                 Item {
                     id: LINK,
@@ -216,10 +228,21 @@ impl Default for Inventory {
                     inv_type: 7,
                     asset_id: NOTECARD,
                     flags: 0,
+                    created_at: 0,
                 },
             ]
             .into_iter()
             .chain(clothes())
+            .chain([Item {
+                id: OLD_NOTECARD,
+                parent: NOTECARDS,
+                name: "Old Note".into(),
+                asset_type: 7,
+                inv_type: 7,
+                asset_id: Uuid::from_u128(0x3000_0008),
+                flags: 0,
+                created_at: LONG_AGO,
+            }])
             .collect(),
         }
     }
@@ -234,6 +257,14 @@ fn item_llsd(i: &Item, owner: Uuid) -> Llsd {
     m.insert("inv_type".into(), i.inv_type.into());
     m.insert("asset_id".into(), i.asset_id.into());
     m.insert("flags".into(), (i.flags as i32).into());
+    let created = if i.created_at == 0 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64)
+    } else {
+        i.created_at
+    };
+    m.insert("created_at".into(), (created as i32).into());
     let mut perms = Map::new();
     perms.insert("owner_id".into(), owner.into());
     m.insert("permissions".into(), Llsd::Map(perms));

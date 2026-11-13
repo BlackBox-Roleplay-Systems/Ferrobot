@@ -58,7 +58,30 @@ impl Client {
         for f in found.iter().flat_map(|c| &c.folders) {
             names.insert(f.id, f.name.clone());
         }
+        drop(names);
+        self.shared
+            .seen_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(found.iter().flat_map(|c| &c.items).map(|i| i.id));
         Ok(found)
+    }
+
+    /// How many folders and items the fetches have shown so far.
+    pub fn inventory_seen(&self) -> (usize, usize) {
+        let folders = self
+            .shared
+            .folder_names
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        let items = self
+            .shared
+            .seen_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        (folders, items)
     }
 
     /// A folder's name, when a fetch has shown it ("My Inventory" for the root).

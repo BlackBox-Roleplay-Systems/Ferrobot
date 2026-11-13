@@ -5,7 +5,7 @@
 
 use super::Session;
 use crate::inventory::InvItem;
-use crate::objects::{Known, Root, Worn};
+use crate::objects::{Known, Root, Sculpt, Worn};
 use ferro_msg::msgs::*;
 use ferro_msg::str_field;
 use glam::Vec3;
@@ -23,6 +23,9 @@ pub(crate) enum ObjectRequest {
     },
     Roots {
         reply: oneshot::Sender<Vec<Root>>,
+    },
+    Sculpts {
+        reply: oneshot::Sender<Vec<Sculpt>>,
     },
     Click {
         local_id: u32,
@@ -107,6 +110,9 @@ impl Session<'_> {
             }
             ObjectRequest::Roots { reply } => {
                 let _ = reply.send(self.places.roots());
+            }
+            ObjectRequest::Sculpts { reply } => {
+                let _ = reply.send(self.places.sculpts());
             }
             ObjectRequest::Worn { reply } => {
                 let _ = reply.send(self.places.worn());

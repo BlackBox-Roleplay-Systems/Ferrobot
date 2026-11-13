@@ -55,6 +55,8 @@ pub struct Ctx {
     pub animators: Arc<crate::animators::Animators>,
     /// The Discord connection, when Discord is on.
     pub discord: Option<Arc<crate::discord::Discord>>,
+    /// Who hears of the items that come into the inventory (SetInventoryUpdate).
+    pub inventory_updates: Arc<crate::inventory_updates::InventoryUpdates>,
 }
 
 /// The commands that change things in world: under the rate limit.
@@ -135,6 +137,8 @@ const CHANGING: &[&str] = &[
     "UnRezObject",
     "TransferInventoryToObject",
     "AsyncTransferInventoryToObject",
+    "InventoryPurgeNotecards",
+    "FetchNextNotecard",
     "Attach",
     "Detach",
     "SwapOutfit",
@@ -321,6 +325,14 @@ const COMMANDS: &[(&str, usize)] = &[
     ("DeleteInventoryFolder", 1),
     ("MoveInventoryItem", 2),
     ("MoveInventoryFolder", 2),
+    ("InventoryPurgeNotecards", 0),
+    ("InventoryContentsCatched", 0),
+    ("InventoryPreloadCount", 0),
+    ("InventoryPreloadDone", 0),
+    ("SetInventoryUpdate", 2),
+    ("FetchNextNotecard", 2),
+    ("ListSculptys", 0),
+    ("SetPermFlag", 4),
     ("Fly", 1),
     ("SetAlwaysRun", 1),
     ("Sit", 1),
@@ -580,6 +592,14 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "DeleteInventoryFolder" => inventory::delete_folder(ctx, a(0)).await,
         "MoveInventoryItem" => inventory::move_item(ctx, a(0), a(1)).await,
         "MoveInventoryFolder" => inventory::move_folder(ctx, a(0), a(1)).await,
+        "InventoryPurgeNotecards" => inventory::purge_notecards(ctx).await,
+        "InventoryContentsCatched" => inventory::contents_catched(ctx).await,
+        "InventoryPreloadCount" => inventory::preload_count(ctx),
+        "InventoryPreloadDone" => inventory::preload_done(),
+        "SetInventoryUpdate" => inventory::set_inventory_update(ctx, a(0), a(1)),
+        "FetchNextNotecard" => notecard::fetch_next(ctx, a(0), a(1)).await,
+        "ListSculptys" => objects::list_sculptys(ctx).await,
+        "SetPermFlag" => bot::set_perm_flag(ctx, a(0), a(1), a(2), a(3)).await,
         "Fly" => movement::fly(ctx, a(0)).await,
         "SetAlwaysRun" => movement::always_run(ctx, a(0)).await,
         "Sit" => movement::sit(ctx, a(0)).await,
@@ -672,6 +692,7 @@ mod tests {
             http: reqwest::Client::new(),
             animators: Arc::default(),
             discord: None,
+            inventory_updates: Arc::default(),
         };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,

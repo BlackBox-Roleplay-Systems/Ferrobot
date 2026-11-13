@@ -94,7 +94,8 @@ impl Client {
         .await
     }
 
-    async fn remove_items(&self, items: Vec<Uuid>) -> Result<(), ClientError> {
+    /// Removes items from the inventory for good (RemoveInventoryItem), not to the Trash.
+    pub async fn remove_items(&self, items: Vec<Uuid>) -> Result<(), ClientError> {
         if items.is_empty() {
             return Ok(());
         }

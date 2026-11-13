@@ -45,6 +45,7 @@ crates/
     src/store.rs           key-value store, command history, counts, rate limit
     src/history.rs         what the bot heard: local chat, IM and group windows (SecondBot's store)
     src/smart_reply.rs     where a command's answer goes when it names a reply target
+    src/inventory_updates.rs  items that come into the inventory, told to SetInventoryUpdate's targets
     src/discord/           the bot on a Discord server (twilight): its channels, both ways
     src/services/          one service per job, on the client's events (chat_log, health, homebound, im_commands, interactions, relays, restart, script_permissions)
     tests/testgrid.rs      the real bot, run as a process against the test grid

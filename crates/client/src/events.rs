@@ -38,6 +38,18 @@ pub enum Event {
     TeleportFailed { reason: String },
     /// The session ended; a new login comes next, or not, as the caller decides.
     Disconnected { reason: String },
+    /// Items came into the bot's inventory: an offer accepted, a copy made
+    /// (BulkUpdateInventory, LLInventoryModel::processBulkUpdateInventory).
+    InventoryAdded(Vec<AddedItem>),
+}
+
+/// An item that came into the inventory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddedItem {
+    pub id: Uuid,
+    pub name: String,
+    /// LLAssetType.
+    pub asset_type: i32,
 }
 
 /// Chat types (`EChatType`, llchat.h).

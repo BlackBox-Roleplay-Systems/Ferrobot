@@ -1400,6 +1400,10 @@ impl Session<'_> {
             if online {
                 st.friends_online.extend(ids);
             }
+        } else if id == BulkUpdateInventory::ID {
+            let m: BulkUpdateInventory = pkt.decode()?;
+            let added = inventory::bulk_update(&m, self.login.agent_id);
+            self.on_inventory_added(added);
         } else if id == UpdateCreateInventoryItem::ID {
             let m: UpdateCreateInventoryItem = pkt.decode()?;
             for it in &m.inventory_data {
@@ -1722,6 +1726,10 @@ impl Session<'_> {
             "ChatterBoxSessionStartReply" => self.on_session_start_reply(&e.body),
             "ChatterBoxInvitation" => self.on_session_invitation(&e.body),
             "ParcelProperties" => self.on_parcel_properties(&e.body),
+            "BulkUpdateInventory" => {
+                let added = inventory::bulk_update_llsd(&e.body, self.login.agent_id);
+                self.on_inventory_added(added);
+            }
             // Second Life sends it on the event queue (Aurora's land::parse_object_owners)
             "ParcelObjectOwnersReply" => {
                 let owners = e.body["Data"]
