@@ -4243,6 +4243,38 @@ mod api {
         bot.terminate();
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
+
+    /// RabbitMQ on, its broker down: the bot logs in and answers as ever, SendMessageToQ fails
+    /// at once as SecondBot's does without a connection, and the password is never logged.
+    #[tokio::test]
+    async fn a_rabbitmq_broker_that_is_down_blocks_nothing() {
+        let grid = grid().await;
+        // nothing listens there
+        let broker = free_port().to_string();
+        let (mut bot, api) = bot_with_settings(
+            &grid,
+            &[
+                ("rabbit_Enabled", "True"),
+                ("rabbit_HostPort", broker.as_str()),
+                ("rabbit_HostPassword", "a broker password"),
+            ],
+        )
+        .await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("RabbitMQ: no connection to 127.0.0.1").await;
+        assert_eq!(api.reply("SimName", &[]).await, "Test Region");
+        let started = std::time::Instant::now();
+        assert_eq!(
+            api.failure("SendMessageToQ", &["exampleq", "Hello world"])
+                .await
+                .0,
+            "Error sending message: Connection is not open"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+        assert!(!bot.log().contains("a broker password"), "{}", bot.log());
+    }
 }
 
 /// Commands by IM, as SecondBot takes them: a master's run, the answer goes to the reply target;
