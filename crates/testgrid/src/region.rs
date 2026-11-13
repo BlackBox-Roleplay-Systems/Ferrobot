@@ -2124,6 +2124,37 @@ impl Region {
                 self.send(to, &DisableSimulator::default(), false);
                 self.drop_client(to);
             }
+            RegionCommand::Alert {
+                message,
+                notification,
+            } => {
+                let mut m = AlertMessage::default();
+                m.alert_data.message = str_field(&message);
+                if let Some(n) = notification {
+                    m.alert_info.push(alert_message::AlertInfo {
+                        message: str_field(&n),
+                        extra_params: Vec::new(),
+                    });
+                }
+                self.send(to, &m, true);
+            }
+            RegionCommand::Paid {
+                from,
+                amount,
+                balance,
+            } => {
+                let mut r = MoneyBalanceReply::default();
+                r.money_data.agent_id = self.shared.agent_id;
+                r.money_data.transaction_id = Uuid::new_v4();
+                r.money_data.transaction_success = true;
+                r.money_data.money_balance = balance;
+                // TRANS_GIFT (lltransactiontypes.h)
+                r.transaction_info.transaction_type = 5001;
+                r.transaction_info.source_id = from;
+                r.transaction_info.dest_id = self.shared.agent_id;
+                r.transaction_info.amount = amount;
+                self.send(to, &r, true);
+            }
             RegionCommand::MoveResident { index, to: at } => {
                 let Some(place) = self.residents.get_mut(index) else {
                     return;
