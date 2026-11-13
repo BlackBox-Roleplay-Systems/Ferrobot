@@ -1,12 +1,12 @@
 //! Ferrobot: a Second Life bot in a container.
 
-mod animators;
 mod api;
 mod commands;
 mod config;
 mod dialogs;
 mod discord;
 mod download;
+mod grants;
 mod history;
 mod inventory_updates;
 mod masters;
@@ -71,18 +71,23 @@ async fn main() -> std::process::ExitCode {
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
     let homebound = std::sync::Arc::new(services::homebound::Homebound::default());
-    let animators = std::sync::Arc::new(animators::Animators::default());
+    let grants = std::sync::Arc::new(grants::Grants::default());
     tokio::spawn(services::script_permissions::run(
         client.clone(),
         client.subscribe(),
-        animators.clone(),
+        grants.clone(),
     ));
     tokio::spawn(services::interactions::run(
-        client.clone(),
+        std::sync::Arc::new(services::interactions::Service {
+            client: client.clone(),
+            masters: masters.clone(),
+            rules: cfg.interactions,
+            homebound: homebound.clone(),
+            grants: grants.clone(),
+            http: http.clone(),
+            events: cfg.interaction_events.clone(),
+        }),
         client.subscribe(),
-        masters.clone(),
-        cfg.interactions,
-        homebound.clone(),
     ));
     match cfg.homebound.clone() {
         Some(settings) => {
@@ -148,7 +153,7 @@ async fn main() -> std::process::ExitCode {
         homebound: homebound.clone(),
         allow_funds: cfg.allow_funds,
         http: http.clone(),
-        animators: animators.clone(),
+        grants: grants.clone(),
         discord: discord.clone(),
         inventory_updates,
     };

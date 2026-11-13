@@ -51,8 +51,9 @@ pub struct Ctx {
     pub allow_funds: bool,
     /// For the replies that go out by HTTP (smart replies).
     pub http: reqwest::Client,
-    /// The avatars whose objects may animate the bot.
-    pub animators: Arc<crate::animators::Animators>,
+    /// What avatars were granted beyond the interaction settings (AcceptNext, SetPermFlag,
+    /// AddToAllowAnimations).
+    pub grants: Arc<crate::grants::Grants>,
     /// The Discord connection, when Discord is on.
     pub discord: Option<Arc<crate::discord::Discord>>,
     /// Who hears of the items that come into the inventory (SetInventoryUpdate).
@@ -126,6 +127,8 @@ const CHANGING: &[&str] = &[
     "SetEstateConfig",
     "SetEstateTerrainRaw",
     "AddToAllowAnimations",
+    "SetPermFlag",
+    "AcceptNext",
     "SetProfileAbout",
     "SetProfileImage",
     "RezObject",
@@ -335,6 +338,8 @@ const COMMANDS: &[(&str, usize)] = &[
     ("FetchNextNotecard", 2),
     ("ListSculptys", 0),
     ("SetPermFlag", 4),
+    ("AcceptNext", 3),
+    ("IsOnAcceptNext", 2),
     ("Fly", 1),
     ("SetAlwaysRun", 1),
     ("Sit", 1),
@@ -368,6 +373,19 @@ const COMMANDS: &[(&str, usize)] = &[
     ("DialogRelayHttpTarget", 1),
     ("DialogResponce", 2),
 ];
+
+/// The commands that hand out grants (crate::grants): never run for an avatar on its "command"
+/// grant alone, so that a grant cannot widen or pass itself on.
+pub const GRANTING: &[&str] = &["SetPermFlag", "AcceptNext", "AddToAllowAnimations"];
+
+/// A command's name as SecondBot spells it, whatever the case asked; `None` when there is no
+/// such command.
+pub fn known(name: &str) -> Option<&'static str> {
+    COMMANDS
+        .iter()
+        .find(|(c, _)| c.eq_ignore_ascii_case(name))
+        .map(|(c, _)| *c)
+}
 
 /// What CommandsService.RunCommand answers: whether the command ran, and its answer (or why not).
 pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
@@ -603,6 +621,8 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "FetchNextNotecard" => notecard::fetch_next(ctx, a(0), a(1)).await,
         "ListSculptys" => objects::list_sculptys(ctx).await,
         "SetPermFlag" => bot::set_perm_flag(ctx, a(0), a(1), a(2), a(3)).await,
+        "AcceptNext" => bot::accept_next(ctx, a(0), a(1), a(2)).await,
+        "IsOnAcceptNext" => bot::is_on_accept_next(ctx, a(0), a(1)).await,
         "Fly" => movement::fly(ctx, a(0)).await,
         "SetAlwaysRun" => movement::always_run(ctx, a(0)).await,
         "Sit" => movement::sit(ctx, a(0)).await,
@@ -693,7 +713,7 @@ mod tests {
             homebound: Arc::default(),
             allow_funds: false,
             http: reqwest::Client::new(),
-            animators: Arc::default(),
+            grants: Arc::default(),
             discord: None,
             inventory_updates: Arc::default(),
         };

@@ -86,6 +86,21 @@ impl Bot {
         self.log.lock().expect("log lock").join("\n")
     }
 
+    /// Waits until `needle` is in the log `n` times.
+    async fn wait_log_count(&self, needle: &str, n: usize) {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        while tokio::time::Instant::now() < deadline {
+            if self.log().matches(needle).count() >= n {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!(
+            "\"{needle}\" not {n} times in the bot's log:\n{}",
+            self.log()
+        );
+    }
+
     async fn wait_log(&self, needle: &str) {
         let deadline = tokio::time::Instant::now() + WAIT;
         while tokio::time::Instant::now() < deadline {
@@ -729,7 +744,7 @@ mod api {
         };
         let who = some.id.to_string();
 
-        // SetPermFlag answers as SecondBot's, and changes nothing
+        // SetPermFlag answers as SecondBot's (what it grants: accept_next_and_perm_flags)
         assert_eq!(
             api.reply("SetPermFlag", &[&who, "group", "true", "false"])
                 .await,
@@ -2720,6 +2735,237 @@ mod api {
             1,
             "another's object is not answered"
         );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
+    /// SecondBot's one-time "accept next" list (AcceptNext, IsOnAcceptNext), SetPermFlag's grants
+    /// (once and lasting: friendships, teleports, group invitations, animations, commands by IM),
+    /// and the interaction events in local chat.
+    #[tokio::test]
+    async fn accept_next_and_perm_flags() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_settings(
+            &grid,
+            &[
+                ("FERRO_MASTERS", "Some Resident"),
+                ("interaction_EnableJsonOutputEvents", "true"),
+                ("FERRO_INTERACTION_EVENTS_TARGET", "7"),
+            ],
+        )
+        .await;
+        arrived(&grid, &bot, 1).await;
+        let other = ferro_testgrid::Resident {
+            id: uuid_from(0x5eed_0002),
+            first: "Other".into(),
+            last: "Avatar".into(),
+        };
+        let event = |needle: &'static str| move |s: &Seen| matches!(s, Seen::Chat { message, channel: 7, .. } if message.contains(needle));
+        let answered = |to, dialog, id| move |s: &Seen| *s == Seen::ImAnswer { to, dialog, id };
+
+        // AcceptNext: the next inventory offer only
+        assert_eq!(
+            api.reply("AcceptNext", &["InventoryOffer", OTHER, "false"])
+                .await,
+            "ok"
+        );
+        assert_eq!(
+            api.reply("IsOnAcceptNext", &["InventoryOffer", "Other Avatar"])
+                .await,
+            "true"
+        );
+        let item = grid.offer_inventory(&other, None);
+        wait_for(
+            &grid,
+            &bot,
+            "the item accepted",
+            answered(other.id, 5, item),
+        )
+        .await;
+        wait_for(
+            &grid,
+            &bot,
+            "the accepted event",
+            event(
+                r#""eventType":"InventoryOffer","accepted":true,"info":"was on NextAccept list""#,
+            ),
+        )
+        .await;
+        wait_for(
+            &grid,
+            &bot,
+            "the cleaner event",
+            event(r#""itemname":"A notecard","eventsource":"InventoryOffer"}"#),
+        )
+        .await;
+        wait_for(
+            &grid,
+            &bot,
+            "the item added",
+            event(r#""itemtype":"Notecard","eventsource":"InventoryAdd"}"#),
+        )
+        .await;
+        assert_eq!(
+            api.reply("IsOnAcceptNext", &["InventoryOffer", OTHER])
+                .await,
+            "false"
+        );
+        let item = grid.offer_inventory(&other, None);
+        wait_for(
+            &grid,
+            &bot,
+            "the item declined",
+            answered(other.id, 6, item),
+        )
+        .await;
+        wait_for(
+            &grid,
+            &bot,
+            "the refused event",
+            event(r#""eventType":"InventoryOffer","accepted":false,"info":"rejected request""#),
+        )
+        .await;
+        // added, then taken back
+        api.reply("AcceptNext", &["Teleport", OTHER, "false"]).await;
+        api.reply("AcceptNext", &["Teleport", OTHER, "True"]).await;
+        assert_eq!(
+            api.reply("IsOnAcceptNext", &["Teleport", OTHER]).await,
+            "false"
+        );
+        let nil = uuid::Uuid::nil().to_string();
+        for (command, args, why) in [
+            (
+                "AcceptNext",
+                vec!["inventoryoffer", OTHER, "false"],
+                "Unknown store type",
+            ),
+            (
+                "AcceptNext",
+                vec!["Teleport", nil.as_str(), "false"],
+                "Invaild avatar uuid",
+            ),
+            (
+                "IsOnAcceptNext",
+                vec!["Animation", OTHER],
+                "Unknown store type",
+            ),
+        ] {
+            assert_eq!(api.failure(command, &args).await.0, why);
+        }
+
+        // friendships: lasting, until taken back
+        assert_eq!(
+            api.reply("SetPermFlag", &[OTHER, "friend", "true", "true"])
+                .await,
+            "Added perm: friend Sticky: True"
+        );
+        for _ in 0..2 {
+            let offer = grid.offer_friendship(&other);
+            wait_for(&grid, &bot, "the friendship accepted", |s| {
+                *s == Seen::FriendshipAccepted { transaction: offer }
+            })
+            .await;
+        }
+        assert_eq!(
+            api.reply("SetPermFlag", &[OTHER, "friend", "false", "true"])
+                .await,
+            "Removed perm: friend Sticky: True"
+        );
+        grid.offer_friendship(&other);
+        bot.wait_log("friendship offer from Other Avatar refused: not a master")
+            .await;
+
+        // a teleport request, once
+        api.reply("SetPermFlag", &[OTHER, "teleport", "true", "false"])
+            .await;
+        grid.request_teleport(&other);
+        wait_for(&grid, &bot, "a teleport offered", |s| {
+            *s == Seen::StartLure { target: other.id }
+        })
+        .await;
+        wait_for(
+            &grid,
+            &bot,
+            "the teleport event",
+            event(r#""eventsource":"Teleport Av to Bot"}"#),
+        )
+        .await;
+        let request = grid.request_teleport(&other);
+        wait_for(
+            &grid,
+            &bot,
+            "the request declined",
+            answered(other.id, 24, request),
+        )
+        .await;
+
+        // a group invitation, once: the grant is found by the inviter's name
+        api.reply("SetPermFlag", &[OTHER, "group", "true", "false"])
+            .await;
+        grid.invite_bot(&other, ferro_testgrid::THIRD_GROUP, 0);
+        wait_for(&grid, &bot, "the invitation accepted", |s| {
+            *s == Seen::GroupInviteAnswer {
+                group: ferro_testgrid::THIRD_GROUP,
+                accept: true,
+            }
+        })
+        .await;
+        grid.invite_bot(&other, ferro_testgrid::THIRD_GROUP, 0);
+        bot.wait_log("group invitation from Other Avatar refused: not a master")
+            .await;
+
+        // an animation, once
+        api.reply("SetPermFlag", &[OTHER, "animation", "true", "false"])
+            .await;
+        let (task, again) = (uuid_from(0x7a5e), uuid_from(0x7a5f));
+        grid.script_question(task, "Other Avatar", 0x10);
+        wait_for(&grid, &bot, "the permission given", |s| {
+            *s == Seen::ScriptAnswer {
+                task,
+                questions: 0x10,
+            }
+        })
+        .await;
+        grid.script_question(again, "Other Avatar", 0x10);
+        bot.wait_log("asks to animate the bot: not allowed").await;
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::ScriptAnswer { task, .. } if *task == again)),
+            0
+        );
+
+        // commands by IM: once, then lasting, never the commands that grant
+        let said = |text: &'static str| move |s: &Seen| matches!(s, Seen::Chat { message, channel: 0, .. } if message == text);
+        let refused = "command by IM from Other Avatar refused: not a master";
+        grid.im_from(&other, "Say|||0~#~not granted");
+        bot.wait_log_count(refused, 1).await;
+        api.reply("SetPermFlag", &[OTHER, "command", "true", "false"])
+            .await;
+        grid.im_from(&other, "just talking");
+        grid.im_from(&other, "Say|||0~#~granted once");
+        wait_for(&grid, &bot, "the granted command", said("granted once")).await;
+        grid.im_from(&other, "Say|||0~#~a second time");
+        bot.wait_log_count(refused, 2).await;
+        api.reply("SetPermFlag", &[OTHER, "command", "true", "true"])
+            .await;
+        grid.im_from(
+            &other,
+            &format!("SetPermFlag|||{OTHER}~#~inventory~#~true~#~true"),
+        );
+        bot.wait_log("SetPermFlag refused, a command grant does not reach it")
+            .await;
+        grid.im_from(&other, "Say|||0~#~granted for good");
+        wait_for(&grid, &bot, "the lasting grant", said("granted for good")).await;
+        assert_eq!(grid.count(said("not granted")), 0);
+        assert_eq!(grid.count(said("a second time")), 0);
+        let item = grid.offer_inventory(&other, None);
+        wait_for(
+            &grid,
+            &bot,
+            "no inventory grant",
+            answered(other.id, 6, item),
+        )
+        .await;
 
         assert_eq!(api.reply("Logoff", &[]).await, "ok");
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());

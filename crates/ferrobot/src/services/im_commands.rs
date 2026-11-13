@@ -1,5 +1,12 @@
 //! Commands by IM, as SecondBot's CommandsService.BotImMessage takes them:
 //! - from a master (IM_NOTHING_SPECIAL, recognised by key): run without a signature;
+//! - from an avatar granted "command" by SetPermFlag (crate::grants), recognised by key the same
+//!   way: run without a signature, its next command only or until the bot stops, but never the
+//!   commands that hand out grants (commands::GRANTING). Deliberate difference: SecondBot's
+//!   SetPermFlag does nothing. The grant is made by an authenticated party (a signed command, or
+//!   a master), the sender's key comes from the grid, not from the message, and the grantee
+//!   cannot widen its grant or pass it on: nobody gets more than what a master or the holder of
+//!   the shared secret gave. Its objects still sign their commands;
 //! - from an object (IM_FROM_TASK): signed with the shared secret, unless the object's owner is a
 //!   master and FERRO_OBJECT_MASTER_OPTOUT is on.
 //!
@@ -9,7 +16,8 @@
 //! reply target, when there is one (crate::smart_reply).
 
 use crate::api::signing::{Unpacked, same, sign_with, unpack};
-use crate::commands::Ctx;
+use crate::commands::{self, Ctx};
+use crate::grants::Grant;
 use crate::masters::Masters;
 use ferro_client::events::dialog;
 use ferro_client::{Event, InstantMessage};
@@ -44,6 +52,33 @@ fn signed(u: &Unpacked, s: &Settings, now: i64) -> bool {
     same(&sign_with(&u.command, &u.args, time, secret), signing)
 }
 
+/// Whether an avatar that is not a master may run this command on its "command" grant. A
+/// one-time grant is used up here, before the command runs, and only by a command that exists:
+/// plain talk keeps it.
+async fn granted(ctx: &Ctx, u: &Unpacked, im: &InstantMessage) -> bool {
+    let Some(command) = commands::known(&u.command) else {
+        return false;
+    };
+    let id = im.from_agent_id;
+    if !ctx.grants.has_lasting(Grant::Command, id) && !ctx.grants.has_once(Grant::Command, id) {
+        return false;
+    }
+    if commands::GRANTING.contains(&command) {
+        log::warn!(
+            "command by IM from {}: {command} refused, a command grant does not reach it",
+            im.from_name
+        );
+        return false;
+    }
+    match ctx.grants.use_key(Grant::Command, id) {
+        Some(used) => {
+            log::info!("command by IM from {} on a {used:?} grant", im.from_name);
+            true
+        }
+        None => false,
+    }
+}
+
 fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -55,9 +90,16 @@ async fn on_im(ctx: Ctx, masters: Arc<Masters>, settings: Arc<Settings>, im: Ins
     if im.from_agent_id == me || im.from_group {
         return;
     }
+    let Some(u) = unpack(&im.message) else {
+        return;
+    };
     let need_signing = match im.dialog {
         dialog::NOTHING_SPECIAL => {
-            if !masters.by_key(&ctx.client, im.from_agent_id).await {
+            if !masters.by_key(&ctx.client, im.from_agent_id).await && !granted(&ctx, &u, &im).await
+            {
+                if commands::known(&u.command).is_some() {
+                    log::debug!("command by IM from {} refused: not a master", im.from_name);
+                }
                 return;
             }
             false
@@ -67,9 +109,6 @@ async fn on_im(ctx: Ctx, masters: Arc<Masters>, settings: Arc<Settings>, im: Ins
             !(settings.object_master_optout && masters.by_key(&ctx.client, im.from_agent_id).await)
         }
         _ => return,
-    };
-    let Some(u) = unpack(&im.message) else {
-        return;
     };
     if need_signing && !signed(&u, &settings, now()) {
         log::warn!("command by IM from {} refused: not signed", im.from_name);

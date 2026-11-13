@@ -43,6 +43,7 @@ crates/
     src/api/               SecondBot's HTTP API: POST /api/Run and /json, signatures (axum)
     src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat, movement…)
     src/masters.rs         who the masters are, by name or by key
+    src/grants.rs          what avatars were granted beyond the settings: AcceptNext, SetPermFlag
     src/dialogs.rs         script dialogs: kept, relayed, answered (SecondBot's DialogService)
     src/store.rs           key-value store, command history, counts, rate limit
     src/history.rs         what the bot heard: local chat, IM and group windows (SecondBot's store)

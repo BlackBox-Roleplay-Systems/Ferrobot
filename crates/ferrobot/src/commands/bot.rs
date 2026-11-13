@@ -1,11 +1,14 @@
 //! SecondBot's Self commands that need nothing more than the bot (GoHome, Logoff,
-//! GetLastCommands, the key-value store, SetPermFlag), and Ferrobot's own BotStatus.
+//! GetLastCommands, the key-value store, SetPermFlag), its Avatars commands AcceptNext and
+//! IsOnAcceptNext, and Ferrobot's own BotStatus.
 //!
-//! SetPermFlag changes nothing, as SecondBot's (its "@todo"): it checks its arguments and answers
-//! as SecondBot does, so that scripts that send it keep working.
+//! Deliberate difference: SetPermFlag has an effect (SecondBot's is a "@todo" that only answers):
+//! it grants, or takes back, an avatar's requests of one kind (crate::grants), once ("sticky"
+//! false) or until the bot stops ("sticky" true). Its answers are SecondBot's.
 
 use super::reply::{Answer, basic, failure, json};
 use super::{Ctx, owned};
+use crate::grants::Grant;
 
 /// GoHome: homebound's home sim when it is on, else the Second Life home. "ok" at once, as
 /// SecondBot answers before the teleport.
@@ -181,24 +184,23 @@ pub async fn set_away(ctx: &Ctx, mode: &str) -> Answer {
     }
 }
 
-/// SetPermFlag: SecondBot's answer, without an effect (see the module).
+/// SetPermFlag: grants `flag` to the avatar (state "true") or takes it back (state "false"),
+/// once (sticky "false") or lasting (sticky "true"). A lasting grant taken back takes any
+/// one-time grant of that kind with it. What each flag lets through:
+/// - "friend", "group", "teleport", "inventory": the interaction rules
+///   (services/interactions.rs), as SecondBot's AcceptNext list;
+/// - "animation": that avatar's objects may animate the bot (services/script_permissions.rs);
+/// - "command": that avatar's IMs are run as commands without a signature, as a master's are,
+///   except the commands that hand out grants (services/im_commands.rs).
 pub async fn set_perm_flag(ctx: &Ctx, who: &str, flag: &str, state: &str, sticky: &str) -> Answer {
     const C: &str = "SetPermFlag";
-    const FLAGS: [&str; 6] = [
-        "friend",
-        "group",
-        "animation",
-        "teleport",
-        "command",
-        "inventory",
-    ];
     let args = owned(&[who, flag, state, sticky]);
-    if !super::avatar(&ctx.client, who)
+    let Some(id) = super::avatar(&ctx.client, who)
         .await
-        .is_some_and(|id| !id.is_nil())
-    {
+        .filter(|id| !id.is_nil())
+    else {
         return failure(C, "avatar lookup", &args);
-    }
+    };
     let Some(state) = super::cs_bool(state) else {
         return failure(C, "Invaild state", &args);
     };
@@ -206,12 +208,65 @@ pub async fn set_perm_flag(ctx: &Ctx, who: &str, flag: &str, state: &str, sticky
         return failure(C, "Invaild sticky", &args);
     };
     // the flag's case matters, as in SecondBot
-    if !FLAGS.contains(&flag) {
+    let Some(grant) = Grant::from_flag(flag) else {
         return failure(C, "Invaild flag", &args);
-    }
-    let done = if state { "Added" } else { "Removed" };
+    };
+    let done = if state {
+        ctx.grants.add(grant, id, sticky);
+        "Added"
+    } else {
+        ctx.grants.remove(grant, id, sticky);
+        "Removed"
+    };
+    log::info!(
+        "SetPermFlag: {flag} {} for {id} ({})",
+        done.to_lowercase(),
+        if sticky { "lasting" } else { "once" }
+    );
     let sticky = super::reply::cs_bool_text(sticky);
     basic(C, &format!("{done} perm: {flag} Sticky: {sticky}"), &args)
+}
+
+/// AcceptNext: the avatar's next request of this kind is accepted ("remove" true: no longer).
+/// The stores are SecondBot's: FriendRequest, InventoryOffer, GroupInvite, Teleport.
+pub async fn accept_next(ctx: &Ctx, store: &str, who: &str, remove: &str) -> Answer {
+    const C: &str = "AcceptNext";
+    let args = owned(&[store, who, remove]);
+    let Some(id) = super::avatar(&ctx.client, who)
+        .await
+        .filter(|id| !id.is_nil())
+    else {
+        return failure(C, "Invaild avatar uuid", &args);
+    };
+    // only these two spellings remove, as SecondBot's
+    let remove = remove == "true" || remove == "True";
+    let Some(grant) = Grant::from_store(store) else {
+        return failure(C, "Unknown store type", &args);
+    };
+    if remove {
+        ctx.grants.remove(grant, id, false);
+    } else {
+        ctx.grants.add(grant, id, false);
+    }
+    basic(C, "ok", &args)
+}
+
+/// IsOnAcceptNext: whether the avatar's next request of this kind would be accepted by the
+/// one-time list, without using it up.
+pub async fn is_on_accept_next(ctx: &Ctx, store: &str, who: &str) -> Answer {
+    const C: &str = "IsOnAcceptNext";
+    let args = owned(&[store, who]);
+    let Some(id) = super::avatar(&ctx.client, who)
+        .await
+        .filter(|id| !id.is_nil())
+    else {
+        return failure(C, "Invaild avatar uuid", &args);
+    };
+    let Some(grant) = Grant::from_store(store) else {
+        return failure(C, "Unknown store type", &args);
+    };
+    let on = ctx.grants.has_once(grant, id);
+    basic(C, if on { "true" } else { "false" }, &args)
 }
 
 #[cfg(test)]
