@@ -16,6 +16,7 @@ use crate::commands::{Caller, Ctx};
 use crate::event_output::{Roster, now};
 use crate::on_event::{self, Action, Lockouts, Source, Trigger, Values, Watch, World};
 use ferro_client::events::dialog;
+use ferro_client::parcels::{MAP_SIZE, ParcelInfo, covers};
 use ferro_client::{Client, Event};
 use glam::Vec3;
 use std::collections::HashMap;
@@ -44,6 +45,7 @@ struct Service {
     lockouts: Lockouts,
     /// When the events may run: some time after the login; `None` while offline.
     ready_at: Mutex<Option<Instant>>,
+    parcels: Parcels,
 }
 
 impl Service {
@@ -76,9 +78,51 @@ fn rounded(v: Vec3) -> [i64; 3] {
     [v.x, v.y, v.z].map(|c| c.round() as i64)
 }
 
+/// The parcels the region told of for the avatars, by region: asked once, not at each event.
+#[derive(Default)]
+struct Parcels(Mutex<(String, Vec<ParcelInfo>)>);
+
+impl Parcels {
+    async fn name_at(&self, client: &Client, region: &str, at: Vec3) -> Option<String> {
+        let cell = |v: f32| ((v / 4.0).floor().max(0.0) as usize).min(MAP_SIZE - 1);
+        let (x, y) = (cell(at.x), cell(at.y));
+        // the bot's own parcel, as the region last told it, first: it may have been renamed
+        if let Some(p) = client
+            .state()
+            .parcel
+            .as_ref()
+            .filter(|p| covers(&p.bitmap, x, y))
+        {
+            return Some(p.name.clone());
+        }
+        {
+            let mut known = self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if known.0 != region {
+                *known = (region.to_owned(), Vec::new());
+            }
+            if let Some(p) = known.1.iter().find(|p| covers(&p.bitmap, x, y)) {
+                return Some(p.name.clone());
+            }
+        }
+        let p = client.parcel_at(at).await.ok().flatten()?;
+        let mut known = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if known.0 == region && !known.1.iter().any(|k| k.local_id == p.local_id) {
+            known.1.push(p.clone());
+        }
+        Some(p.name)
+    }
+}
+
 /// The world around an event: the bot's place, the avatar's, the clock.
 async fn world(
     client: &Client,
+    parcels: &Parcels,
     avatar: Option<Uuid>,
     last_seen: Option<Vec3>,
     name: Option<String>,
@@ -115,8 +159,8 @@ async fn world(
         if let Some(at) = seen.or(last_seen) {
             let [x, y, z] = rounded(at);
             w.avatar_at = [x, y, z, at.distance(bot_at).round() as i64];
-            if let Ok(Some(p)) = client.parcel_at(at).await {
-                w.avatar_parcel = p.name;
+            if let Some(name) = parcels.name_at(client, &w.bot_sim, at).await {
+                w.avatar_parcel = name;
             }
         }
     }
@@ -151,7 +195,7 @@ async fn trigger(
         .iter()
         .find(|(k, _)| *k == "avatarname")
         .map(|(_, v)| v.clone());
-    let w = world(&svc.ctx.client, avatar, last_seen, name).await;
+    let w = world(&svc.ctx.client, &svc.parcels, avatar, last_seen, name).await;
     let values = on_event::values(source, &args, &w);
     for t in triggers {
         if !t.applies(&values) {
@@ -436,6 +480,7 @@ pub async fn run(ctx: Ctx, events: Receiver<Event>, settings: Settings) {
         s: settings,
         lockouts: Lockouts::default(),
         ready_at: Mutex::new(None),
+        parcels: Parcels::default(),
     });
     tokio::spawn(timed(svc.clone()));
     on_events(svc, events).await;
