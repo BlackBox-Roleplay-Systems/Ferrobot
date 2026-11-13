@@ -28,6 +28,10 @@ pub struct Placed {
     pub state: u8,
     /// The inventory item an attachment was worn from (its AttachItemID name value).
     pub attach_item: Option<Uuid>,
+    /// A sculpted prim, not a mesh (its sculpt extra parameter).
+    pub sculpt: bool,
+    /// The value of its first name value, which names an avatar or an attachment.
+    pub label: Option<String>,
 }
 
 /// An attachment's point from the state byte (LLViewerObject::getAttachmentPointNumber: its
@@ -43,6 +47,37 @@ fn attach_item(name_values: &str) -> Option<Uuid> {
         (it.next()? == "AttachItemID").then_some(())?;
         Uuid::parse_str(it.nth(3)?.trim()).ok()
     })
+}
+
+/// The first name value's value ("FirstName STRING RW DS Bob": "Bob"), as LibreMetaverse's
+/// NameValues[0].Value.
+fn first_name_value(name_values: &str) -> Option<String> {
+    let line = name_values.lines().next()?;
+    let value = line.splitn(5, ' ').nth(4)?.trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// PARAMS_SCULPT (llprimitive.h): the sculpt texture, then the type.
+const PARAMS_SCULPT: u16 = 0x30;
+/// LL_SCULPT_TYPE_MASK and LL_SCULPT_TYPE_MESH (llprimitive.h).
+const SCULPT_TYPE_MASK: u8 = 0x07;
+const SCULPT_TYPE_MESH: u8 = 5;
+
+/// Whether extra parameters (LLViewerObject::unpackParameterEntry: a count, then each entry's
+/// type, size and data) make a sculpted prim: a sculpt texture and a sculpt type that is not
+/// mesh, as LibreMetaverse's Primitive.Type tells PrimType.Sculpt.
+fn sculpt_entry(r: &mut Reader<'_>) -> Option<bool> {
+    let mut sculpt = false;
+    for _ in 0..r.u8()? {
+        let kind = r.u16()?;
+        let data = r.binary()?;
+        if kind == PARAMS_SCULPT && data.len() >= 17 {
+            let texture = Uuid::from_slice(&data[..16]).ok()?;
+            let t = data[16] & SCULPT_TYPE_MASK;
+            sculpt = !texture.is_nil() && t != 0 && t != SCULPT_TYPE_MESH;
+        }
+    }
+    Some(sculpt)
 }
 
 /// LL_PCODE_LEGACY_AVATAR (llprimitive/object_flags.h)
@@ -134,6 +169,11 @@ pub fn from_full(b: &object_update::ObjectData) -> Option<Placed> {
     let _velocity = r.vec3()?;
     let _acceleration = r.vec3()?;
     let rotation = ferro_msg::unpack_quat(r.vec3()?);
+    let name_values = ferro_msg::field_str(&b.name_value);
+    let mut extra = Reader {
+        d: &b.extra_params,
+        p: 0,
+    };
     Some(Placed {
         local_id: b.id,
         full_id: Some(b.full_id),
@@ -143,7 +183,9 @@ pub fn from_full(b: &object_update::ObjectData) -> Option<Placed> {
         avatar: b.p_code == PCODE_AVATAR,
         owner: Some(b.owner_id),
         state: b.state,
-        attach_item: attach_item(&ferro_msg::field_str(&b.name_value)),
+        attach_item: attach_item(&name_values),
+        sculpt: sculpt_entry(&mut extra).unwrap_or(false),
+        label: first_name_value(&name_values),
     })
 }
 
@@ -169,7 +211,8 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
     let parent_id = if flags & 0x20 != 0 { r.u32()? } else { 0 };
     // what lies before the name values, skipped as Aurora's parse_compressed reads it; a blob
     // cut short only loses them
-    let attach = (|| {
+    let mut sculpt = false;
+    let name_values = (|| {
         if flags & 0x2 != 0 {
             r.u8()?;
         } else if flags & 0x1 != 0 {
@@ -186,18 +229,16 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
         if flags & 0x8 != 0 {
             r.take(86)?;
         }
-        for _ in 0..r.u8()? {
-            r.u16()?;
-            r.binary()?;
-        }
+        sculpt = sculpt_entry(&mut r)?;
         if flags & 0x10 != 0 {
             r.take(16 + 4 + 1 + 4)?;
         }
         if flags & 0x100 != 0 {
-            return attach_item(&r.cstr()?);
+            return r.cstr();
         }
         None
-    })();
+    })()
+    .unwrap_or_default();
     Some(Placed {
         local_id,
         full_id: Some(full_id),
@@ -207,7 +248,9 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
         avatar: pcode == PCODE_AVATAR,
         owner: Some(owner),
         state,
-        attach_item: attach,
+        attach_item: attach_item(&name_values),
+        sculpt,
+        label: first_name_value(&name_values),
     })
 }
 
@@ -238,6 +281,8 @@ pub fn from_terse(b: &improved_terse_object_update::ObjectData) -> Option<Placed
         owner: None,
         state: 0,
         attach_item: None,
+        sculpt: false,
+        label: None,
     })
 }
 
@@ -258,6 +303,18 @@ pub struct Known {
     pub owner: Uuid,
     pub state: u8,
     pub attach_item: Option<Uuid>,
+    /// Where it was last placed (its offset from the root, for a child).
+    pub position: Vec3,
+}
+
+/// A sculpted prim, as SecondBot's ListSculptys reports it: a linked one by its linkset's root.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sculpt {
+    pub linked: bool,
+    pub name: Option<String>,
+    pub owner: Uuid,
+    pub key: Uuid,
+    pub position: Vec3,
 }
 
 /// Something the bot wears: where, worn from which item.
@@ -288,6 +345,10 @@ pub struct Places {
     avatars: HashSet<u32>,
     /// The bot's avatar in this region, once a full update has named it.
     own: Option<u32>,
+    /// The sculpted prims among the known objects.
+    sculpts: HashSet<u32>,
+    /// Their first name values, when they have one.
+    labels: HashMap<u32, String>,
 }
 
 impl Places {
@@ -315,9 +376,19 @@ impl Places {
                     owner: p.owner.unwrap_or_default(),
                     state: p.state,
                     attach_item: p.attach_item,
+                    position: p.position,
                 },
             );
             self.by_key.insert(full_id, p.local_id);
+            if p.sculpt {
+                self.sculpts.insert(p.local_id);
+            } else {
+                self.sculpts.remove(&p.local_id);
+            }
+            match &p.label {
+                Some(l) => self.labels.insert(p.local_id, l.clone()),
+                None => self.labels.remove(&p.local_id),
+            };
         }
         let avatar = self.avatars.contains(&p.local_id);
         match p.parent_id {
@@ -352,6 +423,8 @@ impl Places {
         if let Some(k) = self.known.remove(&local_id) {
             self.by_key.remove(&k.full_id);
         }
+        self.sculpts.remove(&local_id);
+        self.labels.remove(&local_id);
     }
 
     pub fn clear(&mut self) {
@@ -360,6 +433,43 @@ impl Places {
         self.known.clear();
         self.by_key.clear();
         self.own = None;
+        self.sculpts.clear();
+        self.labels.clear();
+    }
+
+    /// The sculpted prims (SecondBot's ListSculptys): each by itself, or by its linkset's root
+    /// when the root is known (its key, owner, name and place).
+    pub fn sculpts(&self) -> Vec<Sculpt> {
+        self.sculpts
+            .iter()
+            .filter_map(|id| {
+                let k = self.known.get(id)?;
+                let own = Sculpt {
+                    linked: false,
+                    name: self.labels.get(id).cloned(),
+                    owner: k.owner,
+                    key: k.full_id,
+                    position: self.objects.get(id).map_or(k.position, |o| o.position),
+                };
+                if k.parent == 0 {
+                    return Some(own);
+                }
+                let Some(root) = self.known.get(&k.parent) else {
+                    return Some(own);
+                };
+                Some(Sculpt {
+                    linked: true,
+                    // SecondBot keeps the prim's own name when the root has none
+                    name: self.labels.get(&k.parent).cloned().or(own.name),
+                    owner: root.owner,
+                    key: root.full_id,
+                    position: self
+                        .objects
+                        .get(&k.parent)
+                        .map_or(root.position, |o| o.position),
+                })
+            })
+            .collect()
     }
 
     /// An object by its key: a prim of a linkset, an attachment, anything the region sent.
@@ -637,5 +747,84 @@ mod tests {
         assert_eq!(p.parent_id, Some(2));
         assert_eq!(p.position, Vec3::new(40.0, 50.0, 60.0));
         assert_eq!(from_compressed(&d[..20]), None);
+        // with extra parameters that make a sculpty, then name values
+        d[64..68].copy_from_slice(&(0x20u32 | 0x100).to_le_bytes());
+        d.extend(sculpt_params(1));
+        d.extend(b"Name STRING RW SV Lamp\0");
+        let p = from_compressed(&d).expect("a compressed update");
+        assert!(p.sculpt);
+        assert_eq!(p.label.as_deref(), Some("Lamp"));
+    }
+
+    /// One extra parameter: the sculpt texture and this type.
+    fn sculpt_params(kind: u8) -> Vec<u8> {
+        let mut e = vec![1];
+        e.extend(PARAMS_SCULPT.to_le_bytes());
+        e.extend(17u32.to_le_bytes());
+        e.extend(Uuid::from_u128(0x5c).as_bytes());
+        e.push(kind);
+        e
+    }
+
+    #[test]
+    fn sculpties_by_themselves_or_by_their_root() {
+        let sculpted = |local_id: u32, key: u128, parent: u32, kind: u8| {
+            let mut data = Vec::new();
+            for v in [
+                Vec3::new(1.0, 2.0, 3.0),
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::ZERO,
+            ] {
+                for f in v.to_array() {
+                    data.extend(f.to_le_bytes());
+                }
+            }
+            let b = object_update::ObjectData {
+                id: local_id,
+                full_id: Uuid::from_u128(key),
+                parent_id: parent,
+                p_code: 9,
+                owner_id: Uuid::from_u128(0x0e),
+                object_data: data,
+                extra_params: sculpt_params(kind),
+                ..Default::default()
+            };
+            from_full(&b).expect("a full update")
+        };
+        let mut places = Places::default();
+        // a sculpty alone, a mesh, and a sculpted child of a known root
+        places.update(&sculpted(1, 0x1, 0, 1), AGENT);
+        places.update(&sculpted(2, 0x2, 0, SCULPT_TYPE_MESH), AGENT);
+        places.update(
+            &full(3, Uuid::from_u128(0x3), 0, false, Vec3::new(9.0, 9.0, 9.0)),
+            AGENT,
+        );
+        places.update(&sculpted(4, 0x4, 3, 2), AGENT);
+        let mut found = places.sculpts();
+        found.sort_by_key(|s| s.key);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].key, Uuid::from_u128(0x1));
+        assert!(!found[0].linked);
+        assert_eq!(found[0].owner, Uuid::from_u128(0x0e));
+        assert_eq!(found[0].position, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(found[1].key, Uuid::from_u128(0x3));
+        assert!(found[1].linked);
+        assert_eq!(found[1].position, Vec3::new(9.0, 9.0, 9.0));
+        // no longer sculpted, then gone
+        places.update(&full(1, Uuid::from_u128(0x1), 0, false, Vec3::ZERO), AGENT);
+        places.kill(4);
+        assert!(places.sculpts().is_empty());
+    }
+
+    #[test]
+    fn first_name_values() {
+        assert_eq!(
+            first_name_value("FirstName STRING RW DS Bob\nLastName STRING RW DS Smith"),
+            Some("Bob".into())
+        );
+        assert_eq!(first_name_value(""), None);
+        assert_eq!(first_name_value("Odd"), None);
     }
 }

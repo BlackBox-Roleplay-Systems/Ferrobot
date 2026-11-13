@@ -323,6 +323,13 @@ impl Region {
             Vec3::Z,
         );
         child.owner_id = owner;
+        // the child is sculpted (PARAMS_SCULPT: its texture, LL_SCULPT_TYPE_SPHERE)
+        let mut sculpt = vec![1u8];
+        sculpt.extend(0x30u16.to_le_bytes());
+        sculpt.extend(17u32.to_le_bytes());
+        sculpt.extend(Uuid::from_u128(0x5c01_7e00).as_bytes());
+        sculpt.push(1);
+        child.extra_params = sculpt;
         let m = ObjectUpdate {
             region_data: object_update::RegionData {
                 region_handle: self.shared.regions[self.index].handle(),
@@ -427,6 +434,28 @@ impl Region {
             },
             object_data: vec![b],
         };
+        self.send(to, &m, true);
+    }
+
+    /// An item offered to the bot was accepted: its copy comes into the folder the answer names,
+    /// told by BulkUpdateInventory, as the grid does.
+    fn inventory_accepted(&mut self, to: SocketAddr, session: Uuid, bucket: &[u8]) {
+        let Some((kind, name)) = self.shared.state().inventory_offers.remove(&session) else {
+            return;
+        };
+        let folder = Uuid::from_slice(bucket).unwrap_or(crate::inventory::ROOT);
+        let mut m = BulkUpdateInventory::default();
+        m.agent_data.agent_id = self.shared.agent_id;
+        m.agent_data.transaction_id = session;
+        m.item_data = vec![bulk_update_inventory::ItemData {
+            item_id: Uuid::new_v4(),
+            folder_id: folder,
+            owner_id: self.shared.agent_id,
+            type_: kind,
+            inv_type: kind,
+            name: str_field(&name),
+            ..Default::default()
+        }];
         self.send(to, &m, true);
     }
 
@@ -873,6 +902,7 @@ impl Region {
                         inv_type: i32::from(b.inv_type),
                         asset_id: b.old_item_id,
                         flags: 0,
+                        created_at: 0,
                     });
             }
         } else if id == RemoveInventoryItem::ID {
@@ -1175,6 +1205,7 @@ impl Region {
                         inv_type: i32::from(b.inv_type),
                         asset_id: Uuid::nil(),
                         flags: 0,
+                        created_at: 0,
                     });
                 self.shared.saw(Seen::CreateInventoryItem {
                     item,
@@ -1430,11 +1461,17 @@ impl Region {
                         self.shared
                             .queue_event(n, "ChatterBoxSessionStartReply", Llsd::Map(body));
                     }
-                    5 | 6 | 10 | 11 | 24 | 26 | 38 => self.shared.saw(Seen::ImAnswer {
-                        to: b.to_agent_id,
-                        dialog: b.dialog,
-                        id: b.id,
-                    }),
+                    5 | 6 | 10 | 11 | 24 | 26 | 38 => {
+                        // IM_INVENTORY_ACCEPTED, IM_TASK_INVENTORY_ACCEPTED
+                        if matches!(b.dialog, 5 | 10) {
+                            self.inventory_accepted(from, b.id, &b.binary_bucket);
+                        }
+                        self.shared.saw(Seen::ImAnswer {
+                            to: b.to_agent_id,
+                            dialog: b.dialog,
+                            id: b.id,
+                        });
+                    }
                     0 => self.shared.saw(Seen::Im {
                         to: b.to_agent_id,
                         message: field_str(&b.message),

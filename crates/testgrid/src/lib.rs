@@ -507,6 +507,8 @@ struct State {
     seen: Vec<Seen>,
     /// Teleport offers sent to the bot, by lure id.
     lures: HashSet<Uuid>,
+    /// Items offered to the bot, by the offer's transaction: their type and name.
+    inventory_offers: HashMap<Uuid, (i8, String)>,
     /// The next teleport fails, with this reason.
     fail_teleport: Option<String>,
     /// The groups as they are now: ejections, role changes and accepted invitations change them.
@@ -696,6 +698,7 @@ impl TestGrid {
                 sessions: HashMap::new(),
                 seen: Vec::new(),
                 lures: HashSet::new(),
+                inventory_offers: HashMap::new(),
                 fail_teleport: None,
                 groups,
                 parcel: parcels::GridParcel::default(),
@@ -881,7 +884,12 @@ impl TestGrid {
         let mut bucket = vec![7u8];
         bucket.extend_from_slice(Uuid::new_v4().as_bytes());
         let dialog = if object.is_some() { 9 } else { 4 };
-        self.offer(from, object, dialog, "A notecard", bucket)
+        let session = self.offer(from, object, dialog, "A notecard", bucket);
+        self.shared
+            .state()
+            .inventory_offers
+            .insert(session, (7, "A notecard".into()));
+        session
     }
 
     /// A resident asks the bot for a teleport to them (IM_TELEPORT_REQUEST).

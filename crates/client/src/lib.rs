@@ -253,6 +253,8 @@ pub(crate) struct Shared {
     names: Mutex<names::Cache>,
     /// The names of the inventory folders seen in fetches.
     folder_names: Mutex<HashMap<Uuid, String>>,
+    /// The items seen in fetches, counted (InventoryPreloadCount).
+    seen_items: Mutex<std::collections::HashSet<Uuid>>,
     /// Group member lists and when they were fetched.
     group_members: Mutex<HashMap<Uuid, (Vec<groups::GroupMember>, std::time::Instant)>>,
 }
@@ -298,6 +300,7 @@ impl Client {
             names: Mutex::new(names::Cache::default()),
             group_members: Mutex::new(HashMap::new()),
             folder_names: Mutex::new(HashMap::new()),
+            seen_items: Mutex::new(std::collections::HashSet::new()),
         });
         let (tx, rx) = mpsc::channel(REQUEST_BUFFER);
         (
@@ -842,6 +845,12 @@ impl Client {
     /// The region's root objects the bot knows of, and where they stand.
     pub async fn root_objects(&self) -> Result<Vec<objects::Root>, ClientError> {
         self.ask(|reply| Request::Object(network::ObjectRequest::Roots { reply }))
+            .await
+    }
+
+    /// The sculpted prims the bot knows of in its region (SecondBot's ListSculptys).
+    pub async fn sculpts(&self) -> Result<Vec<objects::Sculpt>, ClientError> {
+        self.ask(|reply| Request::Object(network::ObjectRequest::Sculpts { reply }))
             .await
     }
 
