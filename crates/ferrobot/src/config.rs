@@ -54,6 +54,8 @@ pub struct Config {
     pub discord: Option<crate::discord::Settings>,
     /// RabbitMQ: off unless on (SecondBot's RabbitConfig).
     pub rabbit: Option<crate::rabbit::Settings>,
+    /// AI replies: off unless on (SecondBot's ChatGptConfig). Its key is never logged.
+    pub chatgpt: Option<crate::services::chatgpt::Settings>,
 }
 
 impl std::fmt::Debug for Config {
@@ -84,6 +86,7 @@ impl std::fmt::Debug for Config {
             .field("relays", &self.relays.len())
             .field("discord", &self.discord)
             .field("rabbit", &self.rabbit)
+            .field("chatgpt", &self.chatgpt)
             .finish_non_exhaustive()
     }
 }
@@ -296,6 +299,122 @@ fn rabbit() -> Result<Option<crate::rabbit::Settings>, ConfigError> {
             )?,
         },
     }))
+}
+
+/// AI replies (SecondBot's ChatGptConfig, file "chatgpt"): on with FERRO_CHATGPT
+/// (chatgpt_Enabled). The key (FERRO_CHATGPT_API_KEY / chatgpt_ApiKey) is a secret, taken as it
+/// is; "none", SecondBot's default, is no key. A cooldown and the history size are held in
+/// SecondBot's ranges (1 to 10 s, 3 to 10 lines).
+fn chatgpt() -> Result<Option<crate::services::chatgpt::Settings>, ConfigError> {
+    use crate::services::chatgpt::{self as ai, in_range};
+    if !setting_flag("FERRO_CHATGPT", "chatgpt_Enabled", false)? {
+        return Ok(None);
+    }
+    let none = |v: String| (!v.eq_ignore_ascii_case("none")).then_some(v);
+    let api_key = ["FERRO_CHATGPT_API_KEY", "chatgpt_ApiKey"]
+        .iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|k| k.trim().to_owned())
+                .filter(|k| !k.is_empty())
+        })
+        .and_then(none);
+    let provider = setting("FERRO_CHATGPT_PROVIDER", "chatgpt_Provider");
+    let (provider_name, provider) =
+        provider.unwrap_or(("FERRO_CHATGPT_PROVIDER", ai::OPENAI.to_owned()));
+    let endpoint = ai::endpoint(&provider).map_err(|e| ConfigError::Invalid(provider_name, e))?;
+    if api_key.is_none() && provider.eq_ignore_ascii_case(ai::OPENAI) {
+        return Err(ConfigError::Missing("FERRO_CHATGPT_API_KEY"));
+    }
+    let seconds = |found, what| -> Result<u64, ConfigError> {
+        let n: i64 = number(found, 3, what)?;
+        Ok(u64::try_from(in_range(n, 1, ai::MAX_COOLDOWN as i64)).unwrap_or(1))
+    };
+    let history: i64 = number(
+        setting("FERRO_CHATGPT_HISTORY", "chatgpt_ChatHistoryMessages"),
+        5,
+        "a number of lines",
+    )?;
+    let timeout: u64 = number(
+        setting(
+            "FERRO_CHATGPT_HISTORY_TIMEOUT",
+            "chatgpt_ChatHistoryTimeout",
+        ),
+        15,
+        "a number of minutes",
+    )?;
+    let group = if setting_flag("FERRO_CHATGPT_GROUP", "chatgpt_AllowGroupReplys", false)? {
+        // SecondBot's default group is "none": no group answered
+        match setting("FERRO_CHATGPT_GROUP_KEY", "chatgpt_GroupReplyForGroup")
+            .filter(|(_, v)| !v.eq_ignore_ascii_case("none"))
+        {
+            Some((name, v)) => Some(
+                uuid::Uuid::parse_str(&v)
+                    .map_err(|_| ConfigError::Invalid(name, "a group's key".into()))?,
+            ),
+            None => {
+                log::warn!("AI replies to group chat off: no group (FERRO_CHATGPT_GROUP_KEY)");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if flag("chatgpt_UseRedis", false)? {
+        log::warn!("chatgpt_UseRedis is ignored: the conversations are kept in memory");
+    }
+    let settings = ai::Settings {
+        api_key,
+        organization: setting("FERRO_CHATGPT_ORGANIZATION", "chatgpt_OrganizationId")
+            .map(|(_, v)| v)
+            .and_then(none),
+        endpoint,
+        model: setting("FERRO_CHATGPT_MODEL", "chatgpt_UseModel")
+            .map_or_else(|| ai::DEFAULT_MODEL.to_owned(), |(_, v)| v),
+        prompt: setting("FERRO_CHATGPT_PROMPT", "chatgpt_ChatPrompt")
+            .map_or_else(|| ai::DEFAULT_PROMPT.to_owned(), |(_, v)| v),
+        name: setting("FERRO_CHATGPT_NAME", "chatgpt_CustomName")
+            .map(|(_, v)| v)
+            .filter(|v| v != "<!FIRSTNAME!>"),
+        history: usize::try_from(in_range(history, 3, 10)).unwrap_or(5),
+        history_timeout: std::time::Duration::from_secs(timeout.saturating_mul(60)),
+        localchat: setting_flag("FERRO_CHATGPT_LOCALCHAT", "chatgpt_LocalchatReply", false)?,
+        localchat_cooldown: seconds(
+            setting(
+                "FERRO_CHATGPT_LOCALCHAT_COOLDOWN",
+                "chatgpt_LocalchatRateLimiter",
+            ),
+            "a number of seconds",
+        )?,
+        im: setting_flag("FERRO_CHATGPT_IM", "chatgpt_AllowImReplys", false)?,
+        im_friends_only: setting_flag(
+            "FERRO_CHATGPT_IM_FRIENDS_ONLY",
+            "chatgpt_ImReplyFriendsOnly",
+            false,
+        )?,
+        im_cooldown: seconds(
+            setting("FERRO_CHATGPT_IM_COOLDOWN", "chatgpt_ImReplyRateLimiter"),
+            "a number of seconds",
+        )?,
+        group,
+        group_cooldown: seconds(
+            setting(
+                "FERRO_CHATGPT_GROUP_COOLDOWN",
+                "chatgpt_GroupReplyRateLimiter",
+            ),
+            "a number of seconds",
+        )?,
+        debug: setting_flag("FERRO_CHATGPT_DEBUG", "chatgpt_ShowDebug", false)?,
+        typing: setting_flag("FERRO_CHATGPT_TYPING", "chatgpt_FakeTypeDelay", true)?,
+        provider,
+    };
+    if !settings.localchat && !settings.im && settings.group.is_none() {
+        log::warn!(
+            "AI replies on, but to nothing: turn on FERRO_CHATGPT_LOCALCHAT, FERRO_CHATGPT_IM or FERRO_CHATGPT_GROUP"
+        );
+    }
+    Ok(Some(settings))
 }
 
 /// The relays: FERRO_RELAY_1, FERRO_RELAY_2… in SecondBot's short form, then SecondBot's own
@@ -558,6 +677,7 @@ impl Config {
             homebound: homebound()?,
             discord: discord()?,
             rabbit: rabbit()?,
+            chatgpt: chatgpt()?,
             relays: relays()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
             rate_limit: number(

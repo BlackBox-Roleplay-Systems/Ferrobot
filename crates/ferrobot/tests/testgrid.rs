@@ -5218,3 +5218,243 @@ async fn discord_both_ways() {
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
+
+/// What a stand-in chat completions API was asked: each request's head and body.
+type Asked = Arc<Mutex<Vec<(String, String)>>>;
+
+/// A stand-in for an OpenAI-compatible chat completions API on localhost: "reply <n>" to the
+/// n-th request, or OpenAI's refusal of a wrong key (the key quoted back) when asked to
+/// "trigger an error". Its base address, and what it was asked.
+async fn serve_completions(key: &'static str) -> (String, Asked) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}/", listener.local_addr().expect("address"));
+    let asked: Asked = Arc::default();
+    let record = asked.clone();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            let record = record.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 8192];
+                let mut got = Vec::new();
+                loop {
+                    let Ok(n) = s.read(&mut buf).await else {
+                        return;
+                    };
+                    got.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&got).to_string();
+                    let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                        if n == 0 {
+                            return;
+                        }
+                        continue;
+                    };
+                    let len: usize = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    if body.len() < len && n != 0 {
+                        continue;
+                    }
+                    let (status, answer) = {
+                        let mut asked = record.lock().expect("lock");
+                        asked.push((head.to_owned(), body.to_owned()));
+                        if body.contains("trigger an error") {
+                            (
+                                "401 Unauthorized",
+                                serde_json::json!({"error": {
+                                    "message": format!("Incorrect API key provided: {key}."),
+                                    "type": "invalid_request_error",
+                                }}),
+                            )
+                        } else {
+                            (
+                                "200 OK",
+                                serde_json::json!({"choices": [{"index": 0, "message": {
+                                    "role": "assistant",
+                                    "content": format!("reply {}", asked.len()),
+                                }}]}),
+                            )
+                        }
+                    };
+                    let answer = answer.to_string();
+                    let _ = s
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                                answer.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
+                    return;
+                }
+            });
+        }
+    });
+    (base, asked)
+}
+
+/// SecondBot's ChatGptService, text only: local chat, a friend's IM and a group's chat answered
+/// through a stand-in API, a stranger's IM not, a second line too soon not, an error logged
+/// without the key.
+#[tokio::test]
+async fn ai_replies_through_a_chat_completions_api() {
+    const KEY: &str = "fake-key-for-the-test-grid";
+    const TYPE: uuid::Uuid = uuid::Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
+    let (base, asked) = serve_completions(KEY).await;
+    let group = ferro_testgrid::TEST_GROUP.to_string();
+    let grid = grid().await;
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("FERRO_HTTP", "false"),
+            // SecondBot's names work too
+            ("chatgpt_Enabled", "True"),
+            ("chatgpt_ApiKey", KEY),
+            ("FERRO_CHATGPT_PROVIDER", base.as_str()),
+            ("FERRO_CHATGPT_MODEL", "test-model"),
+            ("FERRO_CHATGPT_PROMPT", "a test bot"),
+            ("chatgpt_LocalchatReply", "True"),
+            ("FERRO_CHATGPT_LOCALCHAT_COOLDOWN", "1"),
+            ("FERRO_CHATGPT_IM", "true"),
+            ("FERRO_CHATGPT_IM_FRIENDS_ONLY", "true"),
+            ("FERRO_CHATGPT_GROUP", "true"),
+            ("FERRO_CHATGPT_GROUP_KEY", group.as_str()),
+            ("FERRO_CHATGPT_DEBUG", "true"),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    bot.wait_log("AI replies: http://").await;
+    bot.wait_log("in 2 groups").await;
+    let friend = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    let stranger = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0002),
+        first: "Other".into(),
+        last: "Avatar".into(),
+    };
+    let request = |n: usize| -> (String, serde_json::Value) {
+        let (head, body) = asked.lock().expect("lock")[n].clone();
+        (head, serde_json::from_str(&body).expect("a JSON request"))
+    };
+
+    // local chat: typed (the typing animation, then the line), and the next line too soon is not
+    // asked
+    let first_said = tokio::time::Instant::now();
+    grid.say("Other Avatar", "hello horse");
+    grid.say("Other Avatar", "again");
+    wait_for(
+        &grid,
+        &bot,
+        "the reply in local chat",
+        |s| matches!(s, Seen::Chat { message, channel: 0, .. } if message == "reply 1"),
+    )
+    .await;
+    bot.wait_log("Skipped, replying too fast").await;
+    let seen = grid.seen();
+    let typing = position(
+        &seen,
+        &Seen::Animation {
+            id: TYPE,
+            start: true,
+        },
+    );
+    let said = seen
+        .iter()
+        .position(|s| matches!(s, Seen::Chat { message, .. } if message == "reply 1"))
+        .expect("said");
+    assert!(typing < said);
+    wait_for(&grid, &bot, "the typing stopped", |s| {
+        *s == Seen::Animation {
+            id: TYPE,
+            start: false,
+        }
+    })
+    .await;
+    let (head, body) = request(0);
+    assert!(head.starts_with("POST /v1/chat/completions "), "{head}");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains(&format!("authorization: bearer {KEY}")),
+        "{head}"
+    );
+    assert_eq!(body["model"], "test-model");
+    assert_eq!(
+        body["messages"][0]["content"],
+        "You are Test, a test bot, you are talking to people in a public place."
+    );
+    assert_eq!(body["messages"][1]["role"], "user");
+    assert_eq!(
+        body["messages"][1]["content"],
+        "Other Avatar says hello horse"
+    );
+
+    // IMs: friends only
+    grid.im_from(&stranger, "hi from a stranger");
+    grid.im_from(&friend, "hi from a friend");
+    wait_for(
+        &grid,
+        &bot,
+        "the reply by IM",
+        |s| matches!(s, Seen::Im { to, message } if *to == friend.id && message == "reply 2"),
+    )
+    .await;
+    let (_, body) = request(1);
+    assert_eq!(
+        body["messages"][0]["content"],
+        "You are Test, a test bot, you are talking to Some Resident."
+    );
+    assert_eq!(
+        body["messages"][1]["content"],
+        "Some Resident says hi from a friend"
+    );
+
+    // the group's chat, answered there
+    grid.group_chat(&friend, ferro_testgrid::TEST_GROUP, "anyone there?");
+    wait_for(&grid, &bot, "the reply in the group's chat", |s| {
+        matches!(s, Seen::GroupChatSend { group, message }
+            if *group == ferro_testgrid::TEST_GROUP && message == "reply 3")
+    })
+    .await;
+    let (_, body) = request(2);
+    assert_eq!(
+        body["messages"][0]["content"],
+        "You are Test, a test bot, you are talking to a group of people."
+    );
+    assert_eq!(
+        asked.lock().expect("lock").len(),
+        3,
+        "the stranger was not asked about"
+    );
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::Im { to, .. } if *to == stranger.id)),
+        0
+    );
+
+    // an error: logged, the key never; local chat's conversation goes on, the reply kept. Past
+    // the 1 s cooldown, counted in whole seconds from a second after the first line
+    tokio::time::sleep_until(first_said + Duration::from_millis(4100)).await;
+    grid.say("Other Avatar", "trigger an error");
+    bot.wait_log("AI: no reply to Other Avatar: HTTP 401: Incorrect API key provided: [redacted].")
+        .await;
+    let (_, body) = request(3);
+    let lines = body["messages"].as_array().expect("lines");
+    assert_eq!(lines.len(), 4, "{body}");
+    assert_eq!(lines[2]["role"], "assistant");
+    assert_eq!(lines[2]["content"], "reply 1");
+    assert!(!bot.log().contains(KEY), "the key in the log");
+
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    assert!(!bot.log().contains(KEY), "the key in the log");
+}

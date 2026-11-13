@@ -55,6 +55,19 @@ All settings come from environment variables.
 | `FERRO_RABBIT_VHOST` | `/` | Its virtual host |
 | `FERRO_RABBIT_TLS` | `false` | amqps: TLS, the certificate checked as for HTTPS |
 | `FERRO_RABBIT_NOTECARD_QUEUE`, `…_COMMAND_QUEUE`, `…_IM_QUEUE`, `…_GROUP_IM_QUEUE` | `notecards`, `commands`, `ims`, `groupims` | The queues the bot reads (signed messages only) |
+| `FERRO_CHATGPT` | `false` | AI replies through an OpenAI-compatible chat completions API (see "AI replies" below) |
+| `FERRO_CHATGPT_API_KEY` | (none) | The API's key (a secret, never logged); required for OpenAI |
+| `FERRO_CHATGPT_PROVIDER` | `openai` | `openai`, or another provider's address: requests go to `<address>/v1/chat/completions` |
+| `FERRO_CHATGPT_ORGANIZATION` | (none) | OpenAI's organization, if any |
+| `FERRO_CHATGPT_MODEL` | `gpt-3.5-turbo` | The model, as the provider names it |
+| `FERRO_CHATGPT_PROMPT` | SecondBot's horse | What the bot is told to be: "You are <name>, <prompt>, you are talking to …" |
+| `FERRO_CHATGPT_NAME` | the bot's first name | The name the bot is told it has |
+| `FERRO_CHATGPT_HISTORY`, `FERRO_CHATGPT_HISTORY_TIMEOUT` | `5`, `15` | Lines a conversation keeps (3 to 10), minutes before a quiet one is forgotten |
+| `FERRO_CHATGPT_LOCALCHAT`, `…_LOCALCHAT_COOLDOWN` | `false`, `3` | Answer local chat; seconds between two questions (1 to 10, for everyone) |
+| `FERRO_CHATGPT_IM`, `…_IM_FRIENDS_ONLY`, `…_IM_COOLDOWN` | `false`, `false`, `3` | Answer IMs, from friends only; seconds between two questions of an avatar |
+| `FERRO_CHATGPT_GROUP`, `…_GROUP_KEY`, `…_GROUP_COOLDOWN` | `false`, (none), `3` | Answer one group's chat (its key); seconds between two questions there |
+| `FERRO_CHATGPT_TYPING` | `true` | Wait 1 to 3 s before replying, with the typing animation in local chat |
+| `FERRO_CHATGPT_DEBUG` | `false` | Log what is asked and answered at `info` (else `debug`) |
 | `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy, GroupCreate, and UploadMediaWave unless the grid's sounds are free) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
@@ -76,7 +89,13 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `discord_InteractionCommandName`, `discord_InteractionHttpTarget`,
 `discord_InteractionChannelNumber`, `rabbit_Enabled`, `rabbit_HostIP`, `rabbit_HostPort`,
 `rabbit_HostUsername`, `rabbit_HostPassword`, `rabbit_NotecardQueue`, `rabbit_CommandQueue`,
-`rabbit_ImQueue`, `rabbit_GroupImQueue`, and the relays:
+`rabbit_ImQueue`, `rabbit_GroupImQueue`, `chatgpt_Enabled`, `chatgpt_ApiKey`,
+`chatgpt_OrganizationId`, `chatgpt_Provider`, `chatgpt_UseModel`, `chatgpt_ChatPrompt`,
+`chatgpt_CustomName`, `chatgpt_ChatHistoryMessages`, `chatgpt_ChatHistoryTimeout`,
+`chatgpt_LocalchatReply`, `chatgpt_LocalchatRateLimiter`, `chatgpt_AllowImReplys`,
+`chatgpt_ImReplyFriendsOnly`, `chatgpt_ImReplyRateLimiter`, `chatgpt_AllowGroupReplys`,
+`chatgpt_GroupReplyForGroup`, `chatgpt_GroupReplyRateLimiter`, `chatgpt_FakeTypeDelay`,
+`chatgpt_ShowDebug`, and the relays:
 `relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
 `relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
 `relay_<n>_target_option`, `relay_<n>_RelayConfig`.
@@ -111,6 +130,22 @@ Targets: `localchat` (a channel), `avatar` (a key), `group` (a key), `http` (Sec
 POST to `<url>/Relay/Service`), `rabbit` (a RabbitMQ queue, by name; RabbitMQ on), `webhook` (a
 JSON `{"content": …}` POST, as a Discord webhook takes it). Relayed lines are marked `{Relay}` and never relayed again. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
+
+### AI replies
+
+SecondBot's ChatGPT service, text only: the bot answers what it hears with what an
+OpenAI-compatible chat completions API writes. Off unless `FERRO_CHATGPT=true`, and then only
+where it is switched on: local chat said by avatars (`FERRO_CHATGPT_LOCALCHAT`), IMs
+(`FERRO_CHATGPT_IM`, friends only with `FERRO_CHATGPT_IM_FRIENDS_ONLY`), one group's chat
+(`FERRO_CHATGPT_GROUP` and its key). Local chat is one conversation, each avatar's IMs one, the
+group one; each keeps its last lines and a cooldown, and is forgotten after a quiet spell. The
+reply is only said, where the question came from (cut to two chat lines): it never runs a
+command, and an IM that is a command for the bot is never sent to the API. Any provider that
+speaks OpenAI's API works: set `FERRO_CHATGPT_PROVIDER` to its address (`https://…/api/` for
+OpenRouter, `http://host:11434` for a local Ollama) and `FERRO_CHATGPT_MODEL` to its name for
+the model. Each question costs a request: keep the cooldowns, and think twice before answering
+local chat in a busy place. There is no voice (no audio library in the container) and no Redis
+store (`chatgpt_UseRedis` is ignored).
 
 ### Grants
 
