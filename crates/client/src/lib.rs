@@ -11,6 +11,7 @@
 
 mod caps;
 mod circuit;
+pub mod estate;
 pub mod events;
 mod group_api;
 mod inventory_api;
@@ -106,6 +107,7 @@ pub(crate) enum Request {
     },
     /// A region's handle by its name (MapNameRequest); `None` when there is no such region.
     Parcel(network::ParcelRequest),
+    Estate(network::EstateRequest),
     FindRegion {
         name: String,
         reply: oneshot::Sender<Option<MapRegion>>,
@@ -603,6 +605,65 @@ impl Client {
     /// The global key of the parcel the bot stands on.
     pub async fn parcel_global_id(&self) -> Result<Uuid, ClientError> {
         self.ask(|reply| Request::Parcel(network::ParcelRequest::GlobalId { reply }))
+            .await?
+            .map_err(ClientError::Refused)
+    }
+
+    /// An EstateOwnerMessage: `method` and its strings (kickestate, estateaccessdelta, restart,
+    /// simulatormessage, teleporthomeuser, setregioninfo, estatechangeinfo,
+    /// estatechangecovenantid…).
+    pub async fn estate_message(
+        &self,
+        method: &str,
+        strings: Vec<String>,
+    ) -> Result<(), ClientError> {
+        let method = method.to_owned();
+        self.ask(|reply| {
+            Request::Estate(network::EstateRequest::Owner {
+                method,
+                strings,
+                reply,
+            })
+        })
+        .await
+    }
+
+    /// The estate's info (`getinfo`).
+    pub async fn estate_info(&self) -> Result<estate::EstateInfo, ClientError> {
+        self.ask(|reply| Request::Estate(network::EstateRequest::Info { reply }))
+            .await
+    }
+
+    /// The estate's managers and bans (the EstateAccess capability).
+    pub async fn estate_access(&self) -> Result<estate::EstateAccess, ClientError> {
+        self.ask(|reply| Request::Estate(network::EstateRequest::Access { reply }))
+            .await?
+            .map_err(ClientError::Refused)
+    }
+
+    pub async fn estate_covenant(&self) -> Result<estate::Covenant, ClientError> {
+        self.ask(|reply| Request::Estate(network::EstateRequest::Covenant { reply }))
+            .await
+    }
+
+    /// The covenant's text, downloaded from the estate.
+    pub async fn estate_covenant_text(&self) -> Result<String, ClientError> {
+        let data = self
+            .ask(|reply| Request::Estate(network::EstateRequest::CovenantText { reply }))
+            .await?
+            .map_err(ClientError::Refused)?;
+        crate::transfer::notecard_text(&data, "[ATTACHMENT]")
+            .ok_or_else(|| ClientError::Refused("not a notecard".into()))
+    }
+
+    /// A POST to an estate capability (DispatchRegionInfo, EstateChangeInfo); refused when the
+    /// region has none.
+    pub async fn estate_post(
+        &self,
+        cap: &'static str,
+        body: ferro_llsd::Llsd,
+    ) -> Result<(), ClientError> {
+        self.ask(|reply| Request::Estate(network::EstateRequest::Post { cap, body, reply }))
             .await?
             .map_err(ClientError::Refused)
     }

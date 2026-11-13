@@ -232,7 +232,18 @@ baking: the bot says so and goes on.
   Deliberate differences: ReturnAllObjectsOnParcelByOwner returns that owner's objects (SecondBot's
   returns everyone else's), bans never end (SecondBot's end time overflows), ParcelBuy is off
   unless FERRO_ALLOW_FUNDS (it spends money)
-- ⬜ GetObjectsInParcel, UnRezObject (with the objects), the estate commands
+- 🟡 The estate (crates/client/src/estate.rs from Aurora's estate.rs: EstateOwnerMessage with its
+  invoice, `getinfo` answered by `estateupdateinfo`, the EstateAccess, DispatchRegionInfo and
+  EstateChangeInfo capabilities with the viewer's EstateOwnerMessage fallbacks, the covenant by
+  EstateCovenantRequest and a transfer from the estate): SecondBot's EstateKickUser,
+  EstateTeleportHomeUser, AddEstateManager, RemoveEstateManager, UpdateEstateBanlist,
+  GetEstateBanList, SimRestart, SimMessage, SetEstateCovenant, GetEstateCovenant,
+  SetExtendedRegionInfo, SetRegionFlags, SetEstateConfig; tested on the test grid. Deliberate
+  differences: SetEstateConfig keeps the estate's other flags and sends the sun hour to the
+  capability as the viewer does
+- ⬜ SetEstateTerrainRaw (a terrain upload by xfer), QueryLandSaleData, the region's parcel list
+  (GetListOfParcels, UpdateListOfParcels, GetParcelListSnapshots, GetSimParcelLayers)
+- ⬜ GetObjectsInParcel, UnRezObject (with the objects)
 - ⬜ Profiles, animations and gestures
 
 ## Phase 8 - Running it for real

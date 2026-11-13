@@ -93,7 +93,10 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `CancelParcelSale`, `SetParcelSnapshot`, `SetParcelAudioControls`, `SetParcelFlag`,
 `ParcelSetMedia`, `ParcelEject`, `ParcelFreeze`, `ParcelBan`, `ParcelUnBan`, `GetParcelBanlist`,
 `ResetParcelAcccessLists`, `ReturnAllObjectsOnParcel`, `ReturnAllObjectsOnParcelByOwner`,
-`ParcelDeedToGroup`, `AbandonLand`, `ParcelBuy`, `EstateParcelReclaim`; movement: `Fly`,
+`ParcelDeedToGroup`, `AbandonLand`, `ParcelBuy`, `EstateParcelReclaim`; the estate (for an estate
+manager): `EstateKickUser`, `EstateTeleportHomeUser`, `AddEstateManager`, `RemoveEstateManager`,
+`UpdateEstateBanlist`, `GetEstateBanList`, `SimRestart`, `SimMessage`, `SetEstateCovenant`,
+`GetEstateCovenant`, `SetExtendedRegionInfo`, `SetRegionFlags`, `SetEstateConfig`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
 `RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`

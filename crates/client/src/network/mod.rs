@@ -12,9 +12,11 @@
 //! The old region is left behind: like LibreMetaverse's bots (AgentSettings.MultipleSims = false),
 //! the bot keeps no circuits to neighbour regions.
 
+mod estate;
 mod groups;
 mod inventory;
 mod parcels;
+pub(crate) use estate::EstateRequest;
 pub(crate) use parcels::ParcelRequest;
 pub use parcels::{ObjectOwner, ParcelAction};
 
@@ -206,6 +208,9 @@ struct Session<'a> {
     region_id: Uuid,
     /// The bot manages the region's estate (RegionHandshake).
     estate_manager: bool,
+    /// The invoice of the last estate `getinfo`.
+    estate_invoice: Uuid,
+    estate_waits: estate::EstateWaits,
     /// Parcel replies being waited for.
     parcel_waits: parcels::ParcelWaits,
     /// The mute list's file, being downloaded.
@@ -819,6 +824,7 @@ impl Session<'_> {
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
             Request::Group(r) => self.on_group_request(r),
             Request::Parcel(r) => self.on_parcel_request(r),
+            Request::Estate(r) => self.on_estate_request(r),
             Request::Inventory(r) => self.on_inventory_request(r),
             Request::Rebake { reply } => self.request_appearance(Some(reply)),
             Request::HoverHeight { height, reply } => {
@@ -980,6 +986,7 @@ impl Session<'_> {
         self.groups.retain_open();
         self.map_waits.retain(|(_, tx)| !tx.is_closed());
         self.parcel_waits.retain_open();
+        self.estate_waits.retain_open();
         self.created.retain(|_, tx| !tx.is_closed());
         if now.duration_since(self.circuit.last_recv) > REGION_TIMEOUT {
             return Some(End::Lost(format!(
@@ -1122,6 +1129,12 @@ impl Session<'_> {
             }
             let avatars = self.places.avatar_positions();
             self.shared.state_mut().avatars = avatars;
+        } else if id == EstateOwnerMessage::ID {
+            let m: EstateOwnerMessage = pkt.decode()?;
+            self.on_estate_owner_message(&m);
+        } else if id == EstateCovenantReply::ID {
+            let m: EstateCovenantReply = pkt.decode()?;
+            self.on_covenant_reply(&m);
         } else if id == ParcelAccessListReply::ID {
             let m: ParcelAccessListReply = pkt.decode()?;
             self.on_access_list_reply(&m);
@@ -1735,6 +1748,8 @@ async fn run(
         mute_xfer: None,
         region_id: Uuid::nil(),
         estate_manager: false,
+        estate_invoice: Uuid::new_v4(),
+        estate_waits: Default::default(),
         parcel_waits: Default::default(),
         places: Default::default(),
         transfers: Default::default(),

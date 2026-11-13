@@ -6,6 +6,7 @@ mod avatars;
 mod bot;
 mod chat;
 mod dialogs;
+mod estate;
 mod groups;
 mod info;
 mod inventory;
@@ -102,6 +103,17 @@ const CHANGING: &[&str] = &[
     "AbandonLand",
     "ParcelBuy",
     "EstateParcelReclaim",
+    "EstateKickUser",
+    "EstateTeleportHomeUser",
+    "AddEstateManager",
+    "RemoveEstateManager",
+    "UpdateEstateBanlist",
+    "SimRestart",
+    "SimMessage",
+    "SetEstateCovenant",
+    "SetExtendedRegionInfo",
+    "SetRegionFlags",
+    "SetEstateConfig",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -206,6 +218,19 @@ const COMMANDS: &[(&str, usize)] = &[
     ("AbandonLand", 0),
     ("ParcelBuy", 1),
     ("EstateParcelReclaim", 0),
+    ("EstateKickUser", 1),
+    ("EstateTeleportHomeUser", 1),
+    ("AddEstateManager", 2),
+    ("RemoveEstateManager", 2),
+    ("UpdateEstateBanlist", 3),
+    ("GetEstateBanList", 0),
+    ("SimRestart", 2),
+    ("SimMessage", 1),
+    ("SetEstateCovenant", 1),
+    ("GetEstateCovenant", 0),
+    ("SetExtendedRegionInfo", 12),
+    ("SetRegionFlags", 10),
+    ("SetEstateConfig", 10),
     ("GetRealUUID", 1),
     ("CreateInventoryFolder", 2),
     ("RenameInventory", 2),
@@ -368,6 +393,49 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "AbandonLand" => parcel::abandon(ctx).await,
         "ParcelBuy" => parcel::buy(ctx, a(0)).await,
         "EstateParcelReclaim" => parcel::reclaim(ctx).await,
+        "EstateKickUser" => estate::kick(ctx, a(0)).await,
+        "EstateTeleportHomeUser" => estate::teleport_home(ctx, a(0)).await,
+        "AddEstateManager" => estate::manager_change(ctx, true, a(0), a(1)).await,
+        "RemoveEstateManager" => estate::manager_change(ctx, false, a(0), a(1)).await,
+        "UpdateEstateBanlist" => estate::update_ban_list(ctx, a(0), a(1), a(2)).await,
+        "GetEstateBanList" => estate::ban_list(ctx).await,
+        "SimRestart" => estate::restart(ctx, a(0), a(1)).await,
+        "SimMessage" => estate::sim_message(ctx, a(0)).await,
+        "SetEstateCovenant" => estate::set_covenant(ctx, a(0)).await,
+        "GetEstateCovenant" => estate::get_covenant(ctx).await,
+        "SetExtendedRegionInfo" => {
+            let values = std::array::from_fn(&a);
+            estate::set_region_info(
+                ctx,
+                "SetExtendedRegionInfo",
+                estate::RegionValues { values },
+            )
+            .await
+        }
+        // SecondBot's SetRegionFlags calls SetExtendedRegionInfo: its answer is named so
+        "SetRegionFlags" => {
+            let values = [
+                a(0),
+                a(1),
+                "false",
+                a(2),
+                a(3),
+                a(6),
+                a(7),
+                a(8),
+                a(9),
+                a(4),
+                a(5),
+                "false",
+            ];
+            estate::set_region_info(
+                ctx,
+                "SetExtendedRegionInfo",
+                estate::RegionValues { values },
+            )
+            .await
+        }
+        "SetEstateConfig" => estate::set_estate_config(ctx, std::array::from_fn(&a)).await,
         "GetRealUUID" => inventory::real_uuid(ctx, a(0)).await,
         "CreateInventoryFolder" => inventory::create_folder(ctx, a(0), a(1)).await,
         "RenameInventory" => inventory::rename(ctx, a(0), a(1)).await,

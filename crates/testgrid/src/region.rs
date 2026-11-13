@@ -335,19 +335,27 @@ impl Region {
                 .and_then(|b| Uuid::from_slice(b).ok())
                 .unwrap_or_default()
         };
-        let (owner, item, asset) = (key(32), key(64), key(80));
-        self.shared.saw(Seen::TransferRequest { item });
         let bot = self.shared.agent_id;
-        let found = self
-            .shared
-            .state()
-            .inventory
-            .items
-            .iter()
-            .any(|i| i.id == item && i.asset_id == asset);
-        let data = (found && owner == bot)
-            .then(|| crate::inventory::asset(asset))
-            .flatten();
+        let data = if t.source_type == 4 {
+            // LLTST_SIM_ESTATE: the estate's covenant, to its manager
+            self.shared.saw(Seen::TransferRequest { item: Uuid::nil() });
+            (key(0) == bot)
+                .then(|| crate::inventory::asset(crate::inventory::NOTECARD_ASSET))
+                .flatten()
+        } else {
+            let (owner, item, asset) = (key(32), key(64), key(80));
+            self.shared.saw(Seen::TransferRequest { item });
+            let found = self
+                .shared
+                .state()
+                .inventory
+                .items
+                .iter()
+                .any(|i| i.id == item && i.asset_id == asset);
+            (found && owner == bot)
+                .then(|| crate::inventory::asset(asset))
+                .flatten()
+        };
         let mut info = TransferInfo::default();
         info.transfer_info.transfer_id = t.transfer_id;
         info.transfer_info.channel_type = t.channel_type;
@@ -576,6 +584,48 @@ impl Region {
                     .properties(sequence, self.shared.agent_id);
                 self.shared.queue_event(n, "ParcelProperties", body);
             }
+        } else if id == EstateOwnerMessage::ID {
+            if let Ok(m) = pkt.decode::<EstateOwnerMessage>() {
+                let method = field_str(&m.method_data.method);
+                let params: Vec<String> = m
+                    .param_list
+                    .iter()
+                    .map(|p| field_str(&p.parameter))
+                    .collect();
+                self.shared.saw(Seen::EstateMessage {
+                    method: method.clone(),
+                    params,
+                });
+                if method == "getinfo" {
+                    // the estate's info, with the invoice it was asked with
+                    let strings = [
+                        "Test Estate".to_owned(),
+                        Uuid::from_u128(0xe57a_7e00).to_string(),
+                        "101".to_owned(),
+                        // SUN_FIXED and DENY_BOTS, then one the commands do not touch (1 << 1)
+                        ((1u64 << 4) | (1 << 31) | (1 << 1)).to_string(),
+                        (6 * 1024).to_string(),
+                    ];
+                    let mut r = EstateOwnerMessage::default();
+                    r.agent_data.agent_id = self.shared.agent_id;
+                    r.method_data.method = str_field("estateupdateinfo");
+                    r.method_data.invoice = m.method_data.invoice;
+                    r.param_list = strings
+                        .iter()
+                        .map(|s| estate_owner_message::ParamList {
+                            parameter: str_field(s),
+                        })
+                        .collect();
+                    self.send(from, &r, true);
+                }
+            }
+        } else if id == EstateCovenantRequest::ID {
+            let mut r = EstateCovenantReply::default();
+            r.data.covenant_id = crate::inventory::NOTECARD_ASSET;
+            r.data.covenant_timestamp = 1_700_000_000;
+            r.data.estate_name = str_field("Test Estate");
+            r.data.estate_owner_id = Uuid::from_u128(0xe57a_7e00);
+            self.send(from, &r, true);
         } else if id == EjectUser::ID {
             if let Ok(m) = pkt.decode::<EjectUser>() {
                 self.shared.saw(Seen::Parcel {

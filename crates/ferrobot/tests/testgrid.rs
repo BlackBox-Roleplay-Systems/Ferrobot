@@ -1912,6 +1912,213 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's estate commands, for an estate manager.
+    #[tokio::test]
+    async fn estate_commands() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let other = uuid_from(0x5eed_0002);
+        let sent = |method: &'static str, params: Vec<String>| {
+            move |s: &Seen| {
+                matches!(s, Seen::EstateMessage { method: m, params: p }
+                if m == method && *p == params)
+            }
+        };
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let me = || {
+            grid.seen()
+                .iter()
+                .find_map(|s| match s {
+                    Seen::EstateMessage { method, params } if method == "teleporthomeuser" => {
+                        params.first().cloned()
+                    }
+                    _ => None,
+                })
+                .expect("the bot's key")
+        };
+
+        assert_eq!(api.reply("EstateKickUser", &[OTHER]).await, "ok");
+        assert!(grid.wait_for(WAIT, sent("kickestate", s(&[OTHER]))).await);
+        assert_eq!(
+            api.reply("EstateTeleportHomeUser", &["Other Avatar"]).await,
+            "ok"
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| matches!(s, Seen::EstateMessage { method, params }
+                if method == "teleporthomeuser" && params[1] == other.to_string()))
+                .await
+        );
+        let bot_key = me();
+
+        assert_eq!(api.reply("AddEstateManager", &[OTHER, "true"]).await, "ok");
+        assert!(
+            grid.wait_for(
+                WAIT,
+                sent("estateaccessdelta", s(&[&bot_key, "257", OTHER]))
+            )
+            .await
+        );
+        assert_eq!(
+            api.reply("RemoveEstateManager", &[OTHER, "false"]).await,
+            "ok"
+        );
+        assert!(
+            grid.wait_for(
+                WAIT,
+                sent("estateaccessdelta", s(&[&bot_key, "512", OTHER]))
+            )
+            .await
+        );
+        assert_eq!(
+            api.failure("AddEstateManager", &["Other Avatar", "true"])
+                .await
+                .0,
+            "Unable to find avatar UUID"
+        );
+        assert_eq!(
+            api.reply("UpdateEstateBanlist", &[OTHER, "add", "true"])
+                .await,
+            "Ban request accepted"
+        );
+        assert!(
+            grid.wait_for(WAIT, sent("estateaccessdelta", s(&[&bot_key, "66", OTHER])))
+                .await
+        );
+        assert_eq!(
+            api.reply("UpdateEstateBanlist", &[OTHER, "remove", "false"])
+                .await,
+            "Unban request accepted"
+        );
+        assert!(
+            grid.wait_for(
+                WAIT,
+                sent("estateaccessdelta", s(&[&bot_key, "128", OTHER]))
+            )
+            .await
+        );
+        assert_eq!(
+            api.reply("GetEstateBanList", &[]).await,
+            format!(r#"["{}"]"#, uuid_from(0xba11_0001))
+        );
+
+        // restarts: 30 to 240 s, else 240; "false" cancels
+        assert_eq!(api.reply("SimRestart", &["60", "true"]).await, "restarting");
+        assert!(grid.wait_for(WAIT, sent("restart", s(&["60"]))).await);
+        assert_eq!(api.reply("SimRestart", &["5", "true"]).await, "restarting");
+        assert!(grid.wait_for(WAIT, sent("restart", s(&["240"]))).await);
+        assert_eq!(api.reply("SimRestart", &["0", "false"]).await, "canceled");
+        assert!(grid.wait_for(WAIT, sent("restart", s(&["-1"]))).await);
+        assert_eq!(api.reply("SimMessage", &["Hello region"]).await, "ok");
+        assert!(
+            grid.wait_for(
+                WAIT,
+                sent(
+                    "simulatormessage",
+                    s(&["-1", "-1", &bot_key, "Test Bot", "Hello region"])
+                )
+            )
+            .await
+        );
+
+        // the covenant: set to a notecard, read back with its text
+        assert_eq!(
+            api.reply("SetEstateCovenant", &[&inv::NOTECARD.to_string()])
+                .await,
+            "changed Covenant to notecard: Welcome"
+        );
+        assert!(
+            grid.wait_for(
+                WAIT,
+                sent(
+                    "estatechangecovenantid",
+                    vec![inv::NOTECARD_ASSET.to_string()]
+                )
+            )
+            .await
+        );
+        assert_eq!(
+            api.failure("SetEstateCovenant", &[&inv::BOX.to_string()])
+                .await
+                .0,
+            "Item is not a notecard"
+        );
+        let c: Value =
+            serde_json::from_str(&api.reply("GetEstateCovenant", &[]).await).expect("json");
+        assert_eq!(c["Fetched"], true);
+        assert_eq!(c["CovenantID"], inv::NOTECARD_ASSET.to_string());
+        assert_eq!(c["Timestamp"], "1700000000");
+        assert_eq!(c["EstateName"], "Test Estate");
+        assert_eq!(
+            c["CovenantText"],
+            inv::welcome_text().replace('\u{F0000}', "[ATTACHMENT]")
+        );
+
+        // the region's rules, by its capability
+        let values = [
+            "true", "false", "false", "true", "true", "40", "1.5", "true", "false", "false",
+            "true", "false",
+        ];
+        assert_eq!(api.reply("SetExtendedRegionInfo", &values).await, "ok");
+        let posted = |cap: &'static str, needle: &'static str| move |s: &Seen| matches!(s, Seen::EstatePost { cap: c, body } if c == cap && body.contains(needle));
+        assert!(
+            grid.wait_for(WAIT, posted("regioninfo", "<integer>21</integer>"))
+                .await
+        );
+        let mut bad = values;
+        bad[5] = "lots";
+        let (why, args) = api.failure("SetExtendedRegionInfo", &bad).await;
+        assert_eq!(
+            why,
+            "Unable to process agent limit value please use a number"
+        );
+        assert_eq!(
+            args.as_array().map(Vec::len),
+            Some(6),
+            "the values up to it"
+        );
+        // SetRegionFlags answers as SetExtendedRegionInfo, as SecondBot's calls it
+        let (key, inner) = api
+            .run(
+                "SetRegionFlags",
+                &[
+                    "false", "true", "false", "true", "false", "true", "20", "1", "false", "true",
+                ],
+            )
+            .await;
+        assert!(key && inner["status"] == true, "{inner}");
+        assert_eq!(inner["command"], "SetExtendedRegionInfo");
+        assert!(
+            grid.wait_for(WAIT, posted("regioninfo", "<integer>42</integer>"))
+                .await
+        );
+
+        // the estate's settings: its name from getinfo, its other flags kept
+        let config = [
+            "12", "true", "true", "true", "false", "false", "false", "true", "false", "false",
+        ];
+        assert_eq!(api.reply("SetEstateConfig", &config).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, posted("estatechangeinfo", "Test Estate"))
+                .await
+        );
+        assert!(
+            grid.wait_for(WAIT, posted("estatechangeinfo", "<real>12"))
+                .await
+        );
+        let mut late = config;
+        late[0] = "30";
+        assert_eq!(
+            api.failure("SetEstateConfig", &late).await.0,
+            "Sun hour value must be between 0 and 23"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

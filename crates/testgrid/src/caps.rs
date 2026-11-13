@@ -29,6 +29,36 @@ pub async fn handle(
         ("chatsessionrequest", "POST") => chat_session_request(shared, body),
         ("groupapi", "GET" | "POST") => group_api(shared, method, query, body),
         ("appearance", "POST") => appearance(shared, body),
+        ("estateaccess", "GET") => {
+            // the bot manages the estate; one resident is banned
+            let entry = |k: &str, id: uuid::Uuid| {
+                let mut m = Map::new();
+                m.insert(k.into(), id.into());
+                Llsd::Map(m)
+            };
+            let mut m = Map::new();
+            m.insert(
+                "Managers".into(),
+                Llsd::Array(vec![entry("agent_id", shared.agent_id)]),
+            );
+            m.insert(
+                "BannedAgents".into(),
+                Llsd::Array(vec![entry("id", uuid::Uuid::from_u128(0xba11_0001))]),
+            );
+            m.insert("AllowedAgents".into(), Llsd::Array(vec![]));
+            m.insert("AllowedGroups".into(), Llsd::Array(vec![]));
+            llsd_reply(&Llsd::Map(m))
+        }
+        ("regioninfo", "POST") | ("estatechangeinfo", "POST") => {
+            let Ok(v) = from_xml(body) else {
+                return Response::status(400);
+            };
+            shared.saw(Seen::EstatePost {
+                cap: name.to_owned(),
+                body: ferro_llsd::to_xml_string(&v),
+            });
+            llsd_reply(&Llsd::Map(Map::new()))
+        }
         ("remoteparcel", "POST") => {
             let mut m = Map::new();
             m.insert("parcel_id".into(), crate::parcels::PARCEL_ID.into());
@@ -160,6 +190,9 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         ("UpdateNotecardAgentInventory", "notecardsave"),
         ("AgentPreferences", "preferences"),
         ("RemoteParcelRequest", "remoteparcel"),
+        ("EstateAccess", "estateaccess"),
+        ("DispatchRegionInfo", "regioninfo"),
+        ("EstateChangeInfo", "estatechangeinfo"),
         ("ParcelPropertiesUpdate", "parcelupdate"),
     ] {
         if caps.iter().any(|c| c == cap) {

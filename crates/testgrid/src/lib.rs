@@ -365,6 +365,16 @@ pub enum Seen {
     Parcel {
         what: String,
     },
+    /// EstateOwnerMessage: its method and parameters.
+    EstateMessage {
+        method: String,
+        params: Vec<String>,
+    },
+    /// A POST to an estate capability (regioninfo, estatechangeinfo), its body as XML.
+    EstatePost {
+        cap: String,
+        body: String,
+    },
     /// ParcelAccessListUpdate: a list (1 access, 2 bans) as it now is.
     AccessListUpdate {
         flags: u32,
