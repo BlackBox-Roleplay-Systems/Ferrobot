@@ -1,7 +1,8 @@
 //! SecondBot's object commands: rezzing an item (RezObject, RezObjectOnPos,
 //! RezObjectParcelCenter and their Async… forms), clicking an object (ClickObject), taking one
-//! back (UnRezObject), the objects on the parcel (GetObjectsInParcel), and putting an item in an
-//! object (TransferInventoryToObject and its Async… form).
+//! back (UnRezObject), the objects on the parcel (GetObjectsInParcel), the sculpted prims in the
+//! region (ListSculptys), and putting an item in an object (TransferInventoryToObject and its
+//! Async… form).
 //!
 //! Deliberate differences: ClickObject answers "ok", or fails when it cannot see the object
 //! (SecondBot prints a C# pair, "[0, ]" when it found nothing); GetObjectsInParcel lists each root
@@ -292,6 +293,49 @@ pub async fn objects_in_parcel(ctx: &Ctx) -> Answer {
     }
     inside.sort_by_key(|o| o.local_id);
     basic(C, &json(&inside), &[])
+}
+
+/// SecondBot's SculptysInfo, its fields in their order.
+#[derive(Serialize)]
+struct SculptyInfo {
+    name: String,
+    #[serde(rename = "isLinked")]
+    is_linked: String,
+    owner: String,
+    uuid: String,
+    pos: String,
+}
+
+/// LibreMetaverse's Vector3.ToString: "<1, 2.5, 3>".
+fn vector_text(v: Vec3) -> String {
+    format!(
+        "<{}, {}, {}>",
+        super::reply::cs_float(v.x),
+        super::reply::cs_float(v.y),
+        super::reply::cs_float(v.z)
+    )
+}
+
+/// ListSculptys: the sculpted prims the bot can see in its region, a linked one by its
+/// linkset's root.
+pub async fn list_sculptys(ctx: &Ctx) -> Answer {
+    const C: &str = "ListSculptys";
+    let mut found = ctx.client.sculpts().await.unwrap_or_default();
+    if found.is_empty() {
+        return failure(C, "No objects found", &[]);
+    }
+    found.sort_by_key(|s| s.key);
+    let list: Vec<SculptyInfo> = found
+        .into_iter()
+        .map(|s| SculptyInfo {
+            name: s.name.unwrap_or_else(|| "?".into()),
+            is_linked: super::reply::cs_bool_text(s.linked),
+            owner: s.owner.to_string(),
+            uuid: s.key.to_string(),
+            pos: vector_text(s.position),
+        })
+        .collect();
+    basic(C, &json(&list), &[])
 }
 
 /// The item put into the object: a script by RezScript (running or not), anything else into

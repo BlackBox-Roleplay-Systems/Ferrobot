@@ -1,5 +1,8 @@
 //! SecondBot's Self commands that need nothing more than the bot (GoHome, Logoff,
-//! GetLastCommands, the key-value store), and Ferrobot's own BotStatus.
+//! GetLastCommands, the key-value store, SetPermFlag), and Ferrobot's own BotStatus.
+//!
+//! SetPermFlag changes nothing, as SecondBot's (its "@todo"): it checks its arguments and answers
+//! as SecondBot does, so that scripts that send it keep working.
 
 use super::reply::{Answer, basic, failure, json};
 use super::{Ctx, owned};
@@ -176,6 +179,39 @@ pub async fn set_away(ctx: &Ctx, mode: &str) -> Answer {
         Ok(()) => basic(C, "ok", &args),
         Err(e) => failure(C, &e.to_string(), &args),
     }
+}
+
+/// SetPermFlag: SecondBot's answer, without an effect (see the module).
+pub async fn set_perm_flag(ctx: &Ctx, who: &str, flag: &str, state: &str, sticky: &str) -> Answer {
+    const C: &str = "SetPermFlag";
+    const FLAGS: [&str; 6] = [
+        "friend",
+        "group",
+        "animation",
+        "teleport",
+        "command",
+        "inventory",
+    ];
+    let args = owned(&[who, flag, state, sticky]);
+    if !super::avatar(&ctx.client, who)
+        .await
+        .is_some_and(|id| !id.is_nil())
+    {
+        return failure(C, "avatar lookup", &args);
+    }
+    let Some(state) = super::cs_bool(state) else {
+        return failure(C, "Invaild state", &args);
+    };
+    let Some(sticky) = super::cs_bool(sticky) else {
+        return failure(C, "Invaild sticky", &args);
+    };
+    // the flag's case matters, as in SecondBot
+    if !FLAGS.contains(&flag) {
+        return failure(C, "Invaild flag", &args);
+    }
+    let done = if state { "Added" } else { "Removed" };
+    let sticky = super::reply::cs_bool_text(sticky);
+    basic(C, &format!("{done} perm: {flag} Sticky: {sticky}"), &args)
 }
 
 #[cfg(test)]

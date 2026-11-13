@@ -1,9 +1,15 @@
 //! SecondBot's Inventory commands that need no objects in world: the folders, a folder's
-//! contents, sending items and folders, creating, renaming, moving and deleting.
+//! contents, sending items and folders, creating, renaming, moving and deleting, purging old
+//! notecards, and the inventory update events.
 //!
 //! Deliberate differences: deleting moves to the Trash, as the viewer does (SecondBot removes for
-//! good); InventoryFoldersLimited lists the folder's own subfolders (SecondBot's gives the folder
-//! alone).
+//! good; InventoryPurgeNotecards does too, as SecondBot's); InventoryFoldersLimited lists the
+//! folder's own subfolders (SecondBot's gives the folder alone). Ferrobot keeps no inventory
+//! cache and does not preload: InventoryContentsCatched fetches the whole tree when asked,
+//! InventoryPreloadDone is always "Ready" (as SecondBot's with its preload off), and
+//! InventoryPreloadCount counts what the fetches have shown so far. SecondBot's
+//! InventoryPurgeNotecards fails when it finds the folder (an inverted check): Ferrobot's fails
+//! when it does not.
 
 use super::reply::{Answer, basic, failure, json};
 use super::{Ctx, avatar, key, owned};
@@ -424,6 +430,144 @@ pub async fn move_folder(ctx: &Ctx, folder: &str, dest: &str) -> Answer {
     }
 }
 
+/// How old a notecard InventoryPurgeNotecards removes is, at least.
+const PURGE_AGE_DAYS: i64 = 31;
+
+/// InventoryPurgeNotecards: the notecards of the root's "Notecards" folder made 31 days ago or
+/// more, removed for good.
+pub async fn purge_notecards(ctx: &Ctx) -> Answer {
+    const C: &str = "InventoryPurgeNotecards";
+    let root = ctx.client.inventory_root();
+    let folder = match ctx.client.folder_contents(root).await {
+        Ok(c) => c.folders.into_iter().find(|f| f.name == "Notecards"),
+        Err(e) => {
+            log::warn!("{C}: {e}");
+            None
+        }
+    };
+    let Some(folder) = folder else {
+        return failure(C, "Unable to find notecard folder", &[]);
+    };
+    let contents = match ctx.client.folder_contents(folder.id).await {
+        Ok(c) => c,
+        Err(e) => return failure(C, &e.to_string(), &[]),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+    let old: Vec<uuid::Uuid> = contents
+        .items
+        .iter()
+        .filter(|i| i.asset_type == 7 && (now - i.created_at) / 86_400 >= PURGE_AGE_DAYS)
+        .map(|i| i.id)
+        .collect();
+    if !old.is_empty() {
+        log::info!("{C}: removing {} notecards", old.len());
+        if let Err(e) = ctx.client.remove_items(old).await {
+            return failure(C, &e.to_string(), &[]);
+        }
+    }
+    basic(C, "Ok", &[])
+}
+
+/// SecondBot's InventoryNodeEntry, its fields in their order; an item has no children (null).
+#[derive(Serialize)]
+struct Node {
+    #[serde(rename = "UUID")]
+    id: String,
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Children")]
+    children: Option<Vec<Node>>,
+    #[serde(rename = "InventoryType")]
+    kind: String,
+}
+
+/// Folders per fetch, walking the whole tree.
+const FOLDERS_PER_FETCH: usize = 10;
+
+/// InventoryContentsCatched: the whole inventory as a tree, from "My Inventory" down.
+pub async fn contents_catched(ctx: &Ctx) -> Answer {
+    const C: &str = "InventoryContentsCatched";
+    let root = ctx.client.inventory_root();
+    let mut fetched = std::collections::HashMap::new();
+    let mut todo = vec![root];
+    while !todo.is_empty() {
+        let batch: Vec<uuid::Uuid> = todo.drain(..todo.len().min(FOLDERS_PER_FETCH)).collect();
+        match ctx.client.fetch_folders(&batch).await {
+            Ok(found) => {
+                for c in found {
+                    for f in &c.folders {
+                        if !fetched.contains_key(&f.id) && !todo.contains(&f.id) {
+                            todo.push(f.id);
+                        }
+                    }
+                    fetched.insert(c.folder_id, c);
+                }
+            }
+            Err(e) => {
+                log::warn!("{C}: {e}");
+                if fetched.is_empty() {
+                    return failure(C, &e.to_string(), &[]);
+                }
+            }
+        }
+    }
+    fn node(
+        id: uuid::Uuid,
+        name: &str,
+        fetched: &std::collections::HashMap<uuid::Uuid, ferro_client::inventory::FolderContents>,
+        depth: usize,
+    ) -> Node {
+        let mut children = Vec::new();
+        // a folder inside itself would never end
+        if let Some(c) = fetched.get(&id).filter(|_| depth < 64) {
+            children.extend(
+                c.folders
+                    .iter()
+                    .map(|f| node(f.id, &f.name, fetched, depth + 1)),
+            );
+            children.extend(c.items.iter().map(|i| Node {
+                id: i.id.to_string(),
+                name: i.name.clone(),
+                children: None,
+                kind: typename(i.inv_type).trim_start_matches("Inventory").into(),
+            }));
+        }
+        Node {
+            id: id.to_string(),
+            name: name.to_owned(),
+            children: Some(children),
+            kind: "Folder".into(),
+        }
+    }
+    basic(C, &json(&node(root, "My Inventory", &fetched, 0)), &[])
+}
+
+pub fn preload_count(ctx: &Ctx) -> Answer {
+    let (folders, items) = ctx.client.inventory_seen();
+    basic(
+        "InventoryPreloadCount",
+        &format!("folders:{folders},items:{items}"),
+        &[],
+    )
+}
+
+pub fn preload_done() -> Answer {
+    basic("InventoryPreloadDone", "Ready", &[])
+}
+
+/// SetInventoryUpdate: the target hears of each item of this type that comes into the
+/// inventory (crate::inventory_updates).
+pub fn set_inventory_update(ctx: &Ctx, kind: &str, target: &str) -> Answer {
+    use crate::inventory_updates::{asset_type_name, event_type_name};
+    let name = asset_type(kind)
+        .and_then(|t| asset_type_name(i32::from(t)))
+        .map_or_else(|| event_type_name(kind), event_type_name);
+    ctx.inventory_updates.add(&name, target.trim());
+    basic("SetInventoryUpdate", "Ok", &[])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +583,22 @@ mod tests {
         assert_eq!(asset_type("folder"), None);
         assert_eq!(asset_type("category"), None);
         assert_eq!(asset_type("thing"), None);
+        assert_eq!(asset_type("lslbyte"), Some(11));
+        assert_eq!(asset_type("Lsltext"), Some(10));
+        assert_eq!(asset_type("Mesh"), Some(49));
+    }
+
+    #[test]
+    fn items_in_the_tree_have_null_children() {
+        let n = Node {
+            id: "a".into(),
+            name: "Note".into(),
+            children: None,
+            kind: typename(7).trim_start_matches("Inventory").into(),
+        };
+        assert_eq!(
+            json(&n),
+            r#"{"UUID":"a","Name":"Note","Children":null,"InventoryType":"Notecard"}"#
+        );
     }
 }
