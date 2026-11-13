@@ -2104,6 +2104,11 @@ impl Region {
                 self.send(to, &m, false);
                 self.drop_client(to);
             }
+            RegionCommand::Alert { message } => {
+                let mut m = AlertMessage::default();
+                m.alert_data.message = str_field(&message);
+                self.send(to, &m, true);
+            }
             RegionCommand::RestartNotice { seconds } => {
                 let name = &self.shared.regions[self.index].name;
                 let (notice, extra) = if seconds >= 60 && seconds % 60 == 0 {

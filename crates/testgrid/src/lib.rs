@@ -726,6 +726,10 @@ enum RegionCommand {
         owner: String,
         questions: i32,
     },
+    /// An AlertMessage with only a message: a notice for the user.
+    Alert {
+        message: String,
+    },
     RestartNotice {
         seconds: i32,
     },
@@ -1143,6 +1147,13 @@ impl TestGrid {
     /// RegionRestartSeconds or RegionRestartMinutes notification).
     pub fn announce_restart(&self, seconds: i32) {
         self.command(RegionCommand::RestartNotice { seconds });
+    }
+
+    /// The region tells the user something (AlertMessage, no notification of its own).
+    pub fn alert(&self, message: &str) {
+        self.command(RegionCommand::Alert {
+            message: message.to_owned(),
+        });
     }
 
     /// A script of an object owned by `owner` (a name) asks the bot for permissions.
