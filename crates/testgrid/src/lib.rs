@@ -10,7 +10,8 @@
 //!
 //! A test starts it, points the bot's login address at [`TestGrid::login_uri`], then watches what
 //! the bot sends ([`Seen`]) and acts as the grid would: chat, IMs, teleport offers, a kick, a
-//! closed circuit. Each feature that talks to a region adds what it needs here (ROADMAP phase 1).
+//! closed circuit, a region gone silent, a failing event queue. Each feature that talks to a
+//! region adds what it needs here (ROADMAP phase 1).
 
 mod caps;
 pub mod discord;
@@ -499,6 +500,11 @@ struct Session {
     events: VecDeque<(String, Llsd)>,
     /// The next poll answers 404, as a region does when it closes the queue.
     close_queue: bool,
+    /// Every poll fails at once (503), as a region whose queue is broken.
+    fail_queue: bool,
+    /// The region neither answers nor sends anything on the session's circuit, as a region that
+    /// hangs or a network that drops everything.
+    silent: bool,
     eq_id: i32,
 }
 
@@ -577,6 +583,11 @@ impl Shared {
             s.events.push_back((message.into(), body));
         }
         self.eq_wake.notify_waiters();
+    }
+
+    /// The region says nothing on this session's circuit ([`TestGrid::silence_region`]).
+    fn silent(&self, n: u32) -> bool {
+        self.state().sessions.get(&n).is_some_and(|s| s.silent)
     }
 
     fn end_session(&self, n: u32) {
@@ -1041,6 +1052,25 @@ impl TestGrid {
         }
         drop(st);
         self.shared.eq_wake.notify_waiters();
+    }
+
+    /// The latest session's event queue fails every poll at once (503) from now on, so that the
+    /// bot backs off, then gives the queue up.
+    pub fn fail_event_queue(&self) {
+        let mut st = self.shared.state();
+        if let Some(s) = latest(&mut st) {
+            s.fail_queue = true;
+        }
+        drop(st);
+        self.shared.eq_wake.notify_waiters();
+    }
+
+    /// The region goes silent on the latest session's circuit: no acks, no pings, no answers,
+    /// nothing it was asked to send. Its event queue goes on as before.
+    pub fn silence_region(&self) {
+        if let Some(s) = latest(&mut self.shared.state()) {
+            s.silent = true;
+        }
     }
 
     /// A command for the region the latest session's agent is in.

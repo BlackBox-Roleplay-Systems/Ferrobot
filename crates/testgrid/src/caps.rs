@@ -259,7 +259,8 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
 
 /// A poll is answered at once when events wait, else held until one comes or `eq_hold` passes,
 /// then 502 as the grid's queue answers an idle poll. Events go out on the queue of the region
-/// the agent is in. A closed queue, an ended session, a region the agent left: 404.
+/// the agent is in. A closed queue, an ended session, a region the agent left: 404. A failing
+/// queue: 503 at once.
 async fn event_queue(shared: &Arc<Shared>, n: u32, region: usize) -> Response {
     shared.saw(Seen::EventQueuePoll { session: n, region });
     let deadline = Instant::now() + shared.cfg.eq_hold;
@@ -275,6 +276,9 @@ async fn event_queue(shared: &Arc<Shared>, n: u32, region: usize) -> Response {
             let here = s.region == region;
             if s.ended || (here && s.close_queue) || (!here && s.expected != Some(region)) {
                 return Response::status(404);
+            }
+            if here && s.fail_queue {
+                return Response::status(503);
             }
             if here && !s.events.is_empty() {
                 s.eq_id += 1;

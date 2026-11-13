@@ -14,6 +14,9 @@ pub struct Config {
     pub relog: bool,
     /// Seconds to wait before logging in again.
     pub relog_delay: u64,
+    /// How long the client bears with a silent region or a failing event queue: the viewer's
+    /// defaults, shorter only in tests (FERRO_REGION_TIMEOUT, FERRO_EVENT_QUEUE_ERRORS).
+    pub timeouts: ferro_client::Timeouts,
     /// The avatars the bot obeys: "First Last" or usernames (SecondBot's MastersCSV).
     pub masters: Vec<String>,
     /// SecondBot's HTTP API: on unless turned off, and only with a shared secret.
@@ -57,6 +60,7 @@ impl std::fmt::Debug for Config {
             .field("start", &self.start)
             .field("relog", &self.relog)
             .field("relog_delay", &self.relog_delay)
+            .field("timeouts", &self.timeouts)
             .field("masters", &self.masters)
             .field("http_enabled", &self.http_enabled)
             .field("http_port", &self.http_port)
@@ -328,6 +332,31 @@ fn rule(
     })
 }
 
+/// FERRO_REGION_TIMEOUT (seconds of silence, 100) and FERRO_EVENT_QUEUE_ERRORS (fast failures in
+/// a row, 15): the viewer's limits, which the tests shorten so that they need not wait minutes.
+fn timeouts() -> Result<ferro_client::Timeouts, ConfigError> {
+    let default = ferro_client::Timeouts::default();
+    let silence: u64 = number(
+        var("FERRO_REGION_TIMEOUT").map(|v| ("FERRO_REGION_TIMEOUT", v)),
+        default.region_silence.as_secs(),
+        "a number of seconds, at least 1",
+    )?;
+    if silence == 0 {
+        return Err(ConfigError::Invalid(
+            "FERRO_REGION_TIMEOUT",
+            "a number of seconds, at least 1".into(),
+        ));
+    }
+    Ok(ferro_client::Timeouts {
+        region_silence: std::time::Duration::from_secs(silence),
+        event_queue_errors: number(
+            var("FERRO_EVENT_QUEUE_ERRORS").map(|v| ("FERRO_EVENT_QUEUE_ERRORS", v)),
+            default.event_queue_errors,
+            "a number of errors",
+        )?,
+    })
+}
+
 fn flag(name: &'static str, default: bool) -> Result<bool, ConfigError> {
     var(name).map_or(Ok(default), |v| parse_flag(name, &v))
 }
@@ -374,6 +403,7 @@ impl Config {
             60,
             "a number of seconds",
         )?;
+        let timeouts = timeouts()?;
         // the password is taken as it is, spaces included
         let password = ["FERRO_PASSWORD", "basic_Password"]
             .iter()
@@ -399,6 +429,7 @@ impl Config {
             start,
             relog: flag("FERRO_RELOG", true)?,
             relog_delay,
+            timeouts,
             masters: setting("FERRO_MASTERS", "commands_MastersCSV")
                 .map(|(_, v)| parse_masters(&v))
                 .unwrap_or_default(),

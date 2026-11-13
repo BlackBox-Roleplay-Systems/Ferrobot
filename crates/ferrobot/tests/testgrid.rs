@@ -1,6 +1,6 @@
 //! The real bot, run as a process against the test grid (`crates/testgrid`): login, arrival,
-//! chat and IMs, pings, logout on SIGTERM, a kick, a closed circuit and the relog after them,
-//! a refused login. ROADMAP phase 1.
+//! chat and IMs, pings, logout on SIGTERM, a kick, a closed circuit, a silent region and a failing
+//! event queue and the relog after them, a refused login. ROADMAP phase 1.
 #![cfg(unix)]
 
 use ferro_testgrid::{GridConfig, Seen, TestGrid};
@@ -329,6 +329,76 @@ async fn a_closed_event_queue_neither_ends_the_session_nor_spins() {
 
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+/// A region that goes silent is lost once nothing came from it for FERRO_REGION_TIMEOUT (100 s on
+/// a grid, as the viewer and Aurora; 3 s here), and the bot logs in again. The region pings every
+/// 2 s, so a quiet but living region keeps the session.
+#[tokio::test]
+async fn a_silent_region_is_lost_then_the_bot_logs_in_again() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[("FERRO_REGION_TIMEOUT", "3")]);
+    arrived(&grid, &bot, 1).await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert!(!bot.log().contains("connection lost"), "{}", bot.log());
+
+    grid.silence_region();
+    let silent_since = tokio::time::Instant::now();
+    bot.wait_log("connection lost: nothing from the region for 3 s")
+        .await;
+    assert!(
+        silent_since.elapsed() >= Duration::from_millis(2900),
+        "lost after {:?}\n{}",
+        silent_since.elapsed(),
+        bot.log()
+    );
+    arrived(&grid, &bot, 2).await;
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+/// An event queue that keeps failing at once is polled again after a back-off, then given up after
+/// FERRO_EVENT_QUEUE_ERRORS failures in a row (15 on a grid, as lleventpoll.cpp; 1 here): the
+/// session ends and the bot logs in again (Aurora's on_eq_lost).
+#[tokio::test]
+async fn an_event_queue_that_fails_is_given_up_then_the_bot_logs_in_again() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[("FERRO_EVENT_QUEUE_ERRORS", "1")]);
+    arrived(&grid, &bot, 1).await;
+    wait_for(&grid, &bot, "an event queue poll", |s| {
+        *s == Seen::EventQueuePoll {
+            session: 1,
+            region: 0,
+        }
+    })
+    .await;
+    grid.fail_event_queue();
+    bot.wait_log("error 1 of 1 in a row, next poll in 1 s")
+        .await;
+    bot.wait_log("giving up after 1 errors in a row").await;
+    bot.wait_log("connection lost: the region's event queue was lost")
+        .await;
+    arrived(&grid, &bot, 2).await;
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+/// Without relog, a lost region ends the bot with exit code 1, as a kick does.
+#[tokio::test]
+async fn without_relog_a_silent_region_ends_the_bot() {
+    let grid = grid().await;
+    let mut bot = Bot::start(
+        &grid,
+        &[("FERRO_REGION_TIMEOUT", "2"), ("FERRO_RELOG", "false")],
+    );
+    arrived(&grid, &bot, 1).await;
+    grid.silence_region();
+    assert_eq!(bot.exit_code().await, 1, "{}", bot.log());
+    assert!(
+        bot.log()
+            .contains("connection lost: nothing from the region for 2 s")
+    );
+    assert_eq!(grid.count(|s| matches!(s, Seen::Login { .. })), 1);
 }
 
 #[tokio::test]

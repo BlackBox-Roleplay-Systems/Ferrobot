@@ -52,6 +52,26 @@ use uuid::Uuid;
 /// (llstartup.cpp circuit_timeout) and Aurora's SIM_TIMEOUT: 60 s cut sessions that a laggy
 /// region or a short network outage would survive.
 const REGION_TIMEOUT: Duration = Duration::from_secs(100);
+
+/// How long the client bears with a region that fails it. The defaults are the viewer's and
+/// Aurora's; shorter ones are for tests, so that they need not wait minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timeouts {
+    /// No packet from the region this long: the connection is lost (100 s).
+    pub region_silence: Duration,
+    /// Fast event queue failures in a row before the queue is lost and the session ends (15,
+    /// with 1 s + 3 s per error between them).
+    pub event_queue_errors: u32,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Timeouts {
+            region_silence: REGION_TIMEOUT,
+            event_queue_errors: caps::MAX_ERRORS,
+        }
+    }
+}
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 const AGENT_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 const TICK: Duration = Duration::from_millis(100);
@@ -102,6 +122,7 @@ pub struct Network {
     http: reqwest::Client,
     requests: mpsc::Receiver<Request>,
     shared: Arc<Shared>,
+    timeouts: Timeouts,
 }
 
 impl Network {
@@ -114,7 +135,13 @@ impl Network {
             http,
             requests,
             shared,
+            timeouts: Timeouts::default(),
         }
+    }
+
+    /// From the next session on.
+    pub fn set_timeouts(&mut self, timeouts: Timeouts) {
+        self.timeouts = timeouts;
     }
 
     /// Connect to the login region and stay there until `shutdown` or the session ends.
@@ -151,6 +178,7 @@ impl Network {
             shutdown,
             &mut self.requests,
             &self.shared,
+            self.timeouts,
         )
         .await;
         {
@@ -172,6 +200,7 @@ struct Session<'a> {
     login: &'a LoginResponse,
     shared: &'a Shared,
     http: &'a reqwest::Client,
+    timeouts: Timeouts,
     /// The current region's capabilities (secrets of the session, never logged).
     caps: HashMap<String, String>,
     /// The current region's event queue, and the task that polls it.
@@ -779,13 +808,16 @@ impl Session<'_> {
         self.eq_rx = rx;
         self.eq_open = true;
         let http = self.http.clone();
+        let max_errors = self.timeouts.event_queue_errors;
         self.caps_task = Some(tokio::spawn(async move {
             match caps::resolve_seed(&http, &seed).await {
                 Ok(caps) => {
                     log::info!("{} capabilities", caps.len());
                     let _ = tx.send(EqMessage::Caps(caps.clone()));
                     match caps.get("EventQueueGet") {
-                        Some(url) => caps::event_queue_loop(http, url.clone(), tx).await,
+                        Some(url) => {
+                            caps::event_queue_loop(http, url.clone(), tx, max_errors).await
+                        }
                         None => log::warn!("the region gave no event queue"),
                     }
                 }
@@ -1091,10 +1123,10 @@ impl Session<'_> {
         self.estate_waits.retain_open();
         self.profile_waits.retain_open();
         self.created.retain(|_, tx| !tx.is_closed());
-        if now.duration_since(self.circuit.last_recv) > REGION_TIMEOUT {
+        if now.duration_since(self.circuit.last_recv) > self.timeouts.region_silence {
             return Some(End::Lost(format!(
                 "nothing from the region for {} s",
-                REGION_TIMEOUT.as_secs()
+                self.timeouts.region_silence.as_secs()
             )));
         }
         None
@@ -1851,6 +1883,7 @@ async fn run(
     mut shutdown: watch::Receiver<bool>,
     requests: &mut mpsc::Receiver<Request>,
     shared: &Shared,
+    timeouts: Timeouts,
 ) -> End {
     let addr = SocketAddr::from((login.sim_ip, login.sim_port));
     let sock = match UdpSocket::bind("0.0.0.0:0").await {
@@ -1868,6 +1901,7 @@ async fn run(
         login,
         shared,
         http,
+        timeouts,
         eq_rx,
         eq_open: false,
         caps_task: None,

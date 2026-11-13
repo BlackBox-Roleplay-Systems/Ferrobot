@@ -129,7 +129,9 @@ pub enum EqMessage {
 
 const ERROR_RETRY: Duration = Duration::from_secs(1);
 const ERROR_RETRY_INC: Duration = Duration::from_secs(3);
-const MAX_ERRORS: u32 = 15;
+/// Fast failures in a row before the queue is lost (lleventpoll.cpp's MAX_EVENT_POLL_HTTP_ERRORS,
+/// Aurora's event queue): the default of [`crate::Timeouts::event_queue_errors`].
+pub const MAX_ERRORS: u32 = 15;
 /// The region holds a poll at least this long when it has nothing to send.
 const MIN_HELD: Duration = Duration::from_secs(10);
 
@@ -150,8 +152,8 @@ enum Next {
 }
 
 /// What follows a poll: a held poll that ended without events is normal, a fast failure backs off
-/// like lleventpoll.cpp (1 s + 3 s per error, giving up after 15 in a row).
-fn after_poll(end: PollEnd, held: Duration, errors: &mut u32) -> Next {
+/// like lleventpoll.cpp (1 s + 3 s per error, giving up after `max_errors` in a row: 15 there).
+fn after_poll(end: PollEnd, held: Duration, errors: &mut u32, max_errors: u32) -> Next {
     let no_event = match end {
         PollEnd::Reply => true,
         PollEnd::Status(404 | 410) => return Next::Closed,
@@ -164,7 +166,7 @@ fn after_poll(end: PollEnd, held: Duration, errors: &mut u32) -> Next {
         *errors = 0;
         return Next::Again;
     }
-    if *errors >= MAX_ERRORS {
+    if *errors >= max_errors {
         return Next::GiveUp;
     }
     let wait = ERROR_RETRY + ERROR_RETRY_INC * *errors;
@@ -173,11 +175,12 @@ fn after_poll(end: PollEnd, held: Duration, errors: &mut u32) -> Next {
 }
 
 /// Long-poll `EventQueueGet` until the receiver is dropped, the region closes the queue or too
-/// many polls in a row fail.
+/// many polls in a row fail (`max_errors`, see [`after_poll`]).
 pub async fn event_queue_loop(
     http: reqwest::Client,
     url: String,
     tx: mpsc::UnboundedSender<EqMessage>,
+    max_errors: u32,
 ) {
     let mut ack = Llsd::Undef;
     let mut errors = 0u32;
@@ -225,7 +228,7 @@ pub async fn event_queue_loop(
             Err(e) => (PollEnd::Transport, e.without_url().to_string()),
         };
         let held = started.elapsed();
-        match after_poll(end, held, &mut errors) {
+        match after_poll(end, held, &mut errors, max_errors) {
             Next::Again => {}
             Next::Closed => {
                 log::info!("event queue closed ({why})");
@@ -233,14 +236,14 @@ pub async fn event_queue_loop(
             }
             Next::Wait(wait) => {
                 log::warn!(
-                    "event queue: {why} after {:.1} s, error {errors} of {MAX_ERRORS} in a row, next poll in {} s",
+                    "event queue: {why} after {:.1} s, error {errors} of {max_errors} in a row, next poll in {} s",
                     held.as_secs_f32(),
                     wait.as_secs()
                 );
                 tokio::time::sleep(wait).await;
             }
             Next::GiveUp => {
-                log::warn!("event queue: {why}, giving up after {MAX_ERRORS} errors in a row");
+                log::warn!("event queue: {why}, giving up after {max_errors} errors in a row");
                 let _ = tx.send(EqMessage::Lost);
                 return;
             }
@@ -265,7 +268,7 @@ mod tests {
                 PollEnd::Timeout,
                 PollEnd::Status(499),
             ] {
-                assert_eq!(after_poll(end, HELD, &mut errors), Next::Again);
+                assert_eq!(after_poll(end, HELD, &mut errors, MAX_ERRORS), Next::Again);
             }
         }
         assert_eq!(errors, 0);
@@ -276,12 +279,25 @@ mod tests {
         let mut errors = 0;
         for n in 0..MAX_ERRORS {
             assert_eq!(
-                after_poll(PollEnd::Status(503), FAST, &mut errors),
+                after_poll(PollEnd::Status(503), FAST, &mut errors, MAX_ERRORS),
                 Next::Wait(Duration::from_secs(1 + 3 * u64::from(n)))
             );
         }
         assert_eq!(
-            after_poll(PollEnd::Transport, FAST, &mut errors),
+            after_poll(PollEnd::Transport, FAST, &mut errors, MAX_ERRORS),
+            Next::GiveUp
+        );
+    }
+
+    #[test]
+    fn fewer_errors_give_up_sooner() {
+        let mut errors = 0;
+        assert_eq!(
+            after_poll(PollEnd::Status(503), FAST, &mut errors, 1),
+            Next::Wait(Duration::from_secs(1))
+        );
+        assert_eq!(
+            after_poll(PollEnd::Status(503), FAST, &mut errors, 1),
             Next::GiveUp
         );
     }
@@ -290,7 +306,7 @@ mod tests {
     fn a_missing_queue_is_closed_at_once() {
         let mut errors = 0;
         assert_eq!(
-            after_poll(PollEnd::Status(404), HELD, &mut errors),
+            after_poll(PollEnd::Status(404), HELD, &mut errors, MAX_ERRORS),
             Next::Closed
         );
     }

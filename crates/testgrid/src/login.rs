@@ -44,6 +44,8 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
         arrival: crate::region::ARRIVAL,
         events: VecDeque::new(),
         close_queue: false,
+        fail_queue: false,
+        silent: false,
         eq_id: 0,
     };
     let mut r = Map::new();
