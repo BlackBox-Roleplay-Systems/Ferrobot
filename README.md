@@ -84,6 +84,7 @@ All settings come from environment variables.
 | `FERRO_CHATGPT_DEBUG` | `false` | Log what is asked and answered at `info` (else `debug`) |
 | `FERRO_CUSTOM_COMMAND_1_TRIGGER`, `…_1_ARGS`, `…_1_STEP_1`, `…_1_STEP_2`… | (none), `0` | A custom command: its name, the arguments it takes, its steps (see "Custom commands" below); `FERRO_CUSTOM_COMMAND_2_…` for the next |
 | `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy, GroupCreate, and UploadMediaWave unless the grid's sounds are free) |
+| `FERRO_RLV` | `false` | RLV: the bot's own objects (and its masters') drive it with `@` commands (see "RLV" below). Homebound is off while it is on, as SecondBot's |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
@@ -118,8 +119,8 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `events_MoneyEvent`; the commands on events: `onevent_Enabled`, `onevent_WaitSecsToStart`,
 `onevent_DebugMe`, `onevent_Count`, and for each `onevent_Event<n>Enabled`,
 `onevent_Event<n>Source`, `onevent_Event<n>Monitor`, `onevent_Event<n>WhereCount`,
-`onevent_Event<n>Where<m>`, `onevent_Event<n>ActionCount`, `onevent_Event<n>Action<m>`; and the
-relays:
+`onevent_Event<n>Where<m>`, `onevent_Event<n>ActionCount`, `onevent_Event<n>Action<m>`; RLV:
+`rlv_Enabled`; and the relays:
 `relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
 `relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
 `relay_<n>_target_option`, `relay_<n>_RelayConfig`; and the custom commands: `customcommands_count`,
@@ -236,6 +237,32 @@ differences: `IS_UUID`, `IS_EVEN` and `DIVISIBLE` work and a condition without a
 leaves its event out (SecondBot drops the condition); an `AvatarIm` monitor that is an avatar's
 key watches that avatar only; `botx`, `boty`, `botz` are the bot's place; a guest who leaves
 is placed where it was last seen, so `GuestLeaves` runs (SecondBot's never does).
+
+### RLV
+
+RestrainedLove, as SecondBot's RLV service: an object says `@` commands to its owner
+(`llOwnerSay("@sit:<key>=force")`), and the bot keeps the restrictions (`=n`, `=y`, `@clear`),
+answers the queries on the channel given, and does what is forced. Only objects owned by the bot
+or by a master are heard (SecondBot hears any; the grid already sends an OwnerSay only to its
+owner). An attachment that says `@detach=n` keeps itself on through RLV's own detaches; the
+bot's commands (`Detach`, `SwapOutfit`) still take it off, as SecondBot's do.
+
+- Queries (`=<channel>`, above 0): `version`, `versionnew`, `versionnum`, `getstatus`,
+  `getstatusall` (`:<part>;<separator>`), `getgroup`, `getsitid`, `getoutfit[:<layer>]`,
+  `getattach[:<point>]`, `getpath` (the asking attachment), `getpathnew:<attachment key>`,
+  `getinv[:<folder>]`, `getinvworn[:<folder>]`, `findfolder:<words>`, `findfolders:<words>`
+  (words joined by `&&`).
+- Forced (`=force`): `sit[:<key>]` (the ground without one), `unsit`, `setrot:<radians>`,
+  `tpto:<x>/<y>/<z>` (global) or `tpto:<region>/<x>/<y>/<z>`, `setgroup:<name>`,
+  `detach[:<point or folder>]` and `remattach` (everything without an option), `detachall:<folder>`,
+  `detachallthis`, `remoutfit:<layer>`, `attach`, `attachoverorreplace`, `attachover`, `attachall`,
+  `attachallover` (`:<folder>`).
+- Restrictions (`=n` / `=add`, `=y` / `=rem`): any behaviour is kept and reported by
+  `getstatus`; the bot itself only obeys `detach` (as SecondBot).
+
+Folders are paths under `#RLV` in the inventory's root (`Gear/Hats`), whatever their case.
+The version answers are SecondBot's texts with Ferrobot's name:
+`RestrainedLife viewer v1.23 (Ferrobot)`, `RestrainedLove viewer v1.23 (Ferrobot)`, `1230100`.
 
 ### Grants
 

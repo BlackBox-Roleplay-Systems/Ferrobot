@@ -2,7 +2,8 @@
 //! (llOwnerSay), as SecondBot's RLVService (Services/RLVService.cs, after Radegast's RLV
 //! manager). Here: the commands read from a line, the restrictions kept per object, and what each
 //! other command asks the bot to do ([`Action`]); services/rlv.rs does it, folders.rs reads the
-//! shared folder (#RLV).
+//! shared folder (#RLV). The bounds, the cleanup and @findfolder's matching follow Aurora's RLVa
+//! (crates/aurora-viewer/src/world/rlva.rs and rlva/inventory.rs, Aurora Viewer, see NOTICE.md).
 //!
 //! A line is "@" then commands separated by commas; each is `behaviour[:option]=param`, read as
 //! SecondBot's regular expression `(?<behaviour>[^:=]+)(:(?<option>[^=]*))?=(?<param>\w+)` reads

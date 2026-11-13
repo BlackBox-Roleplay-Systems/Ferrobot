@@ -460,7 +460,25 @@ baking: the bot says so and goes on.
   matches); the clock is UTC
 - ⬜ Events and commands on events: to check on the grid (human); events_HideStatusOutput and
   onevent_HideStatusOutput are not read (Ferrobot has no status page)
-- 🔧 RLV: objects drive the bot with RestrainedLove commands (SecondBot's RLVService)
+- 🟡 RLV (src/rlv/, services/rlv.rs; SecondBot's RLVService and RlvConfig, FERRO_RLV or
+  rlv_Enabled, off by default): an object's OwnerSay "@" line; restrictions kept and lifted
+  (`=n`/`=add`, `=y`/`=rem`, `@clear`), its cases: version, versionnew, versionnum, getgroup,
+  setgroup, getpath, getpathnew, getsitid, getstatus, getstatusall, sit, unsit (the Sit and Stand
+  commands), setrot, tpto (global or region), getoutfit, getattach, remattach, detach, detachall,
+  detachallthis, remoutfit, attach, attachoverorreplace, attachover, attachall, attachallover,
+  getinv, getinvworn, findfolder, findfolders; the shared folder #RLV fetched when asked; an
+  attachment's @detach=n kept by RLV's own detaches (AllowDetach); homebound off while RLV is on;
+  the client's add_to_outfit and remove_from_outfit (LibreMetaverse's AddToOutfit and
+  RemoveFromOutfit). Tested on the test grid (an attachment's, a master's and a stranger's
+  OwnerSay). Deliberate differences: only objects owned by the bot or a master are heard; the
+  version answers name Ferrobot; Aurora's RLVa bounds and no answer on DEBUG_CHANNEL; names of
+  points, layers and groups without case; getpath and getpathnew answer the folder's path
+  (SecondBot adds the item's name, and "getpathnew: " before it); findfolder(s) match words within
+  folder names and answer paths, as the viewer; detachallthis only within #RLV; the restrictions
+  of objects gone are dropped every 2 minutes (SecondBot's timer is never started)
+- ⬜ RLV: the restrictions the bot keeps but does not obey (sendchat, tplure, fly…; SecondBot
+  obeys only detach), accepttp (SecondBot's AutoAcceptTP is never called), `@clear=<part>`,
+  getpath by point or layer, rlv_HideStatusOutput (no status page)
 
 ## Phase 8 - Running it for real
 
