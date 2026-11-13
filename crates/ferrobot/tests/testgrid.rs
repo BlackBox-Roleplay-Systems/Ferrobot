@@ -423,3 +423,43 @@ async fn before_a_region_restart_the_bot_goes_home() {
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
+
+/// Group invitations: a master's is accepted, a stranger's and one with a fee are not.
+#[tokio::test]
+async fn group_invitations_from_masters_only_and_never_with_a_fee() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[("FERRO_MASTERS", "Some Resident")]);
+    arrived(&grid, &bot, 1).await;
+    let stranger = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0003),
+        first: "Someone".into(),
+        last: "Else".into(),
+    };
+    let master = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    grid.invite_bot(&stranger, ferro_testgrid::THIRD_GROUP, 0);
+    bot.wait_log("group invitation from Someone Else left unanswered: not a master")
+        .await;
+    grid.invite_bot(&master, ferro_testgrid::THIRD_GROUP, 50);
+    bot.wait_log("with a fee of L$50 left unanswered").await;
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::GroupInviteAnswer { .. })),
+        0
+    );
+
+    grid.invite_bot(&master, ferro_testgrid::THIRD_GROUP, 0);
+    wait_for(&grid, &bot, "the acceptance", |s| {
+        *s == Seen::GroupInviteAnswer {
+            group: ferro_testgrid::THIRD_GROUP,
+            accept: true,
+        }
+    })
+    .await;
+    bot.wait_log("group invitation from Some Resident accepted")
+        .await;
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}

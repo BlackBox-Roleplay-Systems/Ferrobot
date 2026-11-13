@@ -28,7 +28,7 @@ crates/
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
-    src/services/          one service per job, on the client's events (chat_log, health, lures, restart)
+    src/services/          one service per job, on the client's events (chat_log, group_invites, health, lures, restart)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it

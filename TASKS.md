@@ -82,7 +82,9 @@ region).
 - 🟡 Is someone a member (`is_group_member`)
 - 🟡 Answer a group invitation (`answer_group_invite`); from crates/client/src/groups.rs, a port
   of Aurora's groups.rs, and network/groups.rs as its session_groups.rs. Tested on the test grid
-- ⬜ Accept group invites by SecondBot's interaction rules
+- 🟡 Group invitations accepted from masters (services/group_invites.rs, SecondBot's
+  BotGroupInviteOffer at level "Owner"), others left unanswered; deliberate difference: never one
+  with a membership fee
 - ⬜ Group chat sessions
 
 ## Phase 4 - SecondBot's HTTP API
