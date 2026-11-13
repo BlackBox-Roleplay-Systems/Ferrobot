@@ -13,16 +13,16 @@
   (flags 0x7, as Aurora and LibreMetaverse), pings, AgentUpdate every second, seed capability,
   EventQueueGet
 - ✅ Chat and IMs received are logged
-- 🟡 SIGTERM / Ctrl-C log out; a lost connection or a kick logs in again after `FERRO_RELOG_DELAY`
+- ✅ SIGTERM / Ctrl-C log out; a lost connection or a kick logs in again after `FERRO_RELOG_DELAY`
 - 🟡 Staying power, as Aurora's session: the region is lost after 100 s of silence (not 60), the
   arrival waits 240 s and logs out before giving up, a lost event queue ends the session (relog),
   a closed queue no longer spins the session loop, and any end during a logout counts as logged out
 
 ## Phase 1 - First login, and a test grid
 
-- 🔧 First login on the grid (human, 2026-11-12): login and arrival, the HTTP API answering a
+- ✅ First login on the grid (human, 2026-11-12): login and arrival, the HTTP API answering a
   signed SimName, a master's teleport offer, chat and IMs in the log, the relog after a kick
-  ("logged in from another location") verified; still to check: logout on Ctrl-C
+  ("logged in from another location"), the logout on Ctrl-C
 - ⬜ Docker image built and run; `docker stop` logs out; image size noted
 - ✅ `crates/testgrid`: fake login server (`login_to_simulator`, wrong password refused)
 - ✅ `crates/testgrid`: fake region (circuit, handshake, arrival, pings both ways, logout, kick,
