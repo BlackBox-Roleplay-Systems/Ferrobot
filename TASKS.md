@@ -206,7 +206,23 @@ baking: the bot says so and goes on.
 - 🟡 Homebound sits on its seat at home (FERRO_HOME_SIT / homebound_AtHomeAutoSitUuid), asking
   again every 30 s while not seated, not seeking the spot while seated; a Stand command stops it
   until the next login (SecondBot's MarkStandup lasts until it restarts); tested on the test grid
-- 🔧 ChatGPT replies (SecondBot's ChatGptService, text only)
+- 🟡 ChatGPT replies (services/chatgpt.rs, SecondBot's ChatGptService and ChatGptConfig, text only): an
+  OpenAI-compatible chat completions API (OpenAI, or another provider's address, its model by
+  name) answers local chat said by avatars, IMs (friends only if asked) and one group's chat, each
+  switched on by itself; SecondBot's system line, "<name> says …" lines, 3 to 10 kept, forgotten
+  after FERRO_CHATGPT_HISTORY_TIMEOUT minutes; SecondBot's cooldowns; the typing wait and
+  animation; the reply only said back, never run as a command; the key never logged (even quoted
+  in an error); SecondBot's chatgpt_* settings. Tested on the test grid with a stand-in API.
+  Deliberate differences: no voice (no audio library) and no Redis store; the group reply works
+  (SecondBot's AllowGroupReplys check is inverted and its reply goes to the sender's key, not the
+  group), one conversation and cooldown per group (SecondBot's is per member, mixed with their
+  IMs); history size and cooldowns clamped as SecondBot meant (its InRange's swapped arguments
+  make them always 10); quiet conversations forgotten as they age (SecondBot's only when its
+  status is asked); an IM that is a bot command is not sent to the API; at most 100
+  conversations and 4 requests at once, replies cut to 2046 bytes, 60 s a request, no
+  redirects; errors always logged (SecondBot's only with ShowDebug); FERRO_CHATGPT on with
+  OpenAI and no key refuses to start; no EnableAndStartService / StopService for it
+- ⬜ ChatGPT: try with a real API key (human)
 
 ## Phase 6 - Appearance and inventory
 

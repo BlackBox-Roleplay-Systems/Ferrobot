@@ -51,5 +51,6 @@ these files follow its behaviour closely, its commands' names, replies and check
 | `crates/ferrobot/src/dialogs.rs` | `SecondBotEvents/Services/DialogService.cs`, `Commands/Dialogs.cs` | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/history.rs` | the chat history of `SecondBotEvents/Services/DataStoreService.cs` | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/services/relays.rs` | `SecondBotEvents/Services/RelayService.cs`, `Config/RelayConfig.cs` | `a2377e5` (branch `update-libremetaverse`) |
+| `crates/ferrobot/src/services/chatgpt.rs` | `SecondBotEvents/Services/ChatGptService.cs`, `Config/ChatGptConfig.cs` (text only: no voice, no Redis) | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/services/homebound.rs` | `SecondBotEvents/Services/HomeboundService.cs` | `a2377e5` (branch `update-libremetaverse`) |
 | `crates/ferrobot/src/services/interactions.rs`, `im_commands.rs`, `crates/ferrobot/src/grants.rs` | `SecondBotEvents/Services/InteractionService.cs`, `Config/InteractionConfig.cs`, `CommandsService.cs` (BotImMessage, SmartCommandReply), the accept-next list of `DataStoreService.cs` | `a2377e5` (branch `update-libremetaverse`) |

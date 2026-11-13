@@ -55,7 +55,7 @@ crates/
     src/download.rs        files the commands fetch from a URL: http(s) only, bounded in size and time
     src/discord/           the bot on a Discord server (twilight): its channels, both ways
     src/rabbit/            RabbitMQ (amqprs): the connection task, publishing, the signed queues read
-    src/services/          one service per job, on the client's events (chat_log, health, homebound, im_commands, interactions, relays, restart, script_permissions)
+    src/services/          one service per job, on the client's events (chat_log, chatgpt, health, homebound, im_commands, interactions, relays, restart, script_permissions)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it
