@@ -449,6 +449,20 @@ impl Region {
                     });
                 }
             }
+        } else if id == AcceptFriendship::ID {
+            if let Ok(m) = pkt.decode::<AcceptFriendship>() {
+                self.shared.saw(Seen::FriendshipAccepted {
+                    transaction: m.transaction_block.transaction_id,
+                });
+            }
+        } else if id == StartLure::ID {
+            if let Ok(m) = pkt.decode::<StartLure>() {
+                for t in &m.target_data {
+                    self.shared.saw(Seen::StartLure {
+                        target: t.target_id,
+                    });
+                }
+            }
         } else if id == ChatFromViewer::ID {
             if let Ok(m) = pkt.decode::<ChatFromViewer>() {
                 self.shared.saw(Seen::Chat {
@@ -482,6 +496,11 @@ impl Region {
                         self.shared
                             .queue_event(n, "ChatterBoxSessionStartReply", Llsd::Map(body));
                     }
+                    5 | 6 | 10 | 11 | 24 => self.shared.saw(Seen::ImAnswer {
+                        to: b.to_agent_id,
+                        dialog: b.dialog,
+                        id: b.id,
+                    }),
                     0 => self.shared.saw(Seen::Im {
                         to: b.to_agent_id,
                         message: field_str(&b.message),
@@ -747,13 +766,16 @@ impl Region {
                 name,
                 dialog,
                 text,
+                session,
+                bucket,
             } => {
                 let mut m = ImprovedInstantMessage::default();
                 m.agent_data.agent_id = id;
                 let b = &mut m.message_block;
                 b.to_agent_id = self.shared.agent_id;
                 b.dialog = dialog;
-                b.id = Uuid::new_v4();
+                b.id = session;
+                b.binary_bucket = bucket;
                 b.from_agent_name = str_field(&name);
                 b.message = str_field(&text);
                 self.send(to, &m, true);

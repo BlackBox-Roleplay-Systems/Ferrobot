@@ -57,6 +57,8 @@ pub struct LoginResponse {
     pub message: String,
     /// Where home is, when the grid says.
     pub home: Option<crate::state::Home>,
+    /// The friends (the login reply's buddy-list).
+    pub buddies: Vec<Uuid>,
     /// For the inventory and group commands to come.
     #[allow(dead_code)]
     pub secure_session_id: Uuid,
@@ -330,6 +332,12 @@ fn parse_success(v: &Llsd) -> Result<LoginResponse, LoginError> {
         message: v["message"].as_str().to_owned(),
         inventory_root: v["inventory-root"][0]["folder_id"].as_uuid(),
         home: parse_home(v["home"].as_str()),
+        buddies: v["buddy-list"]
+            .as_array()
+            .iter()
+            .map(|b| b["buddy_id"].as_uuid())
+            .filter(|id| !id.is_nil())
+            .collect(),
     })
 }
 

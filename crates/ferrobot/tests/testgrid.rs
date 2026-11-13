@@ -364,7 +364,7 @@ async fn a_master_teleports_the_bot_and_others_cannot() {
         last: "Else".into(),
     };
     grid.offer_teleport(&stranger);
-    bot.wait_log("teleport offer from Someone Else ignored: not a master")
+    bot.wait_log("teleport offer from Someone Else refused: not a master")
         .await;
     assert_eq!(
         grid.count(|s| matches!(s, Seen::TeleportLureRequest { .. })),
@@ -441,10 +441,11 @@ async fn group_invitations_from_masters_only_and_never_with_a_fee() {
         last: "Resident".into(),
     };
     grid.invite_bot(&stranger, ferro_testgrid::THIRD_GROUP, 0);
-    bot.wait_log("group invitation from Someone Else left unanswered: not a master")
+    bot.wait_log("group invitation from Someone Else refused: not a master")
         .await;
     grid.invite_bot(&master, ferro_testgrid::THIRD_GROUP, 50);
-    bot.wait_log("with a fee of L$50 left unanswered").await;
+    bot.wait_log("refused: a fee of L$50, the bot does not pay to join")
+        .await;
     assert_eq!(
         grid.count(|s| matches!(s, Seen::GroupInviteAnswer { .. })),
         0
@@ -1001,6 +1002,112 @@ async fn commands_by_im() {
         .await;
     assert_eq!(grid.count(said("unsigned object")), 0);
 
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+/// SecondBot's interaction rules: friendships, inventory, teleport requests, each by its level.
+#[tokio::test]
+async fn offers_follow_the_interaction_rules() {
+    let grid = grid().await;
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("FERRO_MASTERS", "Some Resident"),
+            ("interaction_InventoryTransferLevel", "Anyone"),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    let some = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    let other = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0002),
+        first: "Other".into(),
+        last: "Avatar".into(),
+    };
+
+    // friendship: from the master only (level Owner)
+    let refused = grid.offer_friendship(&other);
+    let accepted = grid.offer_friendship(&some);
+    wait_for(&grid, &bot, "the friendship accepted", |s| {
+        *s == Seen::FriendshipAccepted {
+            transaction: accepted,
+        }
+    })
+    .await;
+    bot.wait_log("friendship offer from Other Avatar refused: not a master")
+        .await;
+    assert_eq!(
+        grid.count(|s| *s
+            == Seen::FriendshipAccepted {
+                transaction: refused
+            }),
+        0
+    );
+
+    // inventory: from anyone (level Anyone), from an avatar and from an object
+    let item = grid.offer_inventory(&other, None);
+    let object_item = grid.offer_inventory(&other, Some("Vendor"));
+    wait_for(&grid, &bot, "the item accepted", |s| {
+        *s == Seen::ImAnswer {
+            to: other.id,
+            dialog: 5,
+            id: item,
+        }
+    })
+    .await;
+    wait_for(&grid, &bot, "the object's item accepted", |s| {
+        *s == Seen::ImAnswer {
+            to: other.id,
+            dialog: 10,
+            id: object_item,
+        }
+    })
+    .await;
+
+    // teleport requests: a stranger's declined, the master's answered with a teleport offer
+    let request = grid.request_teleport(&other);
+    wait_for(&grid, &bot, "the request declined", |s| {
+        *s == Seen::ImAnswer {
+            to: other.id,
+            dialog: 24,
+            id: request,
+        }
+    })
+    .await;
+    grid.request_teleport(&some);
+    wait_for(&grid, &bot, "a teleport offered", |s| {
+        *s == Seen::StartLure { target: some.id }
+    })
+    .await;
+
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+/// Inventory at the default level (Owner): a stranger's item is declined.
+#[tokio::test]
+async fn a_strangers_item_is_declined_by_default() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[("FERRO_MASTERS", "Some Resident")]);
+    arrived(&grid, &bot, 1).await;
+    let other = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0002),
+        first: "Other".into(),
+        last: "Avatar".into(),
+    };
+    let item = grid.offer_inventory(&other, None);
+    wait_for(&grid, &bot, "the item declined", |s| {
+        *s == Seen::ImAnswer {
+            to: other.id,
+            dialog: 6,
+            id: item,
+        }
+    })
+    .await;
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }

@@ -67,7 +67,15 @@ pub mod dialog {
     pub const INVENTORY_OFFERED: u8 = 4;
     pub const GROUP_NOTICE: u8 = 32;
     pub const FRIENDSHIP_OFFERED: u8 = 38;
+    pub const INVENTORY_ACCEPTED: u8 = 5;
+    pub const INVENTORY_DECLINED: u8 = 6;
+    pub const TASK_INVENTORY_OFFERED: u8 = 9;
+    pub const TASK_INVENTORY_ACCEPTED: u8 = 10;
+    pub const TASK_INVENTORY_DECLINED: u8 = 11;
+    pub const FROM_TASK: u8 = 19;
     pub const LURE_USER: u8 = 22;
+    pub const LURE_DECLINED: u8 = 24;
+    pub const TELEPORT_REQUEST: u8 = 26;
     pub const SESSION_GROUP_START: u8 = 15;
     pub const SESSION_SEND: u8 = 17;
     pub const SESSION_LEAVE: u8 = 18;

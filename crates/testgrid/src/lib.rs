@@ -251,6 +251,20 @@ pub enum Seen {
         to: Uuid,
         message: String,
     },
+    /// The bot answered an offer by IM (inventory accepted or declined, a teleport request
+    /// declined): the dialog and the offer's id.
+    ImAnswer {
+        to: Uuid,
+        dialog: u8,
+        id: Uuid,
+    },
+    FriendshipAccepted {
+        transaction: Uuid,
+    },
+    /// The bot offered a teleport (StartLure).
+    StartLure {
+        target: Uuid,
+    },
     TeleportLureRequest {
         session: u32,
         lure: Uuid,
@@ -384,6 +398,8 @@ enum RegionCommand {
         name: String,
         dialog: u8,
         text: String,
+        session: Uuid,
+        bucket: Vec<u8>,
     },
     OfferTeleport {
         from: Resident,
@@ -560,6 +576,8 @@ impl TestGrid {
             name: format!("{} {}", from.first, from.last),
             dialog: 0,
             text: text.into(),
+            session: Uuid::new_v4(),
+            bucket: Vec::new(),
         });
     }
 
@@ -571,7 +589,49 @@ impl TestGrid {
             name: object.into(),
             dialog: 19,
             text: text.into(),
+            session: Uuid::new_v4(),
+            bucket: Vec::new(),
         });
+    }
+
+    fn offer(
+        &self,
+        from: &Resident,
+        name: Option<&str>,
+        dialog: u8,
+        text: &str,
+        bucket: Vec<u8>,
+    ) -> Uuid {
+        let session = Uuid::new_v4();
+        self.command(RegionCommand::ImFrom {
+            id: from.id,
+            name: name.map_or_else(|| format!("{} {}", from.first, from.last), str::to_owned),
+            dialog,
+            text: text.into(),
+            session,
+            bucket,
+        });
+        session
+    }
+
+    /// A resident offers the bot friendship (IM_FRIENDSHIP_OFFERED). Returns its transaction.
+    pub fn offer_friendship(&self, from: &Resident) -> Uuid {
+        self.offer(from, None, 38, "Would you be my friend?", Vec::new())
+    }
+
+    /// A resident, or an object of theirs (`object`: its name), offers the bot an item
+    /// (IM_INVENTORY_OFFERED, IM_TASK_INVENTORY_OFFERED). Returns its transaction.
+    pub fn offer_inventory(&self, from: &Resident, object: Option<&str>) -> Uuid {
+        // the bucket: the asset type, then the item's id
+        let mut bucket = vec![7u8];
+        bucket.extend_from_slice(Uuid::new_v4().as_bytes());
+        let dialog = if object.is_some() { 9 } else { 4 };
+        self.offer(from, object, dialog, "A notecard", bucket)
+    }
+
+    /// A resident asks the bot for a teleport to them (IM_TELEPORT_REQUEST).
+    pub fn request_teleport(&self, from: &Resident) -> Uuid {
+        self.offer(from, None, 26, "Please send me a teleport", Vec::new())
     }
 
     /// A resident offers the bot a teleport to them (IM_LURE_USER); accepted, it goes to the

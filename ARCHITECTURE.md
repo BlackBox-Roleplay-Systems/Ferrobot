@@ -32,7 +32,7 @@ crates/
     src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat)
     src/masters.rs         who the masters are, by name or by key
     src/history.rs         what the bot heard: local chat, IM and group windows (SecondBot's store)
-    src/services/          one service per job, on the client's events (chat_log, group_invites, health, im_commands, lures, restart)
+    src/services/          one service per job, on the client's events (chat_log, health, im_commands, interactions, restart)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it

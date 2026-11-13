@@ -16,7 +16,7 @@ All settings come from environment variables.
 | `FERRO_START` | `last` | `last`, `home`, or `Region Name/x/y/z` |
 | `FERRO_RELOG` | `true` | Log in again after the connection is lost |
 | `FERRO_RELOG_DELAY` | `60` | Seconds to wait before logging in again |
-| `FERRO_MASTERS` | (none) | Avatars the bot obeys, comma-separated: `First Last` or usernames. Their teleport offers are accepted |
+| `FERRO_MASTERS` | (none) | Avatars the bot obeys, comma-separated: `First Last` or usernames |
 | `FERRO_SHARED_SECRET` | (none) | The secret that signs the HTTP API's commands. Without it, the API is off |
 | `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`) |
 | `FERRO_HTTP_PORT` | `80` | Its port |
@@ -24,13 +24,20 @@ All settings come from environment variables.
 | `FERRO_IM_COMMANDS` | `true` | Commands by IM: from masters, and signed ones from objects |
 | `FERRO_ENFORCE_TIME_WINDOW` | `false` | Commands by IM carry their time and must be recent |
 | `FERRO_OBJECT_MASTER_OPTOUT` | `false` | An object owned by a master needs no signature |
+| `FERRO_ACCEPT_TELEPORTS`, `FERRO_TELEPORT_LEVEL` | `true`, `Owner` | Teleport offers and requests: accepted at all, and from whom: `Owner` (the masters), `Friends` or `Anyone` |
+| `FERRO_ACCEPT_GROUP_INVITES`, `FERRO_GROUP_INVITE_LEVEL` | `true`, `Owner` | Group invitations (never one with a fee) |
+| `FERRO_ACCEPT_INVENTORY`, `FERRO_INVENTORY_LEVEL` | `true`, `Owner` | Inventory offers (else declined) |
+| `FERRO_ACCEPT_FRIENDS`, `FERRO_FRIEND_LEVEL` | `true`, `Owner` | Friendship offers (`Friends` does not apply) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
 SecondBot's names work too, so that a SecondBot container's settings can stay as they are:
 `basic_Username`, `basic_Password`, `basic_LoginURI`, `commands_MastersCSV`,
 `commands_SharedSecret`, `commands_TimeWindowSecs`, `commands_AllowIMcontrol`,
-`commands_EnforceTimeWindow`, `commands_ObjectMasterOptout`, `http_Enabled`, `http_Port`. The `FERRO_*` name
+`commands_EnforceTimeWindow`, `commands_ObjectMasterOptout`, `http_Enabled`, `http_Port`,
+`interaction_AcceptTeleports`, `interaction_TeleportRequestLevel`, `interaction_AcceptGroupInvites`,
+`interaction_GroupInviteLevel`, `interaction_AcceptInventory`, `interaction_InventoryTransferLevel`,
+`interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
 
 ### SecondBot's HTTP API

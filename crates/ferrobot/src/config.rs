@@ -1,5 +1,6 @@
 //! The bot's settings, from environment variables (the container's env).
 
+use crate::services::interactions::{Level, Rule, Rules};
 use ferro_client::login::{SL_MAIN_GRID, StartLocation};
 
 #[derive(Clone)]
@@ -28,6 +29,8 @@ pub struct Config {
     pub enforce_time_window: bool,
     /// An object owned by a master needs no signature (ObjectMasterOptout).
     pub object_master_optout: bool,
+    /// What the bot accepts from whom (SecondBot's InteractionConfig).
+    pub interactions: Rules,
 }
 
 impl std::fmt::Debug for Config {
@@ -47,6 +50,7 @@ impl std::fmt::Debug for Config {
             .field("im_commands", &self.im_commands)
             .field("enforce_time_window", &self.enforce_time_window)
             .field("object_master_optout", &self.object_master_optout)
+            .field("interactions", &self.interactions)
             .finish_non_exhaustive()
     }
 }
@@ -97,6 +101,23 @@ fn setting_flag(
     default: bool,
 ) -> Result<bool, ConfigError> {
     setting(ferro, secondbot).map_or(Ok(default), |(name, v)| parse_flag(name, &v))
+}
+
+/// An interaction rule: its switch (on by default) and its level ("Owner" by default).
+fn rule(
+    switch: (&'static str, &'static str),
+    level: (&'static str, &'static str),
+) -> Result<Rule, ConfigError> {
+    Ok(Rule {
+        enabled: setting_flag(switch.0, switch.1, true)?,
+        level: match setting(level.0, level.1) {
+            None => Level::Owner,
+            Some((name, v)) => Level::parse(&v).ok_or(ConfigError::Invalid(
+                name,
+                "Owner, Friends or Anyone".into(),
+            ))?,
+        },
+    })
 }
 
 fn flag(name: &'static str, default: bool) -> Result<bool, ConfigError> {
@@ -194,6 +215,30 @@ impl Config {
                 "commands_ObjectMasterOptout",
                 false,
             )?,
+            interactions: Rules {
+                teleports: rule(
+                    ("FERRO_ACCEPT_TELEPORTS", "interaction_AcceptTeleports"),
+                    ("FERRO_TELEPORT_LEVEL", "interaction_TeleportRequestLevel"),
+                )?,
+                group_invites: rule(
+                    (
+                        "FERRO_ACCEPT_GROUP_INVITES",
+                        "interaction_AcceptGroupInvites",
+                    ),
+                    ("FERRO_GROUP_INVITE_LEVEL", "interaction_GroupInviteLevel"),
+                )?,
+                inventory: rule(
+                    ("FERRO_ACCEPT_INVENTORY", "interaction_AcceptInventory"),
+                    (
+                        "FERRO_INVENTORY_LEVEL",
+                        "interaction_InventoryTransferLevel",
+                    ),
+                )?,
+                friendships: rule(
+                    ("FERRO_ACCEPT_FRIENDS", "interaction_AcceptFriendRequests"),
+                    ("FERRO_FRIEND_LEVEL", "interaction_FriendRequestLevel"),
+                )?,
+            },
         })
     }
 }

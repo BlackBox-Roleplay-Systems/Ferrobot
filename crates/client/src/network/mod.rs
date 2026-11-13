@@ -117,6 +117,7 @@ impl Network {
             st.home = login.home.or(st.home);
             // chat sessions end with the login
             st.group_chats.clear();
+            st.friends = login.buddies.clone();
         }
         self.shared
             .names()
@@ -247,6 +248,57 @@ impl Session<'_> {
         // an empty bucket is sent as one zero byte, as the viewer does
         b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
         self.send(&m, true);
+    }
+
+    fn interact(&mut self, i: crate::Interaction) {
+        use crate::Interaction;
+        use crate::events::dialog;
+        let (agent, session) = (self.login.agent_id, self.login.session_id);
+        let root = self.login.inventory_root;
+        match i {
+            Interaction::AcceptFriendship { transaction, .. } => {
+                // LLAvatarActions / LibreMetaverse AcceptFriendship: the calling card's folder
+                let mut m = AcceptFriendship::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.transaction_block.transaction_id = transaction;
+                m.folder_data = vec![accept_friendship::FolderData { folder_id: root }];
+                self.send(&m, true);
+            }
+            Interaction::AnswerInventory {
+                to,
+                transaction,
+                accept,
+                from_task,
+            } => {
+                // inventory_offer_callback: the destination folder in the bucket
+                let d = match (from_task, accept) {
+                    (false, true) => dialog::INVENTORY_ACCEPTED,
+                    (false, false) => dialog::INVENTORY_DECLINED,
+                    (true, true) => dialog::TASK_INVENTORY_ACCEPTED,
+                    (true, false) => dialog::TASK_INVENTORY_DECLINED,
+                };
+                let bucket = if accept {
+                    root.as_bytes().to_vec()
+                } else {
+                    Vec::new()
+                };
+                self.send_im(to, d, transaction, "", bucket);
+            }
+            Interaction::OfferTeleport { to, message } => {
+                // LLAvatarActions::offerTeleport: StartLure, lure type 0
+                let mut m = StartLure::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.info.lure_type = 0;
+                m.info.message = str_field(&message);
+                m.target_data = vec![start_lure::TargetData { target_id: to }];
+                self.send(&m, true);
+            }
+            Interaction::DeclineTeleportRequest { to, transaction } => {
+                self.send_im(to, dialog::LURE_DECLINED, transaction, "", Vec::new());
+            }
+        }
     }
 
     fn send_logout_request(&mut self) {
@@ -425,6 +477,10 @@ impl Session<'_> {
             }
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
             Request::Group(r) => self.on_group_request(r),
+            Request::Interact { interaction, reply } => {
+                self.interact(interaction);
+                let _ = reply.send(());
+            }
             Request::Chat {
                 message,
                 channel,
@@ -1071,6 +1127,7 @@ mod tests {
             secure_session_id: uuid::Uuid::from_u128(4),
             inventory_root: uuid::Uuid::nil(),
             home: None,
+            buddies: Vec::new(),
         }
     }
 

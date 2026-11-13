@@ -57,7 +57,11 @@ async fn main() -> std::process::ExitCode {
     tokio::spawn(services::chat_log::run(client.clone()));
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
-    tokio::spawn(services::lures::run(client.clone(), masters.clone()));
+    tokio::spawn(services::interactions::run(
+        client.clone(),
+        masters.clone(),
+        cfg.interactions,
+    ));
     tokio::spawn(services::restart::run(client.clone()));
     let history = std::sync::Arc::new(history::History::default());
     tokio::spawn(history::run(client.clone(), history.clone()));
@@ -89,10 +93,6 @@ async fn main() -> std::process::ExitCode {
         (None, true) => log::warn!("HTTP API off: no shared secret (FERRO_SHARED_SECRET)"),
         (_, false) => log::info!("HTTP API off"),
     }
-    tokio::spawn(services::group_invites::run(
-        client.clone(),
-        masters.clone(),
-    ));
     std::process::ExitCode::from(run(&cfg, &http, &mut network, stop_rx).await)
 }
 

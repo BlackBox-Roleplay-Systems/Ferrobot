@@ -86,6 +86,11 @@ pub(crate) enum Request {
         message: String,
         reply: oneshot::Sender<()>,
     },
+    /// Answers to offers: friendships, inventory, teleports.
+    Interact {
+        interaction: Interaction,
+        reply: oneshot::Sender<()>,
+    },
     /// Groups: roles, members, invitations, ejections, role changes.
     Group(network::GroupRequest),
     /// A teleport; answered with the region arrived in, or the grid's reason.
@@ -93,6 +98,23 @@ pub(crate) enum Request {
         to: TeleportTo,
         reply: oneshot::Sender<Result<String, String>>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Interaction {
+    /// AcceptFriendship, the calling card in the inventory's root.
+    AcceptFriendship { from: Uuid, transaction: Uuid },
+    /// IM_INVENTORY_ACCEPTED / DECLINED (TASK_ for an object's offer), the item to the root.
+    AnswerInventory {
+        to: Uuid,
+        transaction: Uuid,
+        accept: bool,
+        from_task: bool,
+    },
+    /// StartLure: offer an avatar a teleport to the bot.
+    OfferTeleport { to: Uuid, message: String },
+    /// IM_LURE_DECLINED: no to a teleport request.
+    DeclineTeleportRequest { to: Uuid, transaction: Uuid },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -364,5 +386,65 @@ impl Client {
     pub async fn im(&self, to: Uuid, message: &str) -> Result<(), ClientError> {
         let message = message.to_owned();
         self.ask(|reply| Request::Im { to, message, reply }).await
+    }
+
+    async fn interact(&self, i: Interaction) -> Result<(), ClientError> {
+        self.ask(|reply| Request::Interact {
+            interaction: i,
+            reply,
+        })
+        .await
+    }
+
+    /// Accept a friendship offer: the IM_FRIENDSHIP_OFFERED's sender and id.
+    pub async fn accept_friendship(
+        &self,
+        from: Uuid,
+        transaction: Uuid,
+    ) -> Result<(), ClientError> {
+        self.interact(Interaction::AcceptFriendship { from, transaction })
+            .await?;
+        let mut st = self.shared.state_mut();
+        if !st.friends.contains(&from) {
+            st.friends.push(from);
+        }
+        Ok(())
+    }
+
+    /// Answer an inventory offer (IM_INVENTORY_OFFERED, or IM_TASK_INVENTORY_OFFERED from an
+    /// object): its sender and id. Accepted items go to the inventory's root folder.
+    pub async fn answer_inventory_offer(
+        &self,
+        from: Uuid,
+        transaction: Uuid,
+        accept: bool,
+        from_task: bool,
+    ) -> Result<(), ClientError> {
+        self.interact(Interaction::AnswerInventory {
+            to: from,
+            transaction,
+            accept,
+            from_task,
+        })
+        .await
+    }
+
+    /// Offer an avatar a teleport to where the bot is (StartLure).
+    pub async fn offer_teleport(&self, to: Uuid, message: &str) -> Result<(), ClientError> {
+        self.interact(Interaction::OfferTeleport {
+            to,
+            message: message.to_owned(),
+        })
+        .await
+    }
+
+    /// Say no to a teleport request (IM_TELEPORT_REQUEST): its sender and id.
+    pub async fn decline_teleport_request(
+        &self,
+        to: Uuid,
+        transaction: Uuid,
+    ) -> Result<(), ClientError> {
+        self.interact(Interaction::DeclineTeleportRequest { to, transaction })
+            .await
     }
 }

@@ -52,7 +52,7 @@ region).
   TeleportLandmarkRequest, TeleportLocationRequest; TeleportFinish and CrossedRegion move the
   circuit and the event queue to the new region (Aurora's switch_region), TeleportFailed and
   TeleportLocal handled; tested on the test grid's two regions
-- 🟡 Masters' teleport offers accepted (`FERRO_MASTERS`, services/lures.rs, SecondBot's
+- 🟡 Masters' teleport offers accepted (`FERRO_MASTERS`, now services/interactions.rs, SecondBot's
   BotTeleportOffer); others ignored
 - ✅ Neighbour regions: not connected, like LibreMetaverse's bots (`MultipleSims = false`); a
   bot that stays put needs no child agents. Revisit with movement (phase 7)
@@ -82,7 +82,7 @@ region).
 - 🟡 Is someone a member (`is_group_member`)
 - 🟡 Answer a group invitation (`answer_group_invite`); from crates/client/src/groups.rs, a port
   of Aurora's groups.rs, and network/groups.rs as its session_groups.rs. Tested on the test grid
-- 🟡 Group invitations accepted from masters (services/group_invites.rs, SecondBot's
+- 🟡 Group invitations accepted from masters (now services/interactions.rs, SecondBot's
   BotGroupInviteOffer at level "Owner"), others left unanswered; deliberate difference: never one
   with a membership fee
 - 🟡 Group chat sessions (`group_chat_join`, `group_chat_send`, `group_chat_leave`;
@@ -118,7 +118,10 @@ region).
   Whisper, IM, chatwindows, listwithunread, haveunreadims, getimchat, Groupchat,
   GroupchatHistory, GroupchatListAllUnreadGroups, GroupchatGroupHasUnread, GroupchatAnyUnread,
   GroupchatClearAll); tested through the API against the test grid
-- ⬜ Masters and interactions (friends, teleports, inventory, group invites)
+- 🟡 Masters and interactions (services/interactions.rs, SecondBot's InteractionService): teleport
+  offers and requests, group invitations, inventory offers, friendship offers; a switch and a
+  level (Owner, Friends, Anyone) for each; the friends from the login's buddy list
+- ⬜ SecondBot's one-time "next accept" list and its JSON interaction events
 - 🟡 Commands by IM (services/im_commands.rs, SecondBot's BotImMessage and SignedCommand): from
   masters unsigned, from objects signed (FERRO_OBJECT_MASTER_OPTOUT), the text and JSON forms,
   the reply target (channel, avatar, HTTP POST; not e-mail). Deliberate difference: a master is
