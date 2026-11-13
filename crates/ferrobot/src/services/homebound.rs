@@ -190,9 +190,9 @@ mod tests {
     #[test]
     fn places_as_secondbot_reads_them() {
         assert_eq!(
-            Place::parse("Sandbox%20Decorus/128/120/27"),
+            Place::parse("Some%20Sim/128/120/27"),
             Some(Place {
-                region: "Sandbox Decorus".into(),
+                region: "Some Sim".into(),
                 position: Vec3::new(128.0, 120.0, 27.0),
             })
         );
