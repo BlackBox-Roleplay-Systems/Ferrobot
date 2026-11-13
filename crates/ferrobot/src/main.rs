@@ -163,6 +163,7 @@ async fn main() -> std::process::ExitCode {
         grants: grants.clone(),
         discord: discord.clone(),
         inventory_updates,
+        rabbit: rabbit.as_ref().map(|(handle, ..)| handle.clone()),
     };
     if let Some((_, outbox, settings)) = rabbit {
         log::info!(

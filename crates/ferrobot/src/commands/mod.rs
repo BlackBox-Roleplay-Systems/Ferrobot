@@ -17,6 +17,7 @@ mod notecard;
 mod objects;
 mod outfit;
 mod parcel;
+mod rabbit;
 pub mod reply;
 mod world;
 
@@ -58,6 +59,8 @@ pub struct Ctx {
     pub discord: Option<Arc<crate::discord::Discord>>,
     /// Who hears of the items that come into the inventory (SetInventoryUpdate).
     pub inventory_updates: Arc<crate::inventory_updates::InventoryUpdates>,
+    /// The RabbitMQ connection, when RabbitMQ is on.
+    pub rabbit: Option<Arc<crate::rabbit::Rabbit>>,
 }
 
 /// The commands that change things in world: under the rate limit.
@@ -383,6 +386,7 @@ const COMMANDS: &[(&str, usize)] = &[
     ("DialogRelayChatTarget", 1),
     ("DialogRelayHttpTarget", 1),
     ("DialogResponce", 2),
+    ("SendMessageToQ", 2),
 ];
 
 /// The commands that hand out grants (crate::grants): never run for an avatar on its "command"
@@ -671,6 +675,7 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "DialogRelayChatTarget" => dialogs::relay_chat(ctx, a(0)),
         "DialogRelayHttpTarget" => dialogs::relay_http(ctx, a(0)),
         "DialogResponce" => dialogs::respond(ctx, a(0), a(1)).await,
+        "SendMessageToQ" => rabbit::send_message_to_q(ctx, a(0), a(1)).await,
         _ => return (false, "Unknown command".into()),
     };
     let now = std::time::SystemTime::now()
@@ -729,6 +734,7 @@ pub fn test_ctx() -> Ctx {
         grants: Arc::default(),
         discord: None,
         inventory_updates: Arc::default(),
+        rabbit: None,
     }
 }
 
