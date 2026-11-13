@@ -35,6 +35,7 @@ All settings come from environment variables.
 | `FERRO_BACKUP_SIM` | (none) | Where it goes when home fails, or home restarts |
 | `FERRO_HOME_AFTER` | `1` | Minutes away before it goes home |
 | `FERRO_HOME_SEEK` | `true` | At home, go to the spot given |
+| `FERRO_RATE_LIMIT` | `60` | Commands that change things in world (invites, ejects, chat…) per minute, bursts of 20; they wait their turn, up to a minute. `0`: no limit |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
@@ -60,7 +61,9 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`; the other group commands:
 `Groupnotice`, `GroupnoticeWithAttachment`, `GetGroupBanList`, `GroupBan`, `GetGroupTitles`,
 `GroupActiveTitle`, `GroupActiveGroup`, `GroupJoin`, `GroupLeave`, `GetGroupMemberRoles`,
-`ForceLoadGroups`; SecondBot's chat commands:
+`ForceLoadGroups`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
+`GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`
+(in world, region, logins, uptime, commands run and failed); SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,
 `haveunreadims`, `getimchat`, `Groupchat`, `GroupchatHistory`, `GroupchatListAllUnreadGroups`,
 `GroupchatGroupHasUnread`, `GroupchatAnyUnread`, `GroupchatClearAll`; its dialog commands:

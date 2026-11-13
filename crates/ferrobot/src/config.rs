@@ -36,6 +36,8 @@ pub struct Config {
     pub interactions: Rules,
     /// Where script dialogs are relayed (SecondBot's DialogRelayConfig).
     pub dialog_relay: crate::dialogs::Targets,
+    /// Commands that change things in world, per minute (0: no limit).
+    pub rate_limit: u32,
     /// Homebound: off unless a home sim is given (SecondBot's HomeboundConfig).
     pub homebound: Option<crate::services::homebound::Settings>,
 }
@@ -61,6 +63,7 @@ impl std::fmt::Debug for Config {
             .field("interactions", &self.interactions)
             .field("dialog_relay", &self.dialog_relay)
             .field("homebound", &self.homebound)
+            .field("rate_limit", &self.rate_limit)
             .finish_non_exhaustive()
     }
 }
@@ -265,6 +268,11 @@ impl Config {
                 false,
             )?,
             homebound: homebound()?,
+            rate_limit: number(
+                var("FERRO_RATE_LIMIT").map(|v| ("FERRO_RATE_LIMIT", v)),
+                60,
+                "a number of commands per minute",
+            )?,
             dialog_relay: crate::dialogs::Targets {
                 channel: number(
                     setting("FERRO_DIALOG_CHANNEL", "dialogrelay_RelayChannel"),

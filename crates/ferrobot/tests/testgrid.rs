@@ -819,6 +819,46 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's Info, Core and Self commands, and BotStatus; Logoff stops the bot.
+    #[tokio::test]
+    async fn bot_commands() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        assert_eq!(api.reply("Hello", &[]).await, "world");
+        assert!(api.reply("Version", &[]).await.starts_with("0."));
+        let t: i64 = api.reply("UnixTimeNow", &[]).await.parse().expect("a time");
+        assert!((t - now()).abs() < 5);
+        let pos: Value = serde_json::from_str(&api.reply("GetPosition", &[]).await).expect("map");
+        assert_eq!(pos, serde_json::json!({"x": 128, "y": 128, "z": 25}));
+
+        assert_eq!(api.reply("ReadKeyValue", &["colour"]).await, "");
+        assert_eq!(api.reply("SetKeyValue", &["colour", "blue"]).await, "ok");
+        assert_eq!(api.reply("ReadKeyValue", &["colour"]).await, "blue");
+        assert_eq!(api.reply("ClearKeyValue", &["colour"]).await, "ok");
+        assert_eq!(api.reply("ReadKeyValue", &["colour"]).await, "");
+
+        let (_, inner) = api.run("GetLastCommands", &[]).await;
+        let last: Vec<Value> = inner["args"]
+            .as_array()
+            .expect("args")
+            .iter()
+            .map(|a| serde_json::from_str(a.as_str().expect("text")).expect("json"))
+            .collect();
+        assert_eq!(last[0]["Command"], "ReadKeyValue", "the newest first");
+        assert_eq!(last[1]["Command"], "ClearKeyValue");
+
+        let status: Value = serde_json::from_str(&api.reply("BotStatus", &[]).await).expect("map");
+        assert_eq!(status["online"], true);
+        assert_eq!(status["region"], "Test Region");
+        assert_eq!(status["logins"], 1);
+        assert!(status["commands"].as_u64().expect("a count") >= 10);
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+        bot.wait_log("logged out").await;
+    }
+
     /// SecondBot's other group commands: notices, bans, titles, the active group, join and leave.
     #[tokio::test]
     async fn more_group_commands() {

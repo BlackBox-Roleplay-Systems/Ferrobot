@@ -110,6 +110,9 @@ region).
   GroupBan (GroupAPIv1), GetGroupTitles, GroupActiveTitle, GroupActiveGroup, GroupJoin,
   GroupLeave, GetGroupMemberRoles, ForceLoadGroups; tested through the API on the test grid.
   Not GroupCreate (it costs L$100)
+- 🟡 SecondBot's Hello, Version, UnixTimeNow, GetPosition, GoHome, Logoff, GetLastCommands,
+  ReadKeyValue, SetKeyValue, ClearKeyValue. Deliberate differences: SetKeyValue and ClearKeyValue
+  work (SecondBot's check is inverted), GetLastCommands gives the newest five
 - ⬜ SecondBot's `/json` endpoint (a signed JSON body); not used by BB
 - 🟡 Behind a Cloudflare Tunnel: 90 s command deadline (Cloudflare waits 100 s), `GET /health`,
   `deploy/compose.yaml` with cloudflared, README section; to verify through a real tunnel (human)
@@ -156,6 +159,8 @@ region).
 
 ## Phase 8 - Running it for real
 
-- ⬜ Status endpoint and metrics
-- ⬜ Rate limits on commands that change things
+- 🟡 Status and metrics: `GET /health`, the BotStatus command (in world, region, logins, uptime,
+  commands run and failed), one log line per command
+- 🟡 Rate limit on the commands that change things (FERRO_RATE_LIMIT, 60 a minute, bursts of 20;
+  they wait their turn up to a minute, then "Too many commands [Retry later]")
 - 🟡 Published image with versioned tags (done in phase 1, see there)

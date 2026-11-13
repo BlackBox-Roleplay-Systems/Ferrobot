@@ -7,6 +7,7 @@ mod dialogs;
 mod history;
 mod masters;
 mod services;
+mod store;
 
 use config::Config;
 use ferro_client::login::{self, LoginError, LoginRequest};
@@ -37,9 +38,12 @@ async fn main() -> std::process::ExitCode {
     log::debug!("{cfg:?}");
 
     let (stop_tx, stop_rx) = watch::channel(false);
+    // shared: a signal stops the bot, and so does the Logoff command
+    let stop_tx = std::sync::Arc::new(stop_tx);
+    let signal_stop = stop_tx.clone();
     tokio::spawn(async move {
         wait_for_stop().await;
-        let _ = stop_tx.send(true);
+        let _ = signal_stop.send(true);
     });
 
     let http = match reqwest::Client::builder()
@@ -91,6 +95,9 @@ async fn main() -> std::process::ExitCode {
         client: client.clone(),
         history,
         dialogs,
+        store: std::sync::Arc::new(store::Store::new(cfg.rate_limit)),
+        home: cfg.homebound.as_ref().map(|h| h.home.clone()),
+        stop: stop_tx.clone(),
     };
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(

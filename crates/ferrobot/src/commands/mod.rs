@@ -3,6 +3,7 @@
 //! A deliberate difference is noted on the command.
 
 mod avatars;
+mod bot;
 mod chat;
 mod dialogs;
 mod groups;
@@ -11,6 +12,8 @@ pub mod reply;
 
 use crate::dialogs::Dialogs;
 use crate::history::History;
+use crate::services::homebound::Place;
+use crate::store::{CommandRecord, Store};
 use ferro_client::Client;
 use reply::Answer;
 use std::sync::Arc;
@@ -22,7 +25,33 @@ pub struct Ctx {
     pub client: Client,
     pub history: Arc<History>,
     pub dialogs: Arc<Dialogs>,
+    pub store: Arc<Store>,
+    /// Homebound's home, for GoHome.
+    pub home: Option<Place>,
+    /// Stops the bot (Logoff).
+    pub stop: Arc<tokio::sync::watch::Sender<bool>>,
 }
+
+/// The commands that change things in world: under the rate limit.
+const CHANGING: &[&str] = &[
+    "GroupInvite",
+    "GroupEject",
+    "GroupAddRole",
+    "GroupRemoveRole",
+    "GroupBan",
+    "Groupnotice",
+    "GroupnoticeWithAttachment",
+    "GroupJoin",
+    "GroupLeave",
+    "Say",
+    "Shout",
+    "Whisper",
+    "IM",
+    "Groupchat",
+];
+
+/// How long a command that changes things may wait for the rate limit.
+const PATIENCE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The commands, with their number of arguments (SecondBot checks the count first).
 const COMMANDS: &[(&str, usize)] = &[
@@ -64,6 +93,17 @@ const COMMANDS: &[(&str, usize)] = &[
     ("GroupLeave", 1),
     ("GetGroupMemberRoles", 2),
     ("ForceLoadGroups", 0),
+    ("Hello", 0),
+    ("Version", 0),
+    ("UnixTimeNow", 0),
+    ("GetPosition", 0),
+    ("GoHome", 0),
+    ("Logoff", 0),
+    ("GetLastCommands", 0),
+    ("ReadKeyValue", 1),
+    ("SetKeyValue", 2),
+    ("ClearKeyValue", 1),
+    ("BotStatus", 0),
     ("DialogRelayAvatarTarget", 1),
     ("DialogRelayChatTarget", 1),
     ("DialogRelayHttpTarget", 1),
@@ -88,6 +128,11 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         );
     }
     let a = |i: usize| args[i].as_str();
+    if CHANGING.contains(&command) && !ctx.store.admit(PATIENCE).await {
+        log::warn!("{command}: too many commands, refused");
+        let answer = reply::failure(command, "Too many commands [Retry later]", args);
+        return (true, answer);
+    }
     let answer: Answer = match command {
         "SimName" => info::sim_name(client),
         "Name" => info::name(client),
@@ -127,12 +172,33 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "GroupLeave" => groups::group_leave(client, a(0)).await,
         "GetGroupMemberRoles" => groups::get_group_member_roles(client, a(0), a(1)).await,
         "ForceLoadGroups" => groups::force_load_groups(client).await,
+        "Hello" => info::hello(),
+        "Version" => info::version(),
+        "UnixTimeNow" => info::unix_time_now(),
+        "GetPosition" => info::get_position(client),
+        "GoHome" => bot::go_home(ctx),
+        "Logoff" => bot::logoff(ctx),
+        "GetLastCommands" => bot::get_last_commands(ctx),
+        "ReadKeyValue" => bot::read_key_value(ctx, a(0)),
+        "SetKeyValue" => bot::set_key_value(ctx, a(0), a(1)),
+        "ClearKeyValue" => bot::clear_key_value(ctx, a(0)),
+        "BotStatus" => bot::bot_status(ctx),
         "DialogRelayAvatarTarget" => dialogs::relay_avatar(ctx, a(0)).await,
         "DialogRelayChatTarget" => dialogs::relay_chat(ctx, a(0)),
         "DialogRelayHttpTarget" => dialogs::relay_http(ctx, a(0)),
         "DialogResponce" => dialogs::respond(ctx, a(0), a(1)).await,
         _ => return (false, "Unknown command".into()),
     };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+    ctx.store.record(CommandRecord {
+        Command: command.to_owned(),
+        Args: args.to_vec(),
+        Unixtime: now,
+        status: answer.contains(r#""status":true"#),
+        results: None,
+    });
     (true, answer)
 }
 
@@ -173,6 +239,9 @@ mod tests {
             client,
             history: Arc::default(),
             dialogs: Arc::default(),
+            store: Arc::new(Store::new(0)),
+            home: None,
+            stop: Arc::new(tokio::sync::watch::channel(false).0),
         };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,
