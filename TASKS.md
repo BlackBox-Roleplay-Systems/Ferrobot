@@ -492,6 +492,8 @@ baking: the bot says so and goes on.
   AllowSendAlertStatus for both), the allowed list ignores spaces and case, the sender is named
   "<address> via Ferrobot", HideStatusOutput ignored (BotStatus counts the mails)
 - ⬜ E-mail: to try with a real SMTP server (human): STARTTLS on 587, TLS on 465, a refused login
+- 🔧 Service control: SecondBot's EnableAndStartService, StopService, RestartService and
+  ChangeConfigValue
 
 ## Phase 8 - Running it for real
 
