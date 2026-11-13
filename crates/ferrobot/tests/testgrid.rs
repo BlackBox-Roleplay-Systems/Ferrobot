@@ -3299,6 +3299,124 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's custom commands: steps with the caller's arguments in, by the API and by IM,
+    /// set by Ferrobot's names and SecondBot's; an argument cannot change a step's shape, and a
+    /// command grant does not reach a granting command through a custom one.
+    #[tokio::test]
+    async fn custom_commands() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_settings(
+            &grid,
+            &[
+                ("FERRO_MASTERS", "Some Resident"),
+                ("FERRO_CUSTOM_COMMAND_1_TRIGGER", "greet"),
+                ("FERRO_CUSTOM_COMMAND_1_ARGS", "1"),
+                ("FERRO_CUSTOM_COMMAND_1_STEP_1", "Say|||0~#~Hello [C_ARG_1]"),
+                ("FERRO_CUSTOM_COMMAND_1_STEP_2", "Name#|#6"),
+                ("FERRO_CUSTOM_COMMAND_1_STEP_3", "grant|||[C_ARG_1]"),
+                ("customcommands_count", "1"),
+                ("customcommands_1_trigger", "grant"),
+                ("customcommands_1_args", "1"),
+                ("customcommands_1_steps", "2"),
+                (
+                    "customcommands_1_commands_1",
+                    "SetPermFlag|||[C_ARG_1]~#~command~#~true~#~true",
+                ),
+                ("customcommands_1_commands_2", "Say|||0~#~granted [C_ARG_1]"),
+            ],
+        )
+        .await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("2 custom commands").await;
+        let said = |text: &'static str| move |s: &Seen| matches!(s, Seen::Chat { message, channel: 0, .. } if message == text);
+
+        // by the API: the steps in order, a step's reply target, chaining refused
+        assert_eq!(
+            api.run("greet", &["world"]).await,
+            (
+                true,
+                Value::String("greet: ran with 2 commands issued".into())
+            )
+        );
+        wait_for(&grid, &bot, "the first step", said("Hello world")).await;
+        wait_for(&grid, &bot, "the second step's answer", |s| {
+            matches!(s, Seen::Chat { message, channel: 6, .. } if message.contains(r#""reply":"Test Bot""#))
+        })
+        .await;
+        bot.wait_log("custom command greet: step 3 grant (1 args): failed")
+            .await;
+        assert_eq!(
+            api.run("greet", &[]).await,
+            (false, Value::String("Incorrect number of args".into()))
+        );
+        // the trigger as written; a built-in name in another case is the built-in
+        assert_eq!(
+            api.run("Greet", &["x"]).await,
+            (false, Value::String("Unknown command".into()))
+        );
+
+        // an argument with the separators stays one argument: no more arguments, no reply target
+        let sneaky = "x~#~y#|#7";
+        let t = now();
+        let body = serde_json::json!({"cmd": "greet", "args": [sneaky], "unixtime": t,
+            "signing": signature("greet", &[sneaky], Some(t), SECRET)});
+        let answer = api.json(&body.to_string()).await;
+        assert!(
+            answer.contains("greet: ran with 2 commands issued"),
+            "{answer}"
+        );
+        wait_for(&grid, &bot, "the whole argument", said("Hello x~#~y#|#7")).await;
+
+        // by IM: an avatar granted commands runs a custom command, never one that grants
+        let other = ferro_testgrid::Resident {
+            id: uuid_from(0x5eed_0002),
+            first: "Other".into(),
+            last: "Avatar".into(),
+        };
+        let some = ferro_testgrid::Resident {
+            id: uuid_from(0x5eed_0001),
+            first: "Some".into(),
+            last: "Resident".into(),
+        };
+        api.reply("SetPermFlag", &[OTHER, "command", "true", "true"])
+            .await;
+        grid.im_from(&other, &format!("grant|||{OTHER}"));
+        bot.wait_log(
+            "command by IM from Other Avatar: custom command grant refused, a command grant does \
+             not reach its step SetPermFlag",
+        )
+        .await;
+        grid.im_from(&other, "greet|||friend");
+        wait_for(
+            &grid,
+            &bot,
+            "the granted avatar's command",
+            said("Hello friend"),
+        )
+        .await;
+        // a master runs it whole
+        grid.im_from(&some, &format!("grant|||{SOME}"));
+        let granted = format!("granted {SOME}");
+        wait_for(
+            &grid,
+            &bot,
+            "the master's command",
+            |s| matches!(s, Seen::Chat { message, channel: 0, .. } if *message == granted),
+        )
+        .await;
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::Chat { message, .. } if message.starts_with("granted ") && message.contains(OTHER))),
+            0
+        );
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::Chat { channel: 7, .. })),
+            0
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// Profiles: read, and the bot's own changed (the whole profile sent, as OpenSim needs).
     #[tokio::test]
     async fn profile_commands() {

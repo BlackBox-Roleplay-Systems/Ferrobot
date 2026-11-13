@@ -23,7 +23,7 @@
 
 pub mod signing;
 
-use crate::commands::{self, Ctx};
+use crate::commands::{self, Caller, Ctx};
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Form, State};
@@ -71,9 +71,15 @@ fn now() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
 }
 
-/// A command, cut short at [`COMMAND_DEADLINE`].
-pub async fn run_command(ctx: &Ctx, command: &str, args: &[String]) -> (bool, String) {
-    match tokio::time::timeout(COMMAND_DEADLINE, commands::run(ctx, command, args)).await {
+/// A command, cut short at [`COMMAND_DEADLINE`] (a custom command's steps all within it).
+pub async fn run_command(
+    ctx: &Ctx,
+    caller: Caller,
+    command: &str,
+    args: &[String],
+) -> (bool, String) {
+    let run = commands::run_as(ctx, caller, command, args);
+    match tokio::time::timeout(COMMAND_DEADLINE, run).await {
         Ok(answer) => answer,
         Err(_) => (false, "No reply from the grid [Retry later]".to_owned()),
     }
@@ -113,7 +119,7 @@ async fn run(State(api): State<Arc<Api>>, Form(f): Form<RunForm>) -> Response {
         log::warn!("api: {command:?} refused: bad signature or too old");
         return json("Command request rejected".into());
     }
-    let (ran, value) = run_command(&api.ctx, &command, &args).await;
+    let (ran, value) = run_command(&api.ctx, Caller::Trusted, &command, &args).await;
     log::info!(
         "api: {command} ({} args): {}",
         args.len(),
@@ -152,7 +158,7 @@ async fn json_answer(api: &Api, body: &[u8]) -> String {
         log::warn!("api /json: refused: malformed, bad signature or too old");
         return "Command request rejected".into();
     };
-    let (ran, value) = run_command(&api.ctx, &u.command, &u.args).await;
+    let (ran, value) = run_command(&api.ctx, Caller::Trusted, &u.command, &u.args).await;
     log::info!(
         "api /json: {} ({} args): {}",
         u.command,

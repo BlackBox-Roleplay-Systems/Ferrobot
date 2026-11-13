@@ -169,6 +169,9 @@ async fn main() -> std::process::ExitCode {
         discord: discord.clone(),
         inventory_updates,
         rabbit: rabbit.as_ref().map(|(handle, ..)| handle.clone()),
+        custom: std::sync::Arc::new(commands::custom::CustomCommands::new(
+            cfg.custom_commands.clone(),
+        )),
     };
     if let Some((_, outbox, settings)) = rabbit {
         log::info!(
@@ -194,6 +197,9 @@ async fn main() -> std::process::ExitCode {
             }
         };
         tokio::spawn(rabbit::run(settings, outbox, inbound));
+    }
+    if !cfg.custom_commands.is_empty() {
+        log::info!("{} custom commands", cfg.custom_commands.len());
     }
     if let Some(d) = &discord {
         log::info!("discord: server {}", d.settings.server);
