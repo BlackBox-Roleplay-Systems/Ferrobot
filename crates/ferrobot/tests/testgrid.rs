@@ -590,6 +590,23 @@ mod api {
             inner["reply"].as_str().expect("reply").to_owned()
         }
 
+        /// Asks GetPosition until it answers `expected`.
+        async fn wait_position(&self, expected: Value) {
+            let deadline = tokio::time::Instant::now() + WAIT;
+            loop {
+                let pos: Value =
+                    serde_json::from_str(&self.reply("GetPosition", &[]).await).expect("map");
+                if pos == expected {
+                    return;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "{pos}, not {expected}"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+
         /// The `reply` and `args` of a command that failed.
         async fn failure(&self, command: &str, args: &[&str]) -> (String, Value) {
             let (key, inner) = self.run(command, args).await;
@@ -1252,8 +1269,13 @@ mod api {
                 .await
         );
         assert!(grid.wait_for(WAIT, |s| *s == Seen::AgentSit).await);
+        // seated, the bot is where its seat is, a metre up
+        let seat = ferro_testgrid::SEAT_POSITION;
+        let at = |x: f32, y: f32, z: f32| serde_json::json!({"x": x.round() as i64, "y": y.round() as i64, "z": z.round() as i64});
+        api.wait_position(at(seat.x, seat.y, seat.z + 1.0)).await;
         assert_eq!(api.reply("Stand", &[]).await, "ok");
         assert!(grid.wait_for(WAIT, flags(STAND_UP)).await);
+        api.wait_position(at(seat.x + 1.0, seat.y, seat.z)).await;
         assert_eq!(api.reply("Sit", &["ground"]).await, "ok");
         assert!(grid.wait_for(WAIT, flags(SIT_ON_GROUND)).await);
         assert_eq!(
@@ -1261,19 +1283,21 @@ mod api {
             "Invaild object uuid and not ground"
         );
 
-        // the bot stands at 128, 128, 25, facing east: it turns north, then walks
-        assert_eq!(api.reply("AutoPilot", &["128", "138", "25"]).await, "ok");
+        // the bot stands next to the seat, facing east: it turns north-east, then walks back
+        assert_eq!(api.reply("AutoPilot", &["128", "128", "25"]).await, "ok");
         assert!(
-            grid.wait_for(WAIT, |s| *s == Seen::Facing { heading: 0 })
+            grid.wait_for(WAIT, |s| *s == Seen::Facing { heading: 44 })
                 .await
         );
         assert!(
             grid.wait_for(WAIT, |s| *s
                 == Seen::AutoPilot {
-                    params: vec!["256128".into(), "256138".into(), "25".into()]
+                    params: vec!["256128".into(), "256128".into(), "25".into()]
                 })
             .await
         );
+        // the region moves it there (a terse update)
+        api.wait_position(at(128.0, 128.0, 25.0)).await;
         assert_eq!(
             api.failure("AutoPilot", &["300", "128", "25"]).await.0,
             "x value out of range 0-255"

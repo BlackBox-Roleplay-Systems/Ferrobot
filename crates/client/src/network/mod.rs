@@ -194,6 +194,8 @@ struct Session<'a> {
     appearance_asked: bool,
     /// Region names asked of the world map (lower case), and who waits.
     map_waits: Vec<(String, oneshot::Sender<Option<u64>>)>,
+    /// Where the region's root objects and the bot's avatar stand (the object updates).
+    places: crate::objects::Places,
 }
 
 impl Session<'_> {
@@ -461,6 +463,19 @@ impl Session<'_> {
         self.send_agent_update();
     }
 
+    /// Object updates: the bot's own place follows its avatar's (process_object_update).
+    fn on_places(&mut self, placed: &[crate::objects::Placed]) {
+        for p in placed {
+            self.places.update(p, self.login.agent_id);
+        }
+        if let Some(at) = self.places.own_position()
+            && at != self.position
+        {
+            self.position = at;
+            self.shared.state_mut().position = at;
+        }
+    }
+
     fn request_balance(&mut self) {
         let mut m = MoneyBalanceRequest::default();
         m.agent_data.agent_id = self.login.agent_id;
@@ -564,6 +579,7 @@ impl Session<'_> {
         self.movement_sent = None;
         self.region_name.clear();
         self.caps.clear();
+        self.places.clear();
         self.shared.state_mut().region = None;
         self.send_use_circuit_code();
         self.start_caps(seed);
@@ -911,6 +927,35 @@ impl Session<'_> {
             };
             self.on_session_message(&im);
             self.shared.emit(Event::InstantMessage(im));
+        } else if id == ObjectUpdate::ID {
+            let m: ObjectUpdate = pkt.decode()?;
+            let placed: Vec<_> = m
+                .object_data
+                .iter()
+                .filter_map(crate::objects::from_full)
+                .collect();
+            self.on_places(&placed);
+        } else if id == ObjectUpdateCompressed::ID {
+            let m: ObjectUpdateCompressed = pkt.decode()?;
+            let placed: Vec<_> = m
+                .object_data
+                .iter()
+                .filter_map(|b| crate::objects::from_compressed(&b.data))
+                .collect();
+            self.on_places(&placed);
+        } else if id == ImprovedTerseObjectUpdate::ID {
+            let m: ImprovedTerseObjectUpdate = pkt.decode()?;
+            let placed: Vec<_> = m
+                .object_data
+                .iter()
+                .filter_map(crate::objects::from_terse)
+                .collect();
+            self.on_places(&placed);
+        } else if id == KillObject::ID {
+            let m: KillObject = pkt.decode()?;
+            for o in &m.object_data {
+                self.places.kill(o.id);
+            }
         } else if id == AvatarSitResponse::ID {
             // process_avatar_sit_response: the region seats the bot; AgentSit when it asks
             let m: AvatarSitResponse = pkt.decode()?;
@@ -1419,6 +1464,7 @@ async fn run(
         picker_waits: HashMap::new(),
         groups: groups::GroupWaits::default(),
         map_waits: Vec::new(),
+        places: Default::default(),
         appearance_asked: false,
         created: HashMap::new(),
         next_callback: 0,

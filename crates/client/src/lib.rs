@@ -20,6 +20,7 @@ pub mod inventory;
 pub mod login;
 pub mod names;
 mod network;
+pub mod objects;
 pub mod region_restart;
 pub mod state;
 mod xmlrpc;

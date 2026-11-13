@@ -41,6 +41,8 @@ struct Region {
     facing: HashMap<SocketAddr, i32>,
     /// The control flags each bot last sent.
     controls: HashMap<SocketAddr, u32>,
+    /// Where each bot's avatar stands, as the object updates told it.
+    avatar_at: HashMap<SocketAddr, Vec3>,
 }
 
 impl Region {
@@ -124,6 +126,10 @@ impl Region {
                     self.shared.saw(Seen::Controls {
                         flags: a.control_flags,
                     });
+                    // AGENT_CONTROL_STAND_UP: off the seat, next to it
+                    if a.control_flags & 0x1_0000 != 0 {
+                        self.avatar_update(from, SEAT_POSITION + Vec3::X, 0);
+                    }
                 }
                 let q = a.body_rotation;
                 let yaw = 2.0 * q.z.atan2(q.w);
@@ -285,7 +291,59 @@ impl Region {
         m.data.look_at = Vec3::X;
         m.data.region_handle = self.shared.regions[self.index].handle();
         m.sim_data.channel_version = str_field("Ferrobot Test Grid 1.0");
+        let at = m.data.position;
         self.send(to, &m, true);
+        self.avatar_update(to, at, 0);
+    }
+
+    /// The bot's avatar in a full ObjectUpdate, standing or seated on `parent`.
+    fn avatar_update(&mut self, to: SocketAddr, position: Vec3, parent: u32) {
+        self.avatar_at.insert(to, position);
+        let block = object_block(
+            AVATAR_LOCAL_ID,
+            self.shared.agent_id,
+            parent,
+            LL_PCODE_AVATAR,
+            position,
+        );
+        let m = ObjectUpdate {
+            region_data: object_update::RegionData {
+                region_handle: self.shared.regions[self.index].handle(),
+                time_dilation: u16::MAX,
+            },
+            object_data: vec![block],
+        };
+        self.send(to, &m, true);
+    }
+
+    /// The avatar moved: an ImprovedTerseObjectUpdate, its rotation at identity.
+    fn avatar_moved(&mut self, to: SocketAddr, position: Vec3) {
+        self.avatar_at.insert(to, position);
+        let mut data = Vec::new();
+        data.extend(AVATAR_LOCAL_ID.to_le_bytes());
+        data.extend([0, 1]);
+        // the foot plane
+        data.extend([0u8; 16]);
+        for f in position.to_array() {
+            data.extend(f.to_le_bytes());
+        }
+        // velocity, acceleration, rotation (x, y, z, w), angular velocity, by U16 in a range:
+        // 0x7fff is zero, 0xffff the top of the range
+        for i in 0..13 {
+            let v: u16 = if i == 9 { u16::MAX } else { 0x7fff };
+            data.extend(v.to_le_bytes());
+        }
+        let m = ImprovedTerseObjectUpdate {
+            region_data: improved_terse_object_update::RegionData {
+                region_handle: self.shared.regions[self.index].handle(),
+                time_dilation: u16::MAX,
+            },
+            object_data: vec![improved_terse_object_update::ObjectData {
+                data,
+                texture_entry: vec![],
+            }],
+        };
+        self.send(to, &m, false);
     }
 
     /// LLAgent's AgentDataUpdateRequest: AgentDataUpdate (the active group) on UDP, and the
@@ -443,6 +501,16 @@ impl Region {
             }
         } else if id == AgentSit::ID {
             self.shared.saw(Seen::AgentSit);
+            let seat = object_block(SEAT_LOCAL_ID, SEAT, 0, LL_PCODE_VOLUME, SEAT_POSITION);
+            let m = ObjectUpdate {
+                region_data: object_update::RegionData {
+                    region_handle: self.shared.regions[self.index].handle(),
+                    time_dilation: u16::MAX,
+                },
+                object_data: vec![seat],
+            };
+            self.send(from, &m, true);
+            self.avatar_update(from, Vec3::Z, SEAT_LOCAL_ID);
         } else if id == SetAlwaysRun::ID {
             if let Ok(m) = pkt.decode::<SetAlwaysRun>() {
                 self.shared.saw(Seen::AlwaysRun {
@@ -453,13 +521,21 @@ impl Region {
             if let Ok(m) = pkt.decode::<GenericMessage>()
                 && field_str(&m.method_data.method) == "autopilot"
             {
-                self.shared.saw(Seen::AutoPilot {
-                    params: m
-                        .param_list
-                        .iter()
-                        .map(|p| field_str(&p.parameter))
-                        .collect(),
-                });
+                let params: Vec<String> = m
+                    .param_list
+                    .iter()
+                    .map(|p| field_str(&p.parameter))
+                    .collect();
+                // global x and y, the height in the region (LLClientView.HandleAutopilot): the
+                // avatar is there at once
+                let region = &self.shared.regions[self.index];
+                let (rx, ry) = (f64::from(region.x), f64::from(region.y));
+                let num = |i: usize| params.get(i).and_then(|p| p.parse::<f64>().ok());
+                if let (Some(x), Some(y), Some(z)) = (num(0), num(1), num(2)) {
+                    let to = Vec3::new((x - rx) as f32, (y - ry) as f32, z as f32);
+                    self.avatar_moved(from, to);
+                }
+                self.shared.saw(Seen::AutoPilot { params });
             }
         } else if id == MoneyBalanceRequest::ID {
             self.balance(from);
@@ -1230,6 +1306,7 @@ pub async fn run(
         outbox: Vec::new(),
         facing: HashMap::new(),
         controls: HashMap::new(),
+        avatar_at: HashMap::new(),
     };
     let mut data = vec![0u8; 8192];
     let mut ping_id = 0u8;
@@ -1254,5 +1331,43 @@ pub async fn run(
                 log::debug!("testgrid region send: {e}");
             }
         }
+    }
+}
+
+/// The bot's avatar's local id in the region.
+const AVATAR_LOCAL_ID: u32 = 0xa0a0;
+/// The object the bot sits on, whatever key it asked to sit on.
+const SEAT: Uuid = Uuid::from_u128(0x5ea7);
+const SEAT_LOCAL_ID: u32 = 0x5ea7;
+pub const SEAT_POSITION: Vec3 = Vec3::new(100.0, 100.0, 20.0);
+/// LL_PCODE_VOLUME, LL_PCODE_LEGACY_AVATAR (llprimitive/object_flags.h)
+const LL_PCODE_VOLUME: u8 = 9;
+const LL_PCODE_AVATAR: u8 = 47;
+
+/// A full ObjectUpdate block: the place (after a foot plane for an avatar), the rest at zero.
+fn object_block(
+    local_id: u32,
+    full_id: Uuid,
+    parent: u32,
+    pcode: u8,
+    position: Vec3,
+) -> object_update::ObjectData {
+    let mut data = Vec::new();
+    if pcode == LL_PCODE_AVATAR {
+        data.extend([0u8; 16]);
+    }
+    for v in [position, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO] {
+        for f in v.to_array() {
+            data.extend(f.to_le_bytes());
+        }
+    }
+    object_update::ObjectData {
+        id: local_id,
+        full_id,
+        parent_id: parent,
+        p_code: pcode,
+        scale: Vec3::ONE,
+        object_data: data,
+        ..Default::default()
     }
 }

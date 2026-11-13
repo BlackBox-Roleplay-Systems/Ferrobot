@@ -187,6 +187,10 @@ baking: the bot says so and goes on.
   toward the target first, as its TurnToward), AutoPilotStop, RotateTo, RotateToFace (the avatar's
   coarse location), RotateToFaceVector, HoverHeight; tested on the test grid. Deliberate difference: RotateTo works (SecondBot's check is inverted, it refuses
   every number); the heading is in degrees clockwise from north
+- 🟡 The bot's own place follows its avatar's object updates (crates/client/src/objects.rs, from
+  Aurora's objects.rs: full, compressed and terse updates; seated, the seat's place plus the
+  offset, as SecondBot's AvatarPositions). Tried on NGC: flying, landing and the autopilot moved
+  it, and GetPosition matched the region's own position
 - ⬜ Movement: walking by keys (forward, back, turn) and following an avatar
 - ⬜ Profiles, animations and gestures, parcels, estate
 

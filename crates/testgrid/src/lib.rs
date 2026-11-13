@@ -17,6 +17,7 @@ mod groups;
 pub mod inventory;
 
 pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GROUP};
+pub use region::SEAT_POSITION;
 mod http;
 mod login;
 mod region;

@@ -27,6 +27,7 @@ crates/
     src/state.rs           what it keeps: who and where the bot is, its groups, its health
     src/names.rs           key <-> name cache
     src/region_restart.rs  region restart notices (from Aurora)
+    src/objects.rs         where objects and the bot stand, from the object updates (from Aurora)
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
