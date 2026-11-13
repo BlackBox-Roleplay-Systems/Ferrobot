@@ -26,9 +26,11 @@
 //! every item an inventory fetch shows.
 
 use crate::commands::reply::{cs_bool_text, json, json_pairs};
+use crate::config::{ConfigError, Source};
 use crate::grants::{Grant, Grants, Used};
 use crate::inventory_updates::asset_type_name;
 use crate::masters::Masters;
+use crate::services::control::Spec;
 use crate::services::homebound::Homebound;
 use ferro_client::events::{AddedItem, dialog};
 use ferro_client::{Client, Event, InstantMessage};
@@ -439,6 +441,58 @@ impl Service {
             self.tell(&event).await;
         }
     }
+}
+
+/// InteractionService's settings (SecondBot's InteractionConfig, `interaction_…`).
+const SETTINGS: &[&str] = &[
+    "AcceptTeleports",
+    "TeleportRequestLevel",
+    "AcceptGroupInvites",
+    "GroupInviteLevel",
+    "AcceptInventory",
+    "InventoryTransferLevel",
+    "AcceptFriendRequests",
+    "FriendRequestLevel",
+    "EnableJsonOutputEvents",
+    "JsonOutputEventsTarget",
+];
+
+fn settings(s: &Source) -> Result<(Rules, Option<String>), ConfigError> {
+    Ok((
+        crate::config::interactions(s)?,
+        crate::config::interaction_events(s)?,
+    ))
+}
+
+/// InteractionService, for the service control (services/control.rs). Stopped, the bot leaves
+/// every offer unanswered.
+pub fn spec(
+    client: Client,
+    masters: Arc<Masters>,
+    homebound: Arc<Homebound>,
+    grants: Arc<Grants>,
+    http: reqwest::Client,
+    smtp: Arc<crate::services::smtp::Mailer>,
+) -> Spec {
+    Spec::new(
+        "InteractionService",
+        "interaction",
+        SETTINGS,
+        settings,
+        move |(rules, events)| {
+            let service = Arc::new(Service {
+                client: client.clone(),
+                masters: masters.clone(),
+                rules,
+                homebound: homebound.clone(),
+                grants: grants.clone(),
+                http: http.clone(),
+                smtp: smtp.clone(),
+                events,
+            });
+            vec![tokio::spawn(run(service, client.subscribe()))]
+        },
+    )
 }
 
 pub async fn run(service: Arc<Service>, mut events: Receiver<Event>) {

@@ -14,6 +14,7 @@
 
 use crate::api::signing::sign_with;
 use crate::rabbit::Rabbit;
+use crate::services::control::Spec;
 use ferro_client::events::{chat_type, dialog};
 use ferro_client::{Client, Event};
 use serde::Serialize;
@@ -237,6 +238,42 @@ async fn display_name(client: &Client, id: Uuid) -> String {
         Ok(Some(d)) => d.display_name,
         _ => id.to_string(),
     }
+}
+
+/// RelayService's settings (SecondBot's RelayConfig, `relay_…`; FERRO_RELAY_<n> stay as they are).
+const SETTINGS: &[&str] = &[
+    "count",
+    "UseShortEncoder",
+    "<n>_enabled",
+    "<n>_extended",
+    "<n>_source_type",
+    "<n>_source_option",
+    "<n>_target_type",
+    "<n>_target_option",
+    "<n>_RelayConfig",
+];
+
+/// RelayService, for the service control (services/control.rs).
+pub fn spec(client: Client, secret: Option<String>, rabbit: Option<Arc<Rabbit>>) -> Spec {
+    Spec::new(
+        "RelayService",
+        "relay",
+        SETTINGS,
+        crate::config::relays,
+        move |relays| {
+            if relays.is_empty() {
+                return Vec::new();
+            }
+            let events = client.subscribe();
+            vec![tokio::spawn(run(
+                client.clone(),
+                events,
+                relays,
+                secret.clone(),
+                rabbit.clone(),
+            ))]
+        },
+    )
 }
 
 pub async fn run(

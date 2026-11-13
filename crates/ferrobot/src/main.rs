@@ -71,7 +71,6 @@ async fn main() -> std::process::ExitCode {
     network.set_timeouts(cfg.timeouts);
     // Each service's subscription is made here, before its task runs and before the login: a
     // task that subscribed when it first ran could miss the first events after the login.
-    tokio::spawn(services::chat_log::run(client.clone(), client.subscribe()));
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
     let homebound = std::sync::Arc::new(services::homebound::Homebound::default());
@@ -95,42 +94,12 @@ async fn main() -> std::process::ExitCode {
         client.subscribe(),
         grants.clone(),
     ));
-    tokio::spawn(services::interactions::run(
-        std::sync::Arc::new(services::interactions::Service {
-            client: client.clone(),
-            masters: masters.clone(),
-            rules: cfg.interactions,
-            homebound: homebound.clone(),
-            grants: grants.clone(),
-            http: http.clone(),
-            smtp: smtp.clone(),
-            events: cfg.interaction_events.clone(),
-        }),
+    // a region restart sends the bot to its Second Life home, unless homebound runs
+    tokio::spawn(services::restart::run(
+        client.clone(),
         client.subscribe(),
+        homebound.clone(),
     ));
-    // SecondBot turns homebound off when RLV is on: the objects decide where the bot goes
-    let homebound_settings = match cfg.homebound.clone() {
-        Some(_) if cfg.rlv => {
-            log::info!("homebound off: RLV is on");
-            None
-        }
-        h => h,
-    };
-    match homebound_settings {
-        Some(settings) => {
-            log::info!("homebound to {}", settings.home.region);
-            tokio::spawn(services::homebound::run(
-                client.clone(),
-                client.subscribe(),
-                settings,
-                homebound.clone(),
-            ));
-        }
-        // without homebound, a restart sends the bot to its Second Life home
-        None => {
-            tokio::spawn(services::restart::run(client.clone(), client.subscribe()));
-        }
-    }
     let inventory_updates = std::sync::Arc::new(inventory_updates::InventoryUpdates::default());
     tokio::spawn(inventory_updates::run(
         client.clone(),
@@ -160,55 +129,31 @@ async fn main() -> std::process::ExitCode {
         let (handle, outbox) = rabbit::Rabbit::new();
         (handle, outbox, settings)
     });
-    tokio::spawn(services::relays::run(
-        client.clone(),
-        client.subscribe(),
-        cfg.relays.clone(),
-        cfg.shared_secret.clone(),
-        rabbit.as_ref().map(|(handle, ..)| handle.clone()),
-    ));
     tokio::spawn(services::chatgpt::run(
         client.clone(),
         client.subscribe(),
         cfg.chatgpt.clone(),
     ));
     let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));
-    tokio::spawn(dialogs::run(
-        client.clone(),
-        client.subscribe(),
-        dialogs.clone(),
-        cfg.shared_secret.clone(),
-    ));
-    // subscribed before the login, as every service
-    let discord = cfg
-        .discord
-        .clone()
-        .map(|s| discord::Discord::new(s, cfg.shared_secret.clone()));
-    if let Some(d) = &discord {
-        tokio::spawn(discord::relay::from_world(
-            client.clone(),
-            d.clone(),
-            client.subscribe(),
-        ));
-    }
+    let control = std::sync::Arc::new(services::control::Services::new(cfg.allow_service_control));
     let ctx = commands::Ctx {
         client: client.clone(),
         history,
-        dialogs,
+        dialogs: dialogs.clone(),
         store: std::sync::Arc::new(store::Store::new(cfg.rate_limit)),
-        home: cfg.homebound.as_ref().map(|h| h.home.clone()),
         stop: stop_tx.clone(),
         homebound: homebound.clone(),
         allow_funds: cfg.allow_funds,
         http: http.clone(),
         grants: grants.clone(),
-        discord: discord.clone(),
+        discord: std::sync::Arc::default(),
         inventory_updates,
         rabbit: rabbit.as_ref().map(|(handle, ..)| handle.clone()),
         custom: std::sync::Arc::new(commands::custom::CustomCommands::new(
             cfg.custom_commands.clone(),
         )),
         smtp,
+        services: control.clone(),
     };
     if let Some((_, outbox, settings)) = rabbit {
         log::info!(
@@ -238,10 +183,6 @@ async fn main() -> std::process::ExitCode {
     if !cfg.custom_commands.is_empty() {
         log::info!("{} custom commands", cfg.custom_commands.len());
     }
-    if let Some(d) = &discord {
-        log::info!("discord: server {}", d.settings.server);
-        tokio::spawn(discord::run(ctx.clone(), d.clone()));
-    }
     if cfg.rlv {
         tokio::spawn(services::rlv::run(
             ctx.clone(),
@@ -250,6 +191,29 @@ async fn main() -> std::process::ExitCode {
             std::sync::Arc::new(rlv::Rules::default()),
         ));
     }
+    // The services the service control commands reach (services/control.rs), started together.
+    for spec in [
+        services::chat_log::spec(client.clone()),
+        services::interactions::spec(
+            client.clone(),
+            masters.clone(),
+            homebound.clone(),
+            grants.clone(),
+            http.clone(),
+            ctx.smtp.clone(),
+        ),
+        services::homebound::spec(client.clone(), homebound.clone(), cfg.rlv),
+        services::relays::spec(
+            client.clone(),
+            cfg.shared_secret.clone(),
+            ctx.rabbit.clone(),
+        ),
+        dialogs::spec(client.clone(), dialogs, cfg.shared_secret.clone()),
+        discord::spec(ctx.clone(), cfg.shared_secret.clone()),
+    ] {
+        control.register(spec).await;
+    }
+    control.start_all().await;
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(
             ctx.clone(),

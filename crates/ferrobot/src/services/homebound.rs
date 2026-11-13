@@ -6,10 +6,11 @@
 //! (SecondBot's MarkTeleport); a Stand command stops the sitting until the next login (its
 //! MarkStandup, which lasts until SecondBot restarts).
 
+use crate::services::control::Spec;
 use ferro_client::{Client, Event, Move};
 use glam::Vec3;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
@@ -64,15 +65,28 @@ pub struct Settings {
     pub sit: Option<uuid::Uuid>,
 }
 
-/// What other services tell homebound.
+/// What other services tell homebound, and what it tells them.
 #[derive(Default)]
 pub struct Homebound {
     paused: AtomicBool,
     /// A Stand command: no sitting at home until the next login.
     stood: AtomicBool,
+    /// The home sim while homebound runs: GoHome's, and the region restart's watch stands aside.
+    home: Mutex<Option<Place>>,
 }
 
 impl Homebound {
+    /// The home sim, while homebound runs.
+    pub fn home(&self) -> Option<Place> {
+        self.home_lock().clone()
+    }
+
+    fn home_lock(&self) -> std::sync::MutexGuard<'_, Option<Place>> {
+        self.home
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// A master took the bot elsewhere: stay there until the next login.
     pub fn pause(&self) {
         if !self.paused.swap(true, Ordering::Relaxed) {
@@ -100,7 +114,57 @@ async fn go(client: &Client, place: &Place, why: &str) -> bool {
     }
 }
 
-pub async fn run(client: Client, mut events: Receiver<Event>, s: Settings, hb: Arc<Homebound>) {
+/// HomeboundService's settings (SecondBot's HomeboundConfig, `homebound_…`).
+const SETTINGS: &[&str] = &[
+    "Enabled",
+    "HomeSimSlUrl",
+    "BackupSimSLUrl",
+    "ReturnToHomeSimAfterMins",
+    "AtHomeSeekLocation",
+    "AtHomeAutoSitUuid",
+];
+
+/// HomeboundService, for the service control (services/control.rs). With RLV on it never runs,
+/// as SecondBot turns homebound off then: the objects decide where the bot goes.
+pub fn spec(client: Client, hb: Arc<Homebound>, rlv: bool) -> Spec {
+    Spec::new(
+        "HomeboundService",
+        "homebound",
+        SETTINGS,
+        crate::config::homebound,
+        move |settings| match settings {
+            Some(_) if rlv => {
+                log::info!("homebound off: RLV is on");
+                Vec::new()
+            }
+            Some(s) => vec![spawn(client.clone(), s, hb.clone())],
+            None => Vec::new(),
+        },
+    )
+}
+
+/// Its home is known while the task runs, and forgotten when it ends or is stopped.
+struct Running(Arc<Homebound>);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        *self.0.home_lock() = None;
+    }
+}
+
+/// Homebound's task, subscribed now.
+pub fn spawn(client: Client, s: Settings, hb: Arc<Homebound>) -> tokio::task::JoinHandle<()> {
+    log::info!("homebound to {}", s.home.region);
+    *hb.home_lock() = Some(s.home.clone());
+    let running = Running(hb.clone());
+    let events = client.subscribe();
+    tokio::spawn(async move {
+        let _running = running;
+        run(client, events, s, hb).await;
+    })
+}
+
+async fn run(client: Client, mut events: Receiver<Event>, s: Settings, hb: Arc<Homebound>) {
     let mut check = tokio::time::interval(CHECK_EVERY);
     let mut away_since: Option<Instant> = None;
     let mut last_teleport: Option<Instant> = None;

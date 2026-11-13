@@ -99,7 +99,7 @@ fn id<T>(s: &str) -> Option<Id<T>> {
 
 /// The connection, when it is ready (DiscordReady).
 fn ready(ctx: &Ctx) -> Option<Arc<Discord>> {
-    ctx.discord.clone().filter(|d| d.ready())
+    crate::discord::connection(&ctx.discord).filter(|d| d.ready())
 }
 
 const NOT_READY: &str = "Discord client not ready";

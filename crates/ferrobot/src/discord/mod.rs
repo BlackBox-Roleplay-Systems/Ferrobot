@@ -12,6 +12,7 @@
 
 pub mod relay;
 
+use crate::services::control::Spec;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -389,9 +390,83 @@ impl Discord {
     }
 }
 
+/// The connection while DiscordService runs, for the commands; none while it is stopped or off.
+pub type Slot = std::sync::RwLock<Option<Arc<Discord>>>;
+
+/// The connection, while DiscordService runs.
+pub fn connection(slot: &Slot) -> Option<Arc<Discord>> {
+    slot.read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// DiscordService's settings (SecondBot's DiscordConfig, `discord_…`). Its token is a secret:
+/// never changed by command.
+const SETTINGS: &[&str] = &[
+    "Enabled",
+    "ServerID",
+    "AllowDiscordCommands",
+    "InteractionEnabled",
+    "InteractionCommandName",
+    "InteractionHttpTarget",
+    "InteractionChannelNumber",
+    "hideChatterName",
+    "ClearChatOnConnect",
+];
+
+/// DiscordService, for the service control (services/control.rs). Stopped, the bot leaves the
+/// gateway and the Discord commands answer that Discord is not ready.
+pub fn spec(ctx: crate::commands::Ctx, secret: Option<String>) -> Spec {
+    Spec::new(
+        "DiscordService",
+        "discord",
+        SETTINGS,
+        crate::config::discord,
+        move |settings| match settings {
+            Some(s) => spawn(ctx.clone(), Discord::new(s, secret.clone())),
+            None => Vec::new(),
+        },
+    )
+}
+
+/// Takes the connection out of the slot when its gateway task ends or is stopped (unless a new
+/// one took its place).
+struct Listed(Arc<Slot>, Arc<Discord>);
+
+impl Drop for Listed {
+    fn drop(&mut self) {
+        let mut slot = self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.as_ref().is_some_and(|d| Arc::ptr_eq(d, &self.1)) {
+            *slot = None;
+        }
+    }
+}
+
+/// The relay from Second Life (subscribed now) and the gateway; the connection in the slot.
+fn spawn(ctx: crate::commands::Ctx, discord: Arc<Discord>) -> Vec<tokio::task::JoinHandle<()>> {
+    log::info!("discord: server {}", discord.settings.server);
+    *ctx.discord
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(discord.clone());
+    let listed = Listed(ctx.discord.clone(), discord.clone());
+    let from_world = tokio::spawn(relay::from_world(
+        ctx.client.clone(),
+        discord.clone(),
+        ctx.client.subscribe(),
+    ));
+    let gateway = tokio::spawn(async move {
+        let _listed = listed;
+        run(ctx, discord).await;
+    });
+    vec![from_world, gateway]
+}
+
 /// The gateway: connected, the channels set up, then the messages to the relay. Twilight
 /// reconnects by itself; a fatal close (a bad token, intents not allowed) stops the service.
-pub async fn run(ctx: crate::commands::Ctx, discord: Arc<Discord>) {
+async fn run(ctx: crate::commands::Ctx, discord: Arc<Discord>) {
     // MESSAGE_CONTENT is privileged: it is turned on in the Discord application's settings
     let intents = Intents::GUILDS | Intents::GUILD_MESSAGES | Intents::MESSAGE_CONTENT;
     let mut config = ConfigBuilder::new(discord.settings.token.clone(), intents);
