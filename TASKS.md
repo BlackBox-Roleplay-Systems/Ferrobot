@@ -104,6 +104,8 @@ region).
   refuses an unknown avatar; Name2Key asks the grid at once
 - ✅ SecondBot setting names accepted next to FERRO_* (basic_*, commands_*, http_*)
 - ⬜ SecondBot's `/json` endpoint (a signed JSON body); not used by BB
+- 🟡 Behind a Cloudflare Tunnel: 90 s command deadline (Cloudflare waits 100 s), `GET /health`,
+  `deploy/compose.yaml` with cloudflared, README section; to verify through a real tunnel (human)
 - ✅ BB's bot tests pass against Ferrobot on the test grid (2026-11-12): BB's own SlBot.php,
   unchanged, through the checks of the harness that built the SL group sync, 23 of 23
   (`cargo run -p ferro-testgrid --example serve` runs the test grid by itself)

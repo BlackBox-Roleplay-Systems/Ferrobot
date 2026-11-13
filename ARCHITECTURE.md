@@ -85,7 +85,12 @@ sha1(command + args + unixtime + shared secret), refused when older than 35 s. R
 does: `{"Key": bool, "Value": "<JSON text>"}`, the inner JSON being
 `{command, args, reply, status, whyfailed}`. A refused request gets plain text.
 
-### The container
+### The container and the tunnel
+
+`deploy/compose.yaml`: the bot and cloudflared on one network, the API published through a
+Cloudflare Tunnel, no port on the host. `GET /health` for checks from outside.
+
+### The image
 
 Multi-stage `Dockerfile`: built on `rust:*-slim`, run on `debian:*-slim` as a non-root user, with
 only `ca-certificates`. Settings by environment. `docker stop` (SIGTERM) logs the bot out.

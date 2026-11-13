@@ -7,6 +7,11 @@
 //! Everything goes out as JSON with status 200, as SecondBot's SerializationCallback writes it.
 //!
 //! The API only runs with a shared secret: every command is signed (AGENTS.md section 5).
+//!
+//! Behind a Cloudflare Tunnel (or any proxy): a command never takes longer than
+//! [`COMMAND_DEADLINE`], under Cloudflare's 100 s origin timeout, so that a slow grid gives a
+//! failure the caller can read rather than the proxy's error page; `GET /health` answers 200 while
+//! the bot is in world and 503 otherwise, with nothing else, for uptime checks.
 
 pub mod signing;
 
@@ -19,6 +24,10 @@ use axum::routing::post;
 use ferro_client::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// The longest a command may run: under Cloudflare's 100 s wait for an origin's answer.
+pub const COMMAND_DEADLINE: Duration = Duration::from_secs(90);
 
 struct Api {
     client: Client,
@@ -79,7 +88,15 @@ async fn run(State(api): State<Arc<Api>>, Form(f): Form<RunForm>) -> Response {
         log::warn!("api: {command:?} refused: bad signature or too old");
         return json("Command request rejected".into());
     }
-    let (ran, value) = commands::run(&api.client, &command, &args).await;
+    let (ran, value) = match tokio::time::timeout(
+        COMMAND_DEADLINE,
+        commands::run(&api.client, &command, &args),
+    )
+    .await
+    {
+        Ok(answer) => answer,
+        Err(_) => (false, "No reply from the grid [Retry later]".to_owned()),
+    };
     let done = ran && value.contains(r#""status":true"#);
     log::info!(
         "api: {command} ({} args): {}",
@@ -87,6 +104,15 @@ async fn run(State(api): State<Arc<Api>>, Form(f): Form<RunForm>) -> Response {
         if done { "done" } else { "failed" }
     );
     json(serde_json::to_string(&KeyValue { key: ran, value }).unwrap_or_default())
+}
+
+/// `GET /health`: in world or not, and nothing more (no secret needed, nothing to learn).
+async fn health(State(api): State<Arc<Api>>) -> Response {
+    if api.client.health().online {
+        (axum::http::StatusCode::OK, "ok").into_response()
+    } else {
+        (axum::http::StatusCode::SERVICE_UNAVAILABLE, "offline").into_response()
+    }
 }
 
 /// Anything else: SecondBot's catch-all module answers `{"Message": "Error"}`.
@@ -104,6 +130,7 @@ pub async fn serve(client: Client, port: u16, secret: String, window: u64) {
     });
     let app = Router::new()
         .route("/api/Run", post(run))
+        .route("/health", axum::routing::get(health))
         .fallback(other)
         .with_state(api);
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {

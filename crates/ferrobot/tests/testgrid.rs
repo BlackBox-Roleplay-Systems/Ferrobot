@@ -619,6 +619,40 @@ mod api {
         (bot, api)
     }
 
+    /// `GET /health` for checks through a tunnel: 503 until in world, then 200.
+    #[tokio::test]
+    async fn the_health_endpoint_follows_the_bot() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, Some("http://127.0.0.1:1/")).await;
+        let health = api.url.replace("/api/Run", "/health");
+        let resp = api.http.get(&health).send().await.expect("an answer");
+        assert_eq!(resp.status().as_u16(), 503);
+        assert_eq!(resp.text().await.expect("body"), "offline");
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        let health = api.url.replace("/api/Run", "/health");
+        let resp = api.http.get(&health).send().await.expect("an answer");
+        assert_eq!(resp.status().as_u16(), 200);
+        assert_eq!(resp.text().await.expect("body"), "ok");
+        // anything else answers as SecondBot's catch-all does
+        let other = api.url.replace("/api/Run", "/nothing");
+        let body = api
+            .http
+            .get(&other)
+            .send()
+            .await
+            .expect("an answer")
+            .text()
+            .await
+            .expect("body");
+        assert_eq!(body, r#"{"Message":"Error"}"#);
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     #[tokio::test]
     async fn refusals_are_plain_text() {
         let grid = grid().await;

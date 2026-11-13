@@ -38,6 +38,27 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GetGroupList`, `GetGroupRoles`, `GetGroupMembers`, `GetGroupRoleMembers`, `IsGroupMember`,
 `GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`.
 
+### Behind a Cloudflare Tunnel
+
+The API is plain HTTP, made to sit behind a tunnel (or any reverse proxy) that does the HTTPS:
+
+1. In your tunnel (Zero Trust > Networks > Tunnels), add a public hostname, say
+   `bot.example.com`, whose service is the bot's port: `http://localhost:80` when cloudflared
+   runs on the same host as a published port, `http://ferrobot:80` from the same Docker network.
+   `deploy/compose.yaml` runs both in one network, with no port opened on the host.
+2. In BB, the bot's address is `https://bot.example.com` (BB adds `/api/Run`), with the same
+   shared secret as `FERRO_SHARED_SECRET`.
+3. In Cloudflare, let BB's requests through: **Bot Fight Mode** and managed WAF challenges answer a
+   script with a browser challenge page. Add a WAF custom rule *Skip* for the hostname (or
+   `http.request.uri.path eq "/api/Run"`), and do not put Cloudflare Access in front of it.
+   The commands are signed, so the endpoint does not need Cloudflare to guard it.
+4. Check from outside: `curl https://bot.example.com/health` answers `ok` while the bot is in
+   world (`offline` and 503 otherwise); nothing else is reachable without the secret.
+
+A command never takes longer than 90 s, under Cloudflare's 100 s wait for the origin, so a slow
+grid answers with a failure ("No reply from the grid [Retry later]") rather than Cloudflare's 524
+page. The signature carries the time: the host's clock must be right (NTP), as with SecondBot.
+
 In Second Life, mark the account as a **scripted agent** (account settings on secondlife.com), as the grid's rules ask of bots.
 
 `ferrobot healthcheck` (the image's Docker `HEALTHCHECK`) exits with 0 while the bot is online, or
