@@ -217,6 +217,7 @@ baking: the bot says so and goes on.
   GetCurrentParcelId, GetCurrentParcelUUID, GetCurrentParcelSize, GetParcelDesc, GetParcelFlags,
   GetParcelPrimCounts, GetParcelSaleDetails, GetParcelTraffic; tested on the test grid.
   Deliberate difference: GetParcelTraffic asks the region (SecondBot prints 0 until something did)
+  Tried on NGC: every getter answered from the region's own data, and the ban list round trip
 - 🟡 Parcel changes (the ParcelPropertiesUpdate capability, the whole parcel with what changed,
   as LLParcel::packMessage): SecondBot's SetParcelName, SetParcelDesc, SetParcelLandingZone,
   SetParcelMusic, SetParcelSale, CancelParcelSale, SetParcelSnapshot, SetParcelAudioControls,
@@ -240,7 +241,9 @@ baking: the bot says so and goes on.
   GetEstateBanList, SimRestart, SimMessage, SetEstateCovenant, GetEstateCovenant,
   SetExtendedRegionInfo, SetRegionFlags, SetEstateConfig; tested on the test grid. Deliberate
   differences: SetEstateConfig keeps the estate's other flags and sends the sun hour to the
-  capability as the viewer does
+  capability as the viewer does. Tried on NGC as a resident: GetEstateCovenant read the estate,
+  EstateAccess refused (401) as it should for one who does not manage it; the changes need an
+  estate manager (human)
 - ⬜ SetEstateTerrainRaw (a terrain upload by xfer), QueryLandSaleData, the region's parcel list
   (GetListOfParcels, UpdateListOfParcels, GetParcelListSnapshots, GetSimParcelLayers)
 - ⬜ GetObjectsInParcel, UnRezObject (with the objects)
