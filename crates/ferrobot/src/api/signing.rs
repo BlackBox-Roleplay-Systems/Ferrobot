@@ -16,6 +16,14 @@ pub fn split_args(args: Option<&str>) -> Vec<String> {
     .unwrap_or_default()
 }
 
+/// SHA-1 of a text, in lower-case hex (SecondbotHelpers.GetSHA1).
+pub fn sha1_hex(text: &str) -> String {
+    Sha1::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 pub fn sign(command: &str, args: &[String], unixtime: i64, secret: &str) -> String {
     sign_with(command, args, Some(unixtime), secret)
 }
@@ -24,11 +32,7 @@ pub fn sign(command: &str, args: &[String], unixtime: i64, secret: &str) -> Stri
 /// without EnforceTimeWindow, for commands by IM).
 pub fn sign_with(command: &str, args: &[String], unixtime: Option<i64>, secret: &str) -> String {
     let time = unixtime.map(|t| t.to_string()).unwrap_or_default();
-    let raw = format!("{command}{}{time}{secret}", args.join("~#~"));
-    Sha1::digest(raw.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    sha1_hex(&format!("{command}{}{time}{secret}", args.join("~#~")))
 }
 
 /// Whether a command is signed with the secret and recent enough.

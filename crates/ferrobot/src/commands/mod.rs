@@ -7,6 +7,7 @@ mod avatars;
 mod bot;
 mod chat;
 mod dialogs;
+mod discord;
 mod estate;
 mod groups;
 mod info;
@@ -52,6 +53,8 @@ pub struct Ctx {
     pub http: reqwest::Client,
     /// The avatars whose objects may animate the bot.
     pub animators: Arc<crate::animators::Animators>,
+    /// The Discord connection, when Discord is on.
+    pub discord: Option<Arc<crate::discord::Discord>>,
 }
 
 /// The commands that change things in world: under the rate limit.
@@ -137,6 +140,15 @@ const CHANGING: &[&str] = &[
     "SwapOutfit",
     "SwapOutfitByPath",
     "Outfit",
+    "Discord_AddRole",
+    "Discord_BanMember",
+    "Discord_BulkClear_Messages",
+    "Discord_Dm_Member",
+    "Discord_MessageChannel",
+    "Discord_MuteMember",
+    "Discord_Role_UpdatePerms",
+    "Discord_RoleCreate",
+    "Discord_RoleRemove",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -271,6 +283,22 @@ const COMMANDS: &[(&str, usize)] = &[
     ("SwapOutfit", 1),
     ("SwapOutfitByPath", 1),
     ("Outfit", 1),
+    ("Discord_AddRole", 3),
+    ("Discord_BanMember", 3),
+    ("Discord_GetMemberRoles", 2),
+    ("Discord_BulkClear_Messages", 2),
+    ("Discord_Dm_Member", 3),
+    ("Discord_MembersList", 1),
+    ("Discord_MessageChannel", 4),
+    ("Discord_MuteMember", 3),
+    ("Discord_Role_GetSettings", 2),
+    ("Discord_Role_UpdatePerms", 3),
+    ("Discord_RoleCreate", 2),
+    ("Discord_RoleList", 1),
+    ("Discord_RoleRemove", 2),
+    ("Discord_TextChannels_List", 1),
+    ("Discord_VoiceJoin", 1),
+    ("Discord_VoiceLeave", 0),
     ("GetProfileAbout", 1),
     ("GetProfileImage", 1),
     ("SetProfileAbout", 1),
@@ -505,6 +533,22 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "SwapOutfit" => outfit::swap_outfit(ctx, a(0)).await,
         "SwapOutfitByPath" => outfit::swap_outfit_by_path(ctx, a(0)).await,
         "Outfit" => outfit::outfit(ctx, a(0)).await,
+        "Discord_AddRole" => discord::add_role(ctx, a(0), a(1), a(2)).await,
+        "Discord_BanMember" => discord::ban_member(ctx, a(0), a(1), a(2)).await,
+        "Discord_GetMemberRoles" => discord::member_roles(ctx, a(0), a(1)).await,
+        "Discord_BulkClear_Messages" => discord::bulk_clear(ctx, a(0), a(1)).await,
+        "Discord_Dm_Member" => discord::dm_member(ctx, a(0), a(1), a(2)).await,
+        "Discord_MembersList" => discord::members_list(ctx, a(0)).await,
+        "Discord_MessageChannel" => discord::message_channel(ctx, a(0), a(1), a(2), a(3)).await,
+        "Discord_MuteMember" => discord::mute_member(ctx, a(0), a(1), a(2)).await,
+        "Discord_Role_GetSettings" => discord::role_settings(ctx, a(0), a(1)).await,
+        "Discord_Role_UpdatePerms" => discord::role_update_perms(ctx, a(0), a(1), a(2)).await,
+        "Discord_RoleCreate" => discord::role_create(ctx, a(0), a(1)).await,
+        "Discord_RoleList" => discord::role_list(ctx, a(0)).await,
+        "Discord_RoleRemove" => discord::role_remove(ctx, a(0), a(1)).await,
+        "Discord_TextChannels_List" => discord::text_channels(ctx, a(0)).await,
+        "Discord_VoiceJoin" => discord::voice_join(ctx, a(0)),
+        "Discord_VoiceLeave" => discord::voice_leave(),
         "GetProfileAbout" => avatars::profile_about(client, a(0)).await,
         "GetProfileImage" => avatars::profile_image(client, a(0)).await,
         "SetProfileAbout" => avatars::set_profile_about(client, a(0)).await,
@@ -613,6 +657,7 @@ mod tests {
             allow_funds: false,
             http: reqwest::Client::new(),
             animators: Arc::default(),
+            discord: None,
         };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,

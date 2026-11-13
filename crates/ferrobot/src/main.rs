@@ -5,6 +5,7 @@ mod api;
 mod commands;
 mod config;
 mod dialogs;
+mod discord;
 mod history;
 mod masters;
 mod services;
@@ -114,6 +115,18 @@ async fn main() -> std::process::ExitCode {
         dialogs.clone(),
         cfg.shared_secret.clone(),
     ));
+    // subscribed before the login, as every service
+    let discord = cfg
+        .discord
+        .clone()
+        .map(|s| discord::Discord::new(s, cfg.shared_secret.clone()));
+    if let Some(d) = &discord {
+        tokio::spawn(discord::relay::from_world(
+            client.clone(),
+            d.clone(),
+            client.subscribe(),
+        ));
+    }
     let ctx = commands::Ctx {
         client: client.clone(),
         history,
@@ -125,7 +138,12 @@ async fn main() -> std::process::ExitCode {
         allow_funds: cfg.allow_funds,
         http: http.clone(),
         animators: animators.clone(),
+        discord: discord.clone(),
     };
+    if let Some(d) = &discord {
+        log::info!("discord: server {}", d.settings.server);
+        tokio::spawn(discord::run(ctx.clone(), d.clone()));
+    }
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(
             ctx.clone(),

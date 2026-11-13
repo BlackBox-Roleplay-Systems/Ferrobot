@@ -44,6 +44,8 @@ pub struct Config {
     pub rate_limit: u32,
     /// Homebound: off unless a home sim is given (SecondBot's HomeboundConfig).
     pub homebound: Option<crate::services::homebound::Settings>,
+    /// Discord: off unless on, with a server and a token (SecondBot's DiscordConfig).
+    pub discord: Option<crate::discord::Settings>,
 }
 
 impl std::fmt::Debug for Config {
@@ -70,6 +72,7 @@ impl std::fmt::Debug for Config {
             .field("rate_limit", &self.rate_limit)
             .field("allow_funds", &self.allow_funds)
             .field("relays", &self.relays.len())
+            .field("discord", &self.discord)
             .finish_non_exhaustive()
     }
 }
@@ -120,6 +123,101 @@ fn setting_flag(
     default: bool,
 ) -> Result<bool, ConfigError> {
     setting(ferro, secondbot).map_or(Ok(default), |(name, v)| parse_flag(name, &v))
+}
+
+/// Discord IDs, comma-separated (FERRO_DISCORD_MASTERS).
+fn discord_ids(name: &'static str, v: &str) -> Result<Vec<u64>, ConfigError> {
+    v.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse()
+                .map_err(|_| ConfigError::Invalid(name, format!("\"{s}\" is not a Discord ID")))
+        })
+        .collect()
+}
+
+/// Discord (SecondBot's DiscordConfig): on with FERRO_DISCORD (discord_Enabled), a server
+/// (FERRO_DISCORD_SERVER / discord_ServerID) and the bot's token (FERRO_DISCORD_TOKEN /
+/// discord_ClientToken, a secret).
+fn discord() -> Result<Option<crate::discord::Settings>, ConfigError> {
+    if !setting_flag("FERRO_DISCORD", "discord_Enabled", false)? {
+        return Ok(None);
+    }
+    let server = match setting("FERRO_DISCORD_SERVER", "discord_ServerID") {
+        Some((name, v)) => v
+            .parse::<u64>()
+            .ok()
+            .filter(|id| *id != 0)
+            .ok_or(ConfigError::Invalid(name, "a Discord server ID".into()))?,
+        None => return Err(ConfigError::Missing("FERRO_DISCORD_SERVER")),
+    };
+    // the token is taken as it is
+    let token = ["FERRO_DISCORD_TOKEN", "discord_ClientToken"]
+        .iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty())
+        })
+        .ok_or(ConfigError::Missing("FERRO_DISCORD_TOKEN"))?;
+    let masters = match var("FERRO_DISCORD_MASTERS") {
+        Some(v) => discord_ids("FERRO_DISCORD_MASTERS", &v)?,
+        None => Vec::new(),
+    };
+    let interaction = if setting_flag(
+        "FERRO_DISCORD_INTERACTION",
+        "discord_InteractionEnabled",
+        false,
+    )? {
+        let url = setting(
+            "FERRO_DISCORD_INTERACTION_URL",
+            "discord_InteractionHttpTarget",
+        )
+        .map(|(_, v)| v)
+        .filter(|v| v.starts_with("http"));
+        let channel = setting(
+            "FERRO_DISCORD_INTERACTION_CHANNEL",
+            "discord_InteractionChannelNumber",
+        )
+        .and_then(|(_, v)| v.parse::<u64>().ok());
+        match (url, channel) {
+            (Some(url), Some(channel)) => Some(crate::discord::Interaction {
+                name: setting(
+                    "FERRO_DISCORD_INTERACTION_NAME",
+                    "discord_InteractionCommandName",
+                )
+                .map_or_else(|| "Go".to_owned(), |(_, v)| v),
+                url,
+                channel,
+            }),
+            _ => {
+                log::warn!("Discord interaction off: it needs an http(s) address and a channel");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    Ok(Some(crate::discord::Settings {
+        token,
+        server,
+        commands: setting_flag(
+            "FERRO_DISCORD_COMMANDS",
+            "discord_AllowDiscordCommands",
+            false,
+        )?,
+        masters,
+        hide_names: setting_flag("FERRO_DISCORD_HIDE_NAMES", "discord_hideChatterName", false)?,
+        clear_on_connect: setting_flag(
+            "FERRO_DISCORD_CLEAR_ON_CONNECT",
+            "discord_ClearChatOnConnect",
+            true,
+        )?,
+        interaction,
+        stand_in: var("FERRO_DISCORD_STAND_IN"),
+    }))
 }
 
 /// The relays: FERRO_RELAY_1, FERRO_RELAY_2… in SecondBot's short form, then SecondBot's own
@@ -331,6 +429,7 @@ impl Config {
                 false,
             )?,
             homebound: homebound()?,
+            discord: discord()?,
             relays: relays()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
             rate_limit: number(

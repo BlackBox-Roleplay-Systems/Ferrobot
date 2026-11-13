@@ -51,7 +51,7 @@ pub async fn send(ctx: &Ctx, target: &str, output: &str, command: &str) {
     }
 }
 
-fn form_encode(s: &str) -> String {
+pub fn form_encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {

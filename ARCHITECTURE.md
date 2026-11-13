@@ -45,7 +45,8 @@ crates/
     src/store.rs           key-value store, command history, counts, rate limit
     src/history.rs         what the bot heard: local chat, IM and group windows (SecondBot's store)
     src/smart_reply.rs     where a command's answer goes when it names a reply target
-    src/services/          one service per job, on the client's events (chat_log, health, homebound, im_commands, interactions, relays, restart)
+    src/discord/           the bot on a Discord server (twilight): its channels, both ways
+    src/services/          one service per job, on the client's events (chat_log, health, homebound, im_commands, interactions, relays, restart, script_permissions)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it

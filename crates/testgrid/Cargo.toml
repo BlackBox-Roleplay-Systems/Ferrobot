@@ -12,6 +12,10 @@ ferro-msg = { path = "../msg" }
 glam = "0.34.1"
 log = "0.4.34"
 md5 = "0.8.1"
+# the stand-in Discord: its JSON and its gateway's WebSocket server (MIT)
+serde_json = "1.0.154"
+tokio-websockets = { version = "0.13.3", default-features = false, features = ["server", "sha1_smol"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "sync", "io-util"] }
 uuid = { version = "1.27.0", features = ["v4"] }
 
