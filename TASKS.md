@@ -433,6 +433,8 @@ baking: the bot says so and goes on.
   the bot (SecondBot runs `Logoff` for a missing step); no default "exitplease"; the answer's Key
   is true when a step ran (SecondBot's is always false); the caller's reply target gets the
   summary
+- 🔧 SecondBot's EventsService (group members, guests, sim and parcel changes, alerts, status,
+  money) and TriggerOnEventService (commands run on events)
 
 ## Phase 8 - Running it for real
 
