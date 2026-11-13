@@ -131,6 +131,11 @@ async fn main() -> std::process::ExitCode {
         cfg.shared_secret.clone(),
         rabbit.as_ref().map(|(handle, ..)| handle.clone()),
     ));
+    tokio::spawn(services::chatgpt::run(
+        client.clone(),
+        client.subscribe(),
+        cfg.chatgpt.clone(),
+    ));
     let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));
     tokio::spawn(dialogs::run(
         client.clone(),
