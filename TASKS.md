@@ -280,7 +280,17 @@ baking: the bot says so and goes on.
   ProductName); QueryLandSaleData (DirLandQuery, StartLandSearch's flags); tested on the test grid.
   Deliberate differences: GetSimParcelLayers colours a parcel by its id (SecondBot at random) and
   escapes its name; QueryLandSaleData checks the area (SecondBot checks the price twice)
-- ⬜ SetEstateTerrainRaw (a terrain upload by xfer)
+- 🟡 SetEstateTerrainRaw (crates/client/src/terrain.rs from the upload half of Aurora's
+  session/terrain_raw.rs: `terrain` "upload filename" as the viewer's
+  LLPanelRegionTerrainInfo::onUploadRawFilepickerCB, then the region's RequestXfer for that name
+  answered packet by packet, SendXferPacket and ConfirmXferPacket, resends and timeouts as
+  Aurora's; crates/ferrobot/src/download.rs for the file, http(s) only): SecondBot's
+  SetEstateTerrainRaw, its checks and replies; tested on the test grid (a 256 m file of 851,968
+  bytes, 852 packets, checked byte for byte). Deliberate differences: the file must be a RAW
+  file's size (13 bytes a point, a square of 256 m sides; SecondBot sends anything), the download
+  is bounded (64 MiB, 60 s), the region is told a `.raw` name (the URL's last part, else
+  "terrain.raw"; OpenSim reads the file by its extension), one upload at a time. Needs an estate
+  manager on the grid (human)
 - 🟡 Objects (every object the region tells of kept by key, crates/client/src/objects.rs; RezObject
   as LLToolDragAndDrop::dropObject and Aurora's inventory/rez.rs, with the item's CRC; a click as
   LLToolGrab's; DeRezObject; UpdateTaskInventory and RezScript as dropInventory): SecondBot's

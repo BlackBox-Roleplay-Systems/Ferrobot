@@ -136,7 +136,8 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `ParcelDeedToGroup`, `AbandonLand`, `ParcelBuy`, `EstateParcelReclaim`; the estate (for an estate
 manager): `EstateKickUser`, `EstateTeleportHomeUser`, `AddEstateManager`, `RemoveEstateManager`,
 `UpdateEstateBanlist`, `GetEstateBanList`, `SimRestart`, `SimMessage`, `SetEstateCovenant`,
-`GetEstateCovenant`, `SetExtendedRegionInfo`, `SetRegionFlags`, `SetEstateConfig`; animations:
+`GetEstateCovenant`, `SetExtendedRegionInfo`, `SetRegionFlags`, `SetEstateConfig`,
+`SetEstateTerrainRaw` (a RAW file from an http(s) URL, uploaded to the region); animations:
 `PlayGesture`, `PlayGestureDirect`, `ResetAnimations`, `PointAt`, `AddToAllowAnimations` (that
 avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileImage`,
 `SetProfileAbout`, `SetProfileImage`; objects: `RezObject`, `RezObjectOnPos`, `RezObjectParcelCenter`,
