@@ -108,6 +108,7 @@ async fn main() -> std::process::ExitCode {
         (Some(secret), true) => {
             tokio::spawn(api::serve(
                 ctx,
+                cfg.http_bind,
                 cfg.http_port,
                 secret.clone(),
                 cfg.time_window,

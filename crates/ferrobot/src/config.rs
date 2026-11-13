@@ -19,6 +19,9 @@ pub struct Config {
     /// SecondBot's HTTP API: on unless turned off, and only with a shared secret.
     pub http_enabled: bool,
     pub http_port: u16,
+    /// The address the API listens on: every interface by default, 127.0.0.1 behind a tunnel on
+    /// the same host.
+    pub http_bind: std::net::IpAddr,
     /// The secret that signs the API's commands. Never logged.
     pub shared_secret: Option<String>,
     /// How old a signed command may be, in seconds (SecondBot's TimeWindowSecs).
@@ -49,6 +52,7 @@ impl std::fmt::Debug for Config {
             .field("masters", &self.masters)
             .field("http_enabled", &self.http_enabled)
             .field("http_port", &self.http_port)
+            .field("http_bind", &self.http_bind)
             .field("shared_secret_set", &self.shared_secret.is_some())
             .field("time_window", &self.time_window)
             .field("im_commands", &self.im_commands)
@@ -236,6 +240,11 @@ impl Config {
                 .unwrap_or_default(),
             http_enabled,
             http_port: number(setting("FERRO_HTTP_PORT", "http_Port"), 80, "a port number")?,
+            http_bind: number(
+                var("FERRO_HTTP_BIND").map(|v| ("FERRO_HTTP_BIND", v)),
+                std::net::IpAddr::from([0, 0, 0, 0]),
+                "an IP address, such as 127.0.0.1",
+            )?,
             shared_secret: ["FERRO_SHARED_SECRET", "commands_SharedSecret"]
                 .iter()
                 .find_map(|name| std::env::var(name).ok().filter(|s| !s.is_empty())),

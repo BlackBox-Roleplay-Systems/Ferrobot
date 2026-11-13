@@ -20,6 +20,7 @@ All settings come from environment variables.
 | `FERRO_SHARED_SECRET` | (none) | The secret that signs the HTTP API's commands. Without it, the API is off |
 | `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`) |
 | `FERRO_HTTP_PORT` | `80` | Its port |
+| `FERRO_HTTP_BIND` | `0.0.0.0` | The address it listens on: `127.0.0.1` behind a tunnel on the same host |
 | `FERRO_TIME_WINDOW` | `35` | Seconds a signed command stays valid |
 | `FERRO_IM_COMMANDS` | `true` | Commands by IM: from masters, and signed ones from objects |
 | `FERRO_ENFORCE_TIME_WINDOW` | `false` | Commands by IM carry their time and must be recent |
@@ -68,7 +69,8 @@ The API is plain HTTP, made to sit behind a tunnel (or any reverse proxy) that d
 
 1. In your tunnel (Zero Trust > Networks > Tunnels), add a public hostname, say
    `bot.example.com`, whose service is the bot's port: `http://localhost:80` when cloudflared
-   runs on the same host as a published port, `http://ferrobot:80` from the same Docker network.
+   runs on the same host as a published port (then `FERRO_HTTP_BIND=127.0.0.1`, so that nothing
+   else reaches it), `http://ferrobot:80` from the same Docker network.
    `deploy/compose.yaml` runs both in one network, with no port opened on the host.
 2. In BB, the bot's address is `https://bot.example.com` (BB adds `/api/Run`), with the same
    shared secret as `FERRO_SHARED_SECRET`.

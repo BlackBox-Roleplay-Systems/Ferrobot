@@ -121,7 +121,7 @@ async fn other() -> Response {
 
 /// Serve the API until the bot stops. A port already in use is logged, and the bot goes on
 /// without its API, as SecondBot does.
-pub async fn serve(ctx: Ctx, port: u16, secret: String, window: u64) {
+pub async fn serve(ctx: Ctx, bind: std::net::IpAddr, port: u16, secret: String, window: u64) {
     let api = Arc::new(Api {
         ctx,
         secret,
@@ -132,14 +132,14 @@ pub async fn serve(ctx: Ctx, port: u16, secret: String, window: u64) {
         .route("/health", axum::routing::get(health))
         .fallback(other)
         .with_state(api);
-    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+    let listener = match tokio::net::TcpListener::bind((bind, port)).await {
         Ok(l) => l,
         Err(e) => {
             log::error!("HTTP API: port {port}: {e}");
             return;
         }
     };
-    log::info!("HTTP API on port {port}");
+    log::info!("HTTP API on port {port} ({bind})");
     if let Err(e) = axum::serve(listener, app).await {
         log::error!("HTTP API: {e}");
     }
