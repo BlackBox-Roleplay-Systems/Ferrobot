@@ -349,8 +349,14 @@ impl Client {
         self.move_folder(folder, trash).await
     }
 
-    /// Create a notecard with this text, in the Notecards folder (else the root); answers its key.
-    pub async fn create_notecard(&self, name: &str, text: &str) -> Result<Uuid, ClientError> {
+    /// Create a notecard with this text and description, in the Notecards folder (else the
+    /// root); answers its key.
+    pub async fn create_notecard(
+        &self,
+        name: &str,
+        description: &str,
+        text: &str,
+    ) -> Result<Uuid, ClientError> {
         let root = self.inventory_root();
         let folder = self
             .folder_contents(root)
@@ -358,7 +364,7 @@ impl Client {
             .ok()
             .and_then(|c| c.folders.into_iter().find(|f| f.type_default == 7))
             .map_or(root, |f| f.id);
-        let (name, description) = (name.to_owned(), String::new());
+        let (name, description) = (name.to_owned(), description.to_owned());
         let item = self
             .inventory_ask(|reply| InventoryRequest::CreateItem {
                 folder,
@@ -377,9 +383,15 @@ impl Client {
     }
 
     /// Create a notecard and give it (LibreMetaverse's SendNotecard, SecondBot's
-    /// NotecardDirectSend).
-    pub async fn send_notecard(&self, to: Uuid, name: &str, text: &str) -> Result<(), ClientError> {
-        let item = self.create_notecard(name, text).await?;
+    /// NotecardDirectSend; the description is the subject SecondBot's RabbitMQ queue gives).
+    pub async fn send_notecard(
+        &self,
+        to: Uuid,
+        name: &str,
+        description: &str,
+        text: &str,
+    ) -> Result<(), ClientError> {
+        let item = self.create_notecard(name, description, text).await?;
         self.give(to, name.to_owned(), vec![(7, item)]).await
     }
 }

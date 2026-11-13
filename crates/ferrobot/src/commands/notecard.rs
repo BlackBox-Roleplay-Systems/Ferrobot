@@ -119,7 +119,7 @@ pub async fn send(ctx: &Ctx, who: &str, collection: &str, name: &str) -> Answer 
     if content.len() <= 3 {
         return failure(C, "No content in notecard storage ?", &args);
     }
-    match ctx.client.send_notecard(to, name, &content).await {
+    match ctx.client.send_notecard(to, name, "", &content).await {
         Ok(()) => {
             ctx.store.clear(&key(collection));
             basic(C, "ok", &[])
@@ -227,7 +227,7 @@ pub async fn fetch_next(ctx: &Ctx, endpoint: &str, code: &str) -> Answer {
         return failure(C, "Unable to unpack avatar", &args);
     };
     let content = reply.content.unwrap_or_default();
-    match ctx.client.send_notecard(to, &title, &content).await {
+    match ctx.client.send_notecard(to, &title, "", &content).await {
         Ok(()) => basic(C, "ok", &[]),
         Err(e) => {
             log::warn!("FetchNextNotecard: {e}");
@@ -248,7 +248,7 @@ pub async fn direct_send(ctx: &Ctx, who: &str, content: &str, name: &str) -> Ans
     let Some(to) = avatar(&ctx.client, who).await else {
         return failure(C, "Invaild avatar uuid", &args);
     };
-    match ctx.client.send_notecard(to, name, content).await {
+    match ctx.client.send_notecard(to, name, "", content).await {
         Ok(()) => basic(C, "ok", &[]),
         Err(e) => {
             log::warn!("NotecardDirectSend: {e}");

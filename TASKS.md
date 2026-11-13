@@ -187,7 +187,18 @@ baking: the bot says so and goes on.
 - ✅ Test grid: a login sometimes took 5 s (seen in any test, Discord or not): the dropped first
   UseCircuitCode and its 5 s resend, fixed by waiting for the UDP socket (PR #4). Five runs of the
   test-grid suite: 245 logins, none over 0.12 s; with the wait taken out, 46 of 145 took 5.1 s
-- ⬜ Relays: RabbitMQ targets
+- 🟡 RabbitMQ (src/rabbit/, on amqprs; SecondBot's RabbitService, RabbitConfig and its
+  SendMessageToQ command): the relays' `rabbit` target and SendMessageToQ publish to a queue by
+  name (declared durable first, as SecondBot); the notecards, commands, ims and groupims queues
+  are read (a notecard given, any command, IM, Groupchat); SecondBot's rabbit_* settings, plus a
+  virtual host and amqps (rustls, the platform's certificates). Off unless on; the broker down
+  never blocks the bot: publishing fails at once ("Connection is not open") and the connection is
+  tried again, 1 s doubled up to a minute. Tested with an in-memory stand-in for the connection,
+  and the real bot on the test grid with its broker down. Deliberate differences: every message
+  read must be signed with the shared secret (SecondBot runs them unsigned) and the queues are not
+  read without one; messages are acknowledged as taken, at most 16 at a time (SecondBot's autoAck
+  takes all); SecondBot connects once per login and gives up when that fails
+- ⬜ RabbitMQ: to try with a real broker (human): publishing, the four queues, a broker restart
 - 🟡 Homebound (services/homebound.rs, SecondBot's HomeboundService): home sim after
   FERRO_HOME_AFTER minutes away, backup sim when home fails, evacuation on a restart, the spot at
   home, paused by a master's teleport until the next login; regions by name (MapNameRequest, as

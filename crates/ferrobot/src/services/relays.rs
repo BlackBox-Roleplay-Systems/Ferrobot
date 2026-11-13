@@ -4,17 +4,20 @@
 //!   sender's key), `avatar` (IMs, filtered by the sender's key), `object` (objects' IMs,
 //!   filtered by the owner's key), `group` (group chat, filtered by the group's name or key);
 //! - targets: `localchat` (a channel), `avatar` (a key, by IM), `group` (a key, its chat),
-//!   `http` (a POST to `<url>/Relay/Service`, signed with the shared secret, as SecondBot's), and
+//!   `http` (a POST to `<url>/Relay/Service`, signed with the shared secret, as SecondBot's),
+//!   `rabbit` (a RabbitMQ queue, by its name, when RabbitMQ is on: crate::rabbit), and
 //!   Ferrobot's `webhook` (a POST of `{"content": …}`, which Discord's webhooks take).
 //!
 //! The text goes out as SecondBot's JSON (`{name, message, sourcetype, sourceoption}`, or the
 //! extended one), marked "{Relay}" so that a relayed line is never relayed again. SecondBot's
-//! Discord bot and RabbitMQ targets are not here (TASKS.md).
+//! Discord bot target is not here (TASKS.md).
 
 use crate::api::signing::sign_with;
+use crate::rabbit::Rabbit;
 use ferro_client::events::{chat_type, dialog};
 use ferro_client::{Client, Event};
 use serde::Serialize;
+use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
@@ -114,7 +117,14 @@ fn chat_name(t: u8) -> &'static str {
     }
 }
 
-async fn relay(client: &Client, http: &reqwest::Client, relays: &[Relay], secret: &str, h: Heard) {
+/// Where relays send to, beside the bot's own client.
+struct Outlets {
+    http: reqwest::Client,
+    secret: String,
+    rabbit: Option<Arc<Rabbit>>,
+}
+
+async fn relay(client: &Client, out: &Outlets, relays: &[Relay], h: Heard) {
     if h.message.contains("{Relay}") {
         return;
     }
@@ -172,7 +182,7 @@ async fn relay(client: &Client, http: &reqwest::Client, relays: &[Relay], secret
                     &format!("{unixtime}RelayService{}{basic}", st.agent_id),
                     &[],
                     None,
-                    secret,
+                    &out.secret,
                 );
                 let body = format!(
                     "token={}&unixtime={unixtime}&method=Relay&action=Service&botname={}&event={}",
@@ -181,7 +191,7 @@ async fn relay(client: &Client, http: &reqwest::Client, relays: &[Relay], secret
                     form_encode(event)
                 );
                 post(
-                    http,
+                    &out.http,
                     &format!("{}/Relay/Service", target.trim_end_matches('/')),
                     "application/x-www-form-urlencoded",
                     body,
@@ -191,8 +201,13 @@ async fn relay(client: &Client, http: &reqwest::Client, relays: &[Relay], secret
             "webhook" => {
                 let content = format!("**{}**: {}", h.triggername, h.message);
                 let body = serde_json::json!({ "content": content }).to_string();
-                post(http, target, "application/json", body).await
+                post(&out.http, target, "application/json", body).await
             }
+            // SecondBot's RabbitService.SendMessage, the queue named as it is given
+            "rabbit" => match &out.rabbit {
+                Some(rabbit) => rabbit.send(target, event).await,
+                None => Err("RabbitMQ is off".into()),
+            },
             other => Err(format!("the target {other} is not supported")),
         };
         if let Err(e) = done {
@@ -229,13 +244,17 @@ pub async fn run(
     mut events: Receiver<Event>,
     relays: Vec<Relay>,
     secret: Option<String>,
+    rabbit: Option<Arc<Rabbit>>,
 ) {
     if relays.is_empty() {
         return;
     }
     log::info!("{} relays", relays.len());
-    let http = reqwest::Client::new();
-    let secret = secret.unwrap_or_default();
+    let out = Outlets {
+        http: reqwest::Client::new(),
+        secret: secret.unwrap_or_default(),
+        rabbit,
+    };
     loop {
         let heard = match events.recv().await {
             Ok(Event::Chat(c)) => {
@@ -333,7 +352,7 @@ pub async fn run(
             }
             Err(RecvError::Closed) => return,
         };
-        relay(&client, &http, &relays, &secret, heard).await;
+        relay(&client, &out, &relays, heard).await;
     }
 }
 
@@ -363,5 +382,47 @@ mod tests {
         )
         .expect("a relay");
         assert_eq!(r.target_option, "https://example.invalid/x");
+    }
+
+    #[tokio::test]
+    async fn the_rabbit_target_publishes_the_event() {
+        let (client, _network) = Client::new(reqwest::Client::new());
+        let (rabbit, mut outbox) = Rabbit::new();
+        let out = Outlets {
+            http: reqwest::Client::new(),
+            secret: String::new(),
+            rabbit: Some(rabbit),
+        };
+        let who = "00000000-0000-0000-0000-00005eed0002";
+        let relays = [Relay {
+            source_type: "avatar".into(),
+            source_option: who.into(),
+            target_type: "rabbit".into(),
+            target_option: "relayq".into(),
+            extended: false,
+        }];
+        let stand_in = tokio::spawn(async move {
+            let p = outbox.recv().await.expect("a message");
+            p.done.send(Ok(())).expect("the relay waits");
+            (p.queue, String::from_utf8(p.body).expect("text"))
+        });
+        let heard = Heard {
+            source: "avatar",
+            filter: who.into(),
+            sourceuuid: "session".into(),
+            triggername: "Other Avatar".into(),
+            message: "hi".into(),
+            sourcename: "MessageFromAgent".into(),
+            triggerdisplayname: "Other".into(),
+        };
+        relay(&client, &out, &relays, heard).await;
+        let (queue, body) = stand_in.await.expect("the stand-in");
+        assert_eq!(queue, "relayq");
+        assert_eq!(
+            body,
+            format!(
+                r#"{{"name":"Other Avatar","message":"{{Relay}} hi","sourcetype":"avatar","sourceoption":"{who}"}}"#
+            )
+        );
     }
 }
