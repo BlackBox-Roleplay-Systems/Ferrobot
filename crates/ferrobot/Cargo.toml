@@ -22,6 +22,9 @@ uuid = "1.27.0"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 log = "0.4.34"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip"] }
+# SecondBot's SMTP service: an async SMTP client and the message builder, on rustls with
+# aws-lc-rs and the platform verifier as reqwest and twilight (MIT)
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1", "tokio1-rustls", "aws-lc-rs", "rustls-platform-verifier"] }
 thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "sync", "net"] }
 # RabbitMQ (SecondBot's RabbitService): AMQP 0-9-1 on tokio, small (MIT)

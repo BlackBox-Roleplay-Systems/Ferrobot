@@ -12,3 +12,4 @@ pub mod relays;
 pub mod restart;
 pub mod rlv;
 pub mod script_permissions;
+pub mod smtp;
