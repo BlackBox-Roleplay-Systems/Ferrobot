@@ -38,7 +38,7 @@ All settings come from environment variables.
 | `FERRO_HOME_SIT` | (none) | At home, sit on this object (its key); a Stand command stops it until the next login |
 | `FERRO_RATE_LIMIT` | `60` | Commands that change things in world (invites, ejects, chat…) per minute, bursts of 20; they wait their turn, up to a minute. `0`: no limit |
 | `FERRO_RELAY_1`, `FERRO_RELAY_2`… | (none) | Relays, in SecondBot's short form: `sType::localchat{}sFilter::avatar{}tType::webhook{}tConfig::https://…` |
-| `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject) |
+| `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
@@ -91,7 +91,9 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GetParcelFlags`, `GetParcelPrimCounts`, `GetParcelSaleDetails`, `GetParcelTraffic`,
 `SetParcelName`, `SetParcelDesc`, `SetParcelLandingZone`, `SetParcelMusic`, `SetParcelSale`,
 `CancelParcelSale`, `SetParcelSnapshot`, `SetParcelAudioControls`, `SetParcelFlag`,
-`ParcelSetMedia`; movement: `Fly`,
+`ParcelSetMedia`, `ParcelEject`, `ParcelFreeze`, `ParcelBan`, `ParcelUnBan`, `GetParcelBanlist`,
+`ResetParcelAcccessLists`, `ReturnAllObjectsOnParcel`, `ReturnAllObjectsOnParcelByOwner`,
+`ParcelDeedToGroup`, `AbandonLand`, `ParcelBuy`, `EstateParcelReclaim`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
 `RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`

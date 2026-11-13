@@ -58,6 +58,8 @@ pub struct Region {
     pub handle: u64,
     /// The region's id (RegionHandshake).
     pub id: Uuid,
+    /// The bot manages this region's estate (RegionHandshake's IsEstateManager).
+    pub estate_manager: bool,
 }
 
 /// Where "home" is (the login reply's `home`).

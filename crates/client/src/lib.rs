@@ -21,6 +21,7 @@ pub mod login;
 pub mod mutes;
 pub mod names;
 mod network;
+pub use network::{ObjectOwner, ParcelAction};
 pub mod objects;
 pub mod parcels;
 pub mod region_restart;
@@ -604,6 +605,37 @@ impl Client {
         self.ask(|reply| Request::Parcel(network::ParcelRequest::GlobalId { reply }))
             .await?
             .map_err(ClientError::Refused)
+    }
+
+    /// A parcel's access list (parcels::AL_ACCESS) or ban list (parcels::AL_BAN).
+    pub async fn parcel_access_list(
+        &self,
+        local_id: i32,
+        flags: u32,
+    ) -> Result<Vec<parcels::AccessEntry>, ClientError> {
+        self.ask(|reply| {
+            Request::Parcel(network::ParcelRequest::AccessList {
+                local_id,
+                flags,
+                reply,
+            })
+        })
+        .await
+    }
+
+    /// Who owns objects on a parcel, and how many.
+    pub async fn parcel_object_owners(
+        &self,
+        local_id: i32,
+    ) -> Result<Vec<network::ObjectOwner>, ClientError> {
+        self.ask(|reply| Request::Parcel(network::ParcelRequest::ObjectOwners { local_id, reply }))
+            .await
+    }
+
+    /// Eject, freeze, change an access list, return objects, deed, abandon, buy, reclaim.
+    pub async fn parcel_act(&self, action: network::ParcelAction) -> Result<(), ClientError> {
+        self.ask(|reply| Request::Parcel(network::ParcelRequest::Act { action, reply }))
+            .await
     }
 
     /// Change a parcel: `parcel` is what it should be, from a ParcelInfo the region sent.

@@ -16,6 +16,7 @@ mod groups;
 mod inventory;
 mod parcels;
 pub(crate) use parcels::ParcelRequest;
+pub use parcels::{ObjectOwner, ParcelAction};
 
 pub(crate) use groups::GroupRequest;
 pub(crate) use inventory::InventoryRequest;
@@ -203,6 +204,8 @@ struct Session<'a> {
     map_waits: Vec<(String, oneshot::Sender<Option<crate::MapRegion>>)>,
     /// The region's id (RegionHandshake).
     region_id: Uuid,
+    /// The bot manages the region's estate (RegionHandshake).
+    estate_manager: bool,
     /// Parcel replies being waited for.
     parcel_waits: parcels::ParcelWaits,
     /// The mute list's file, being downloaded.
@@ -656,6 +659,7 @@ impl Session<'_> {
                 name: self.region_name.clone(),
                 handle: region_handle,
                 id: self.region_id,
+                estate_manager: self.estate_manager,
             });
         }
         self.shared.emit(Event::Arrived {
@@ -1036,6 +1040,7 @@ impl Session<'_> {
             let m: RegionHandshake = pkt.decode()?;
             self.region_name = field_str(&m.region_info.sim_name);
             self.region_id = m.region_info2.region_id;
+            self.estate_manager = m.region_info.is_estate_manager;
             log::info!("region handshake: {}", self.region_name);
             let mut reply = RegionHandshakeReply::default();
             reply.agent_data.agent_id = self.login.agent_id;
@@ -1117,6 +1122,22 @@ impl Session<'_> {
             }
             let avatars = self.places.avatar_positions();
             self.shared.state_mut().avatars = avatars;
+        } else if id == ParcelAccessListReply::ID {
+            let m: ParcelAccessListReply = pkt.decode()?;
+            self.on_access_list_reply(&m);
+        } else if id == ParcelObjectOwnersReply::ID {
+            let m: ParcelObjectOwnersReply = pkt.decode()?;
+            let owners = m
+                .data
+                .iter()
+                .filter(|d| !d.owner_id.is_nil())
+                .map(|d| parcels::ObjectOwner {
+                    id: d.owner_id,
+                    is_group: d.is_group_owned,
+                    count: d.count,
+                })
+                .collect();
+            self.on_object_owners(owners);
         } else if id == ParcelDwellReply::ID {
             let m: ParcelDwellReply = pkt.decode()?;
             self.on_dwell_reply(&m);
@@ -1560,6 +1581,20 @@ impl Session<'_> {
             "ChatterBoxSessionStartReply" => self.on_session_start_reply(&e.body),
             "ChatterBoxInvitation" => self.on_session_invitation(&e.body),
             "ParcelProperties" => self.on_parcel_properties(&e.body),
+            // Second Life sends it on the event queue (Aurora's land::parse_object_owners)
+            "ParcelObjectOwnersReply" => {
+                let owners = e.body["Data"]
+                    .as_array()
+                    .iter()
+                    .filter(|d| !d["OwnerID"].as_uuid().is_nil())
+                    .map(|d| parcels::ObjectOwner {
+                        id: d["OwnerID"].as_uuid(),
+                        is_group: d["IsGroupOwned"].as_bool(),
+                        count: d["Count"].as_i32(),
+                    })
+                    .collect();
+                self.on_object_owners(owners);
+            }
             "TeleportFailed" => {
                 self.teleport_failed(e.body["Info"][0]["Reason"].as_str().to_owned());
             }
@@ -1699,6 +1734,7 @@ async fn run(
         map_waits: Vec::new(),
         mute_xfer: None,
         region_id: Uuid::nil(),
+        estate_manager: false,
         parcel_waits: Default::default(),
         places: Default::default(),
         transfers: Default::default(),

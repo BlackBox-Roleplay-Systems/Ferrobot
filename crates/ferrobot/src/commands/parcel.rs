@@ -5,11 +5,15 @@
 //!
 //! Deliberate differences: SetParcelFlag skips a value that is not true or false (SecondBot's
 //! Convert.ToBoolean throws, and the command fails); ParcelSetMedia keeps a size between 256 and
-//! 1024 (SecondBot's check lets any through).
+//! 1024 (SecondBot's check lets any through); ReturnAllObjectsOnParcelByOwner returns that
+//! owner's objects (SecondBot's returns everyone else's); bans never end (SecondBot's end in 3030,
+//! which overflows its time and sends garbage).
 
 use super::reply::{Answer, basic, cs_bool_text, cs_float, failure, json_pairs};
 use super::{Ctx, avatar, cs_bool, key, owned};
-use ferro_client::parcels::{FLAG_NAMES, PF_FOR_SALE, ParcelInfo};
+use ferro_client::ParcelAction;
+use ferro_client::parcels::{AL_ACCESS, AL_BAN, AccessEntry, FLAG_NAMES, PF_FOR_SALE, ParcelInfo};
+use serde::Serialize;
 use std::time::Duration;
 
 /// SecondBot waits two seconds for parcel data it does not have yet.
@@ -390,6 +394,364 @@ pub async fn traffic(ctx: &Ctx) -> Answer {
         Ok(p) => {
             let dwell = ctx.client.parcel_dwell(p.local_id).await.unwrap_or(0.0);
             basic(C, &cs_float(dwell), &[])
+        }
+        Err(a) => a,
+    }
+}
+
+async fn act(ctx: &Ctx, command: &str, action: ParcelAction, args: &[String]) -> Answer {
+    match ctx.client.parcel_act(action).await {
+        Ok(()) => basic(command, "ok", args),
+        Err(e) => failure(command, &e.to_string(), args),
+    }
+}
+
+/// ParcelEject: off the parcel the avatar is on (the region knows which).
+pub async fn eject(ctx: &Ctx, who: &str) -> Answer {
+    const C: &str = "ParcelEject";
+    let args = owned(&[who]);
+    let Some(target) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar", &args);
+    };
+    act(ctx, C, ParcelAction::Eject { target, ban: false }, &args).await
+}
+
+pub async fn freeze(ctx: &Ctx, who: &str, state: &str) -> Answer {
+    const C: &str = "ParcelFreeze";
+    let args = owned(&[who, state]);
+    let Some(on) = cs_bool(state) else {
+        return failure(C, "Invaild state", &args);
+    };
+    let Some(target) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar UUID", &args);
+    };
+    act(ctx, C, ParcelAction::Freeze { target, freeze: on }, &args).await
+}
+
+/// The parcel's ban list as the region has it now.
+async fn ban_list(ctx: &Ctx, p: &ParcelInfo) -> Result<Vec<AccessEntry>, String> {
+    ctx.client
+        .parcel_access_list(p.local_id, AL_BAN)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn send_bans(ctx: &Ctx, p: &ParcelInfo, entries: Vec<AccessEntry>) -> Result<(), String> {
+    let action = ParcelAction::AccessList {
+        local_id: p.local_id,
+        flags: AL_BAN,
+        entries,
+    };
+    ctx.client
+        .parcel_act(action)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// ParcelBan: the ban list sent back with the avatar in it, for good.
+pub async fn ban(ctx: &Ctx, who: &str) -> Answer {
+    const C: &str = "ParcelBan";
+    let args = owned(&[who]);
+    let p = match current_with(ctx, C, &args).await {
+        Ok(p) => p,
+        Err(a) => return a,
+    };
+    let Some(target) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar", &args);
+    };
+    let mut list = match ban_list(ctx, &p).await {
+        Ok(l) => l,
+        Err(e) => return failure(C, &e, &args),
+    };
+    if list.iter().any(|e| e.id == target) {
+        return basic(C, "Avatar is in the blacklist", &args);
+    }
+    list.push(AccessEntry {
+        id: target,
+        time: 0,
+        flags: AL_BAN,
+    });
+    match send_bans(ctx, &p, list).await {
+        Ok(()) => basic(C, "ok", &args),
+        Err(e) => failure(C, &e, &args),
+    }
+}
+
+pub async fn unban(ctx: &Ctx, who: &str) -> Answer {
+    const C: &str = "ParcelUnBan";
+    let args = owned(&[who]);
+    let p = match current_with(ctx, C, &args).await {
+        Ok(p) => p,
+        Err(a) => return a,
+    };
+    let Some(target) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar", &args);
+    };
+    let mut list = match ban_list(ctx, &p).await {
+        Ok(l) => l,
+        Err(e) => return failure(C, &e, &args),
+    };
+    if !list.iter().any(|e| e.id == target) {
+        return basic(C, "Avatar is already unbanned", &args);
+    }
+    list.retain(|e| e.id != target);
+    match send_bans(ctx, &p, list).await {
+        Ok(()) => basic(C, "ok", &args),
+        Err(e) => failure(C, &e, &args),
+    }
+}
+
+/// SecondBot's GetParcelBanlistObject, its fields in their order.
+#[derive(Serialize)]
+struct BanList {
+    entrys: std::collections::BTreeMap<String, String>,
+    #[serde(rename = "parcelName")]
+    parcel_name: String,
+    #[serde(rename = "regionName")]
+    region_name: String,
+    delay: i32,
+    #[serde(rename = "reportedEntrys")]
+    reported_entrys: usize,
+}
+
+pub async fn get_ban_list(ctx: &Ctx) -> Answer {
+    const C: &str = "GetParcelBanlist";
+    let p = match current(ctx, C).await {
+        Ok(p) => p,
+        Err(a) => return a,
+    };
+    let list = match ban_list(ctx, &p).await {
+        Ok(l) => l,
+        Err(e) => return failure(C, &e, &[]),
+    };
+    let ids: Vec<uuid::Uuid> = list.iter().map(|e| e.id).collect();
+    let names = ctx.client.names(&ids).await.unwrap_or_default();
+    let value = BanList {
+        entrys: list
+            .iter()
+            .map(|e| {
+                let name = names.get(&e.id).cloned().unwrap_or_else(|| "lookup".into());
+                (e.id.to_string(), name)
+            })
+            .collect(),
+        parcel_name: p.name.clone(),
+        region_name: ctx
+            .client
+            .state()
+            .region
+            .map(|r| r.name)
+            .unwrap_or_default(),
+        delay: 0,
+        reported_entrys: list.len(),
+    };
+    basic(C, &super::reply::json(&value), &[])
+}
+
+/// ResetParcelAcccessLists (SecondBot's spelling): both lists emptied.
+pub async fn reset_access_lists(ctx: &Ctx) -> Answer {
+    const C: &str = "ResetParcelAcccessLists";
+    let p = match current(ctx, C).await {
+        Ok(p) => p,
+        Err(a) => return a,
+    };
+    for flags in [AL_ACCESS, AL_BAN] {
+        let action = ParcelAction::AccessList {
+            local_id: p.local_id,
+            flags,
+            entries: Vec::new(),
+        };
+        if let Err(e) = ctx.client.parcel_act(action).await {
+            return failure(C, &e.to_string(), &[]);
+        }
+    }
+    basic(C, "ok", &[])
+}
+
+/// How long SecondBot waits for the object owners.
+const OWNERS_WAIT: Duration = Duration::from_secs(13);
+
+/// SecondBot's ReturnAllObjectsOnParcelReal: on another's land the parcel's group must be the
+/// bot's active one; the objects of every owner (or of one) sent back.
+async fn return_objects(
+    ctx: &Ctx,
+    command: &str,
+    p: &ParcelInfo,
+    only: Option<uuid::Uuid>,
+) -> Answer {
+    let me = ctx.client.state().agent_id;
+    if p.owner_id != me {
+        if p.group_id.is_nil() {
+            return failure(command, "Land is not group owned and im not the owner", &[]);
+        }
+        let active = |ctx: &Ctx| {
+            ctx.client
+                .state()
+                .active_group
+                .as_ref()
+                .is_some_and(|g| g.id == p.group_id)
+        };
+        if !active(ctx) {
+            let _ = ctx.client.group_activate(p.group_id).await;
+            if !active(ctx) {
+                return failure(command, "I do not have access to the group", &[]);
+            }
+        }
+    }
+    let owners = match tokio::time::timeout(
+        OWNERS_WAIT,
+        ctx.client.parcel_object_owners(p.local_id),
+    )
+    .await
+    {
+        Ok(Ok(o)) => o,
+        _ => return failure(command, "Timeout waiting for object owners reply", &[]),
+    };
+    let mut ids: Vec<uuid::Uuid> = Vec::new();
+    for o in owners {
+        if !ids.contains(&o.id) && only.is_none_or(|t| t == o.id) {
+            ids.push(o.id);
+        }
+    }
+    if ids.is_empty() {
+        return failure(command, "No objects found to return", &[]);
+    }
+    let action = ParcelAction::ReturnObjects {
+        local_id: p.local_id,
+        owners: ids,
+    };
+    act(ctx, command, action, &[]).await
+}
+
+pub async fn return_all(ctx: &Ctx) -> Answer {
+    const C: &str = "ReturnAllObjectsOnParcel";
+    match current(ctx, C).await {
+        Ok(p) => return_objects(ctx, C, &p, None).await,
+        Err(a) => a,
+    }
+}
+
+pub async fn return_by_owner(ctx: &Ctx, who: &str) -> Answer {
+    const C: &str = "ReturnAllObjectsOnParcelByOwner";
+    let p = match current(ctx, C).await {
+        Ok(p) => p,
+        Err(a) => return a,
+    };
+    let Some(owner) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar", &owned(&[who]));
+    };
+    return_objects(ctx, C, &p, Some(owner)).await
+}
+
+/// PF_ALLOW_DEED_TO_GROUP
+const PF_ALLOW_DEED_TO_GROUP: u32 = 1 << 13;
+
+/// ParcelDeedToGroup: the parcel set to the group and allowed to be deeded, then deeded.
+pub async fn deed_to_group(ctx: &Ctx, group: &str) -> Answer {
+    const C: &str = "ParcelDeedToGroup";
+    let args = owned(&[group]);
+    let mut p = match current_with(ctx, C, &args).await {
+        Ok(p) => p,
+        Err(a) => return a,
+    };
+    let Some(id) = key(group) else {
+        return failure(C, "Invaild group uuid", &args);
+    };
+    if !ctx.client.state().groups.iter().any(|g| g.id == id) {
+        return failure(C, "Not in group", &args);
+    }
+    set_flag(&mut p, PF_ALLOW_DEED_TO_GROUP, true);
+    p.group_id = id;
+    let local_id = p.local_id;
+    if let Err(e) = ctx.client.update_parcel(p).await {
+        return failure(C, &e.to_string(), &args);
+    }
+    // SecondBot gives the region half a second for the change
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    act(
+        ctx,
+        C,
+        ParcelAction::DeedToGroup {
+            local_id,
+            group: id,
+        },
+        &args,
+    )
+    .await
+}
+
+pub async fn abandon(ctx: &Ctx) -> Answer {
+    const C: &str = "AbandonLand";
+    match current(ctx, C).await {
+        Ok(p) => {
+            act(
+                ctx,
+                C,
+                ParcelAction::Release {
+                    local_id: p.local_id,
+                },
+                &[],
+            )
+            .await
+        }
+        Err(a) => a,
+    }
+}
+
+/// ParcelBuy: only at its price, and only when the sale is not to someone else. It spends the
+/// bot's money: off unless FERRO_ALLOW_FUNDS, as the pay commands (SecondBot does not gate it).
+pub async fn buy(ctx: &Ctx, amount: &str) -> Answer {
+    const C: &str = "ParcelBuy";
+    let args = owned(&[amount]);
+    if !ctx.allow_funds {
+        return failure(C, "Funds commands are disabled", &args);
+    }
+    let p = match current_with(ctx, C, &args).await {
+        Ok(p) => p,
+        Err(a) => return a,
+    };
+    let me = ctx.client.state().agent_id;
+    if !p.auth_buyer.is_nil() && p.auth_buyer != me {
+        return failure(C, "Parcel sale locked to other avatars", &args);
+    }
+    let min = if p.auth_buyer == me { 0 } else { 1 };
+    let Ok(price) = amount.trim().parse::<i32>() else {
+        return failure(C, "Invaild amount", &args);
+    };
+    if price < min {
+        return failure(C, "Invaild amount", &args);
+    }
+    if p.flags & PF_FOR_SALE == 0 {
+        return failure(C, "Parcel not for sale", &args);
+    }
+    if p.sale_price != price {
+        return failure(C, "Parcel sale price and amount do not match", &args);
+    }
+    let action = ParcelAction::Buy {
+        local_id: p.local_id,
+        price,
+        area: p.area,
+    };
+    act(ctx, C, action, &args).await
+}
+
+/// EstateParcelReclaim: an estate manager takes the parcel back.
+pub async fn reclaim(ctx: &Ctx) -> Answer {
+    const C: &str = "EstateParcelReclaim";
+    let manager = ctx.client.state().region.is_some_and(|r| r.estate_manager);
+    if !manager {
+        return failure(C, "Not an estate manager here", &[]);
+    }
+    match current(ctx, C).await {
+        Ok(p) => {
+            act(
+                ctx,
+                C,
+                ParcelAction::Reclaim {
+                    local_id: p.local_id,
+                },
+                &[],
+            )
+            .await
         }
         Err(a) => a,
     }

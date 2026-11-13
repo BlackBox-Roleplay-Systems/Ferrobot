@@ -223,7 +223,16 @@ baking: the bot says so and goes on.
   SetParcelFlag, ParcelSetMedia; tested on the test grid. Deliberate differences: SetParcelFlag
   skips a value that is not true or false (SecondBot's throws), ParcelSetMedia keeps sizes in
   256..1024 (SecondBot's check lets any through)
-- ⬜ Parcel access (eject, ban, freeze, return), the estate commands
+- 🟡 Parcel access (EjectUser, FreezeUser, ParcelAccessListRequest/Update as the viewer's
+  sendParcelAccessListUpdate, ParcelObjectOwnersRequest then ParcelReturnObjects, ParcelDeedToGroup,
+  ParcelRelease, ParcelBuy, ParcelReclaim; the estate manager flag from RegionHandshake):
+  SecondBot's ParcelEject, ParcelFreeze, ParcelBan, ParcelUnBan, GetParcelBanlist,
+  ResetParcelAcccessLists, ReturnAllObjectsOnParcel, ReturnAllObjectsOnParcelByOwner,
+  ParcelDeedToGroup, AbandonLand, ParcelBuy, EstateParcelReclaim; tested on the test grid.
+  Deliberate differences: ReturnAllObjectsOnParcelByOwner returns that owner's objects (SecondBot's
+  returns everyone else's), bans never end (SecondBot's end time overflows), ParcelBuy is off
+  unless FERRO_ALLOW_FUNDS (it spends money)
+- ⬜ GetObjectsInParcel, UnRezObject (with the objects), the estate commands
 - ⬜ Profiles, animations and gestures
 
 ## Phase 8 - Running it for real

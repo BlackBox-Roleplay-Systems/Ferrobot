@@ -1652,6 +1652,11 @@ mod api {
             )
         );
         assert_eq!(api.reply("GetParcelTraffic", &[]).await, "42.5");
+        assert_eq!(
+            api.failure("ParcelBuy", &["0"]).await.0,
+            "Funds commands are disabled",
+            "it spends money"
+        );
 
         assert_eq!(api.reply("Logoff", &[]).await, "ok");
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
@@ -1761,6 +1766,147 @@ mod api {
             10,
             "one update per change"
         );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
+    /// SecondBot's parcel access commands: eject, freeze, bans, returns, deed, abandon, buy,
+    /// reclaim.
+    #[tokio::test]
+    async fn parcel_access() {
+        let grid = grid().await;
+        let port = free_port().to_string();
+        let mut bot = Bot::start(
+            &grid,
+            &[
+                ("FERRO_HTTP_PORT", port.as_str()),
+                ("commands_SharedSecret", SECRET),
+                ("FERRO_ALLOW_FUNDS", "true"),
+            ],
+        );
+        let api = Api {
+            url: format!("http://127.0.0.1:{port}/api/Run"),
+            http: reqwest::Client::new(),
+        };
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let (some, other) = (uuid_from(0x5eed_0001), uuid_from(0x5eed_0002));
+        let did =
+            |what: String| move |s: &Seen| matches!(s, Seen::Parcel { what: w } if *w == what);
+
+        assert_eq!(api.reply("ParcelEject", &[OTHER]).await, "ok");
+        assert!(grid.wait_for(WAIT, did(format!("eject {other} 0"))).await);
+        assert_eq!(
+            api.reply("ParcelFreeze", &["Other Avatar", "true"]).await,
+            "ok"
+        );
+        assert!(grid.wait_for(WAIT, did(format!("freeze {other} 0"))).await);
+        assert_eq!(api.reply("ParcelFreeze", &[OTHER, "False"]).await, "ok");
+        assert!(grid.wait_for(WAIT, did(format!("freeze {other} 1"))).await);
+        assert_eq!(
+            api.failure("ParcelFreeze", &[OTHER, "maybe"]).await.0,
+            "Invaild state"
+        );
+
+        // bans: the list read, then sent back whole
+        assert_eq!(api.reply("ParcelBan", &[OTHER]).await, "ok");
+        assert_eq!(api.reply("ParcelBan", &["Some Resident"]).await, "ok");
+        assert_eq!(
+            api.reply("ParcelBan", &[OTHER]).await,
+            "Avatar is in the blacklist"
+        );
+        let bans: Value =
+            serde_json::from_str(&api.reply("GetParcelBanlist", &[]).await).expect("json");
+        assert_eq!(bans["entrys"][&other.to_string()], "Other Avatar");
+        assert_eq!(bans["entrys"][&some.to_string()], "Some Resident");
+        assert_eq!(
+            (bans["reportedEntrys"].as_i64(), bans["parcelName"].as_str()),
+            (Some(2), Some("Plaza"))
+        );
+        assert_eq!(bans["regionName"], "Test Region");
+        assert_eq!(api.reply("ParcelUnBan", &[OTHER]).await, "ok");
+        assert_eq!(
+            api.reply("ParcelUnBan", &[OTHER]).await,
+            "Avatar is already unbanned"
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::AccessListUpdate {
+                    flags: 2,
+                    ids: vec![some]
+                })
+            .await
+        );
+        assert_eq!(api.reply("ResetParcelAcccessLists", &[]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::AccessListUpdate {
+                    flags: 1,
+                    ids: vec![]
+                })
+            .await
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::AccessListUpdate {
+                    flags: 2,
+                    ids: vec![]
+                })
+            .await
+        );
+
+        // returns: everyone's, then one owner's only
+        assert_eq!(api.reply("ReturnAllObjectsOnParcel", &[]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, did(format!("return 16 {some},{other}")))
+                .await
+        );
+        assert_eq!(
+            api.reply("ReturnAllObjectsOnParcelByOwner", &[OTHER]).await,
+            "ok"
+        );
+        assert!(grid.wait_for(WAIT, did(format!("return 16 {other}"))).await);
+
+        // the parcel to a group the bot is in, not to one it is not in
+        let group = ferro_testgrid::TEST_GROUP;
+        assert_eq!(
+            api.reply("ParcelDeedToGroup", &[&group.to_string()]).await,
+            "ok"
+        );
+        assert!(grid.wait_for(WAIT, did(format!("deed 7 {group}"))).await);
+        assert_eq!(
+            grid.parcel().flags & (1 << 13),
+            1 << 13,
+            "deeding allowed first"
+        );
+        assert_eq!(
+            api.failure(
+                "ParcelDeedToGroup",
+                &[&ferro_testgrid::THIRD_GROUP.to_string()]
+            )
+            .await
+            .0,
+            "Not in group"
+        );
+
+        // buying: only for sale, at its price
+        assert_eq!(
+            api.failure("ParcelBuy", &["10"]).await.0,
+            "Parcel not for sale"
+        );
+        assert_eq!(api.reply("SetParcelSale", &["300", "none"]).await, "ok");
+        assert_eq!(
+            api.failure("ParcelBuy", &["10"]).await.0,
+            "Parcel sale price and amount do not match"
+        );
+        assert_eq!(api.reply("ParcelBuy", &["300"]).await, "ok");
+        assert!(grid.wait_for(WAIT, did("buy 7 300 16384".into())).await);
+
+        assert_eq!(api.reply("AbandonLand", &[]).await, "ok");
+        assert!(grid.wait_for(WAIT, did("release 7".into())).await);
+        assert_eq!(api.reply("EstateParcelReclaim", &[]).await, "ok");
+        assert!(grid.wait_for(WAIT, did("reclaim 7".into())).await);
 
         assert_eq!(api.reply("Logoff", &[]).await, "ok");
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());

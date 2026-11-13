@@ -269,6 +269,9 @@ impl Region {
 
         let mut h = RegionHandshake::default();
         h.region_info.sim_name = str_field(&self.shared.regions[self.index].name);
+        // the bot manages the first region's estate, not the second's
+        h.region_info.is_estate_manager = self.index == 0;
+        h.region_info2.region_id = Uuid::from_u128(0x2e61_0000 + self.index as u128);
         h.region_info.water_height = 20.0;
         h.region_info2.region_id = Uuid::new_v4();
         self.send(from, &h, true);
@@ -572,6 +575,113 @@ impl Region {
                     .parcel
                     .properties(sequence, self.shared.agent_id);
                 self.shared.queue_event(n, "ParcelProperties", body);
+            }
+        } else if id == EjectUser::ID {
+            if let Ok(m) = pkt.decode::<EjectUser>() {
+                self.shared.saw(Seen::Parcel {
+                    what: format!("eject {} {}", m.data.target_id, m.data.flags),
+                });
+            }
+        } else if id == FreezeUser::ID {
+            if let Ok(m) = pkt.decode::<FreezeUser>() {
+                self.shared.saw(Seen::Parcel {
+                    what: format!("freeze {} {}", m.data.target_id, m.data.flags),
+                });
+            }
+        } else if id == ParcelAccessListRequest::ID {
+            if let Ok(m) = pkt.decode::<ParcelAccessListRequest>() {
+                // the list as kept, a null entry when empty (LLParcel::packAccessEntries)
+                let flags = m.data.flags;
+                let list = if flags & 2 != 0 {
+                    self.shared.state().parcel_bans.clone()
+                } else {
+                    Vec::new()
+                };
+                let mut r = ParcelAccessListReply::default();
+                r.data.agent_id = self.shared.agent_id;
+                r.data.flags = flags;
+                r.data.local_id = m.data.local_id;
+                r.list = if list.is_empty() {
+                    vec![parcel_access_list_reply::List::default()]
+                } else {
+                    list.iter()
+                        .map(|id| parcel_access_list_reply::List {
+                            id: *id,
+                            time: 0,
+                            flags,
+                        })
+                        .collect()
+                };
+                self.send(from, &r, true);
+            }
+        } else if id == ParcelAccessListUpdate::ID {
+            if let Ok(m) = pkt.decode::<ParcelAccessListUpdate>() {
+                let ids: Vec<Uuid> = m
+                    .list
+                    .iter()
+                    .map(|e| e.id)
+                    .filter(|id| !id.is_nil())
+                    .collect();
+                self.shared.saw(Seen::AccessListUpdate {
+                    flags: m.data.flags,
+                    ids: ids.clone(),
+                });
+                if m.data.flags & 2 != 0 {
+                    self.shared.state().parcel_bans = ids;
+                }
+            }
+        } else if id == ParcelObjectOwnersRequest::ID {
+            // two owners with objects on the parcel
+            let data = [
+                (Uuid::from_u128(0x5eed_0001), 3),
+                (Uuid::from_u128(0x5eed_0002), 1),
+            ]
+            .iter()
+            .map(|(id, n)| parcel_object_owners_reply::Data {
+                owner_id: *id,
+                is_group_owned: false,
+                count: *n,
+                online_status: false,
+            })
+            .collect();
+            self.send(from, &ParcelObjectOwnersReply { data }, true);
+        } else if id == ParcelReturnObjects::ID {
+            if let Ok(m) = pkt.decode::<ParcelReturnObjects>() {
+                let owners: Vec<String> = m
+                    .owner_i_ds
+                    .iter()
+                    .map(|o| o.owner_id.to_string())
+                    .collect();
+                self.shared.saw(Seen::Parcel {
+                    what: format!("return {} {}", m.parcel_data.return_type, owners.join(",")),
+                });
+            }
+        } else if id == ParcelDeedToGroup::ID {
+            if let Ok(m) = pkt.decode::<ParcelDeedToGroup>() {
+                self.shared.saw(Seen::Parcel {
+                    what: format!("deed {} {}", m.data.local_id, m.data.group_id),
+                });
+            }
+        } else if id == ParcelRelease::ID {
+            if let Ok(m) = pkt.decode::<ParcelRelease>() {
+                self.shared.saw(Seen::Parcel {
+                    what: format!("release {}", m.data.local_id),
+                });
+            }
+        } else if id == ParcelBuy::ID {
+            if let Ok(m) = pkt.decode::<ParcelBuy>() {
+                self.shared.saw(Seen::Parcel {
+                    what: format!(
+                        "buy {} {} {}",
+                        m.data.local_id, m.parcel_data.price, m.parcel_data.area
+                    ),
+                });
+            }
+        } else if id == ParcelReclaim::ID {
+            if let Ok(m) = pkt.decode::<ParcelReclaim>() {
+                self.shared.saw(Seen::Parcel {
+                    what: format!("reclaim {}", m.data.local_id),
+                });
             }
         } else if id == ParcelDwellRequest::ID {
             if let Ok(m) = pkt.decode::<ParcelDwellRequest>() {

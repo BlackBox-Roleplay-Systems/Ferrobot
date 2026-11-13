@@ -360,6 +360,16 @@ pub enum Seen {
     ParcelPropertiesRequest {
         sequence: i32,
     },
+    /// Something done to a parcel or on it, in words: "eject <key> <flags>", "freeze …",
+    /// "return <type> <owners>", "deed <local id> <group>", "release", "buy", "reclaim".
+    Parcel {
+        what: String,
+    },
+    /// ParcelAccessListUpdate: a list (1 access, 2 bans) as it now is.
+    AccessListUpdate {
+        flags: u32,
+        ids: Vec<Uuid>,
+    },
     /// ParcelPropertiesUpdate: the parcel as it is now.
     ParcelUpdate {
         parcel: Box<parcels::GridParcel>,
@@ -452,6 +462,8 @@ struct State {
     groups: Vec<GridGroup>,
     /// The test region's parcel, as updates change it.
     parcel: parcels::GridParcel,
+    /// Its ban list.
+    parcel_bans: Vec<Uuid>,
     /// Group invitations sent to the bot: transaction to group.
     group_invites: HashMap<Uuid, Uuid>,
     /// The group chats the bot is in.
@@ -628,6 +640,7 @@ impl TestGrid {
                 fail_teleport: None,
                 groups,
                 parcel: parcels::GridParcel::default(),
+                parcel_bans: Vec::new(),
                 group_invites: HashMap::new(),
                 group_chats: HashSet::new(),
                 active_group,
