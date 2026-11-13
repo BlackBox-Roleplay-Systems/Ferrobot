@@ -32,6 +32,7 @@ pub mod region_restart;
 pub mod state;
 pub mod terrain;
 mod transfer;
+pub mod walking;
 mod xmlrpc;
 
 pub use events::{ChatMessage, Event, InstantMessage, ScriptDialog};
@@ -39,6 +40,7 @@ pub use login::{LoginError, LoginRequest, LoginResponse, StartLocation};
 pub use names::DisplayName;
 pub use network::{End, Network, Timeouts};
 pub use state::{Group, Health, Home, State};
+pub use walking::WalkKey;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -228,10 +230,21 @@ pub enum Move {
     /// The region walks the bot there (GenericMessage "autopilot", LibreMetaverse's AutoPilot):
     /// a place in the bot's region.
     AutoPilot(glam::Vec3),
-    /// AGENT_CONTROL_STOP, once: the autopilot stops.
+    /// AGENT_CONTROL_STOP, once: the autopilot stops; a key held is let go and a follow ends.
     Stop,
     /// Face this way: a heading in degrees, clockwise from north.
     Face(f32),
+    /// Turn by this many degrees, clockwise (to the right) when positive.
+    Turn(f32),
+    /// Hold a movement key in the agent updates for this long (a follow ends).
+    Walk(WalkKey, Duration),
+    /// Let go of the movement key.
+    WalkStop,
+    /// Follow an avatar of the region, keeping this distance (metres) from it, until it leaves,
+    /// [`Move::FollowStop`], [`Move::Stop`], another walk, a seat, a teleport or the logout.
+    Follow { avatar: Uuid, distance: f32 },
+    /// Stop following (AGENT_CONTROL_STOP once).
+    FollowStop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

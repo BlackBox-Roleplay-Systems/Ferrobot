@@ -264,7 +264,17 @@ baking: the bot says so and goes on.
   Aurora's objects.rs: full, compressed and terse updates; seated, the seat's place plus the
   offset, as SecondBot's AvatarPositions). Tried on NGC: flying, landing and the autopilot moved
   it, and GetPosition matched the region's own position
-- ⬜ Movement: walking by keys (forward, back, turn) and following an avatar
+- 🟡 Movement: walking by keys and following an avatar (crates/client/src/walking.rs,
+  commands/movement.rs). SecondBot has no such commands: Ferrobot's own `Walk` (forward, back,
+  left, right, for up to 60 s), `WalkStop`, `Turn` (left or right, degrees), `Follow` (an avatar,
+  0.5 to 20 m behind, Aurora's FollowSettings bounds) and `FollowStop`, answered in SecondBot's
+  manner. A held key is its AGENT_CONTROL_ flag and its FAST_ flag (Aurora's agent.rs), sent ten
+  times a second while held; a change of the flags is confirmed by one more update (Aurora's
+  agent_update.rs). Following re-sends the region's autopilot toward the avatar as it moves
+  (LibreMetaverse's FollowCommand), stops near it, and ends when it is out of sight 5 s, on
+  FollowStop or AutoPilotStop, a new walk, a seat, a teleport, the logout or a relog. Fixed on the
+  way: AGENT_CONTROL_AWAY was sent as TURN_LEFT's bit. Tested on the test grid (residents that
+  walk and leave)
 - 🟡 SecondBot's NearmeWithDetails (the avatars' object updates, seated ones on their seats; every
   avatar's place is kept now), FriendsGetLocation (FindAgent, as LLAvatarTracker::findAgent),
   GetSimGlobalPos and GetSimTexture (the world map), GetMuteList (asked at each login, downloaded

@@ -165,7 +165,10 @@ avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileI
 `TransferInventoryToObject`, `AsyncTransferInventoryToObject`; what it wears:
 `Attach`, `Detach`, `SwapOutfit`, `SwapOutfitByPath`, `Outfit`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
-`RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
+`RotateToFaceVector`, `HoverHeight`, and Ferrobot's own (SecondBot has none): `Walk` (direction
+`forward`, `back`, `left` or `right`, and seconds up to 60), `WalkStop`, `Turn` (`left` or `right`,
+and degrees), `Follow` (an avatar, by key or name, and the metres to keep from it, 0.5 to 20; until
+it leaves the region), `FollowStop` (`AutoPilotStop` stops a walk and a follow too); `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`
 (in world, region, logins, uptime, commands run and failed); SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,

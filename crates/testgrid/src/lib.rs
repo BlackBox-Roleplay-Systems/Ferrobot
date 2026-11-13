@@ -677,6 +677,11 @@ enum RegionCommand {
         group: Uuid,
         text: String,
     },
+    /// A resident walks to a place, or leaves (`None`).
+    MoveResident {
+        index: usize,
+        to: Option<glam::Vec3>,
+    },
 }
 
 /// A running fake grid. Dropping it stops it.
@@ -1054,6 +1059,21 @@ impl TestGrid {
             owner: owner.to_owned(),
             questions,
         });
+    }
+
+    /// A resident of the settings (by its index) walks to this place of the bot's region: an
+    /// object update, and the coarse updates after it. They stand in a row to the west at first,
+    /// from 98, 128, 25.
+    pub fn move_resident(&self, index: usize, to: glam::Vec3) {
+        self.command(RegionCommand::MoveResident {
+            index,
+            to: Some(to),
+        });
+    }
+
+    /// A resident leaves the region: its object is killed, and the coarse updates leave it out.
+    pub fn remove_resident(&self, index: usize) {
+        self.command(RegionCommand::MoveResident { index, to: None });
     }
 
     /// The region closes the circuit (DisableSimulator), as when it shuts down.

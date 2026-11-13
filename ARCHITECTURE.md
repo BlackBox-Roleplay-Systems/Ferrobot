@@ -37,6 +37,7 @@ crates/
     src/gesture.rs         gesture assets (from Aurora) and their playing
     src/profile.rs         avatar profiles (AgentProfile, AvatarPropertiesReply)
     src/outfit.rs          attachments and outfits, by the Current Outfit Folder's links
+    src/walking.rs         keys held in the agent updates, following an avatar by the autopilot
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
