@@ -323,7 +323,7 @@ async fn from_bot_channel(
                 delete(discord, m).await;
                 return;
             }
-            match crate::services::im_commands::unpack(&m.content) {
+            match crate::api::signing::unpack(&m.content) {
                 Some(u) => run(ctx, discord, m, &u.command, &u.args).await,
                 None => {
                     react(discord, m, false).await;

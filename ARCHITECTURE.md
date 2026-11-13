@@ -38,7 +38,7 @@ crates/
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
-    src/api/               SecondBot's HTTP API: POST /api/Run, signatures (axum)
+    src/api/               SecondBot's HTTP API: POST /api/Run and /json, signatures (axum)
     src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat, movement…)
     src/masters.rs         who the masters are, by name or by key
     src/dialogs.rs         script dialogs: kept, relayed, answered (SecondBot's DialogService)
@@ -101,6 +101,10 @@ crates/
 sha1(command + args + unixtime + shared secret), refused when older than 35 s. Replies as SecondBot
 does: `{"Key": bool, "Value": "<JSON text>"}`, the inner JSON being
 `{command, args, reply, status, whyfailed}`. A refused request gets plain text.
+
+`POST /json` takes one command in SignedCommand's own form (a JSON object or the text form of
+commands by IM, unpacked by `api/signing.rs` for both), signed with the time; it answers the same
+texts, each sent as a JSON string as SecondBot's EmbedIO module does.
 
 ### The container and the tunnel
 
