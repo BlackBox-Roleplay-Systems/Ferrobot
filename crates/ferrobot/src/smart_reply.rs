@@ -1,0 +1,64 @@
+//! SecondBot's SmartCommandReply: where the answer of a command goes when it names a reply
+//! target. A channel number in local chat (999 for a negative one), an avatar's key or name by
+//! IM, an http(s) address as a form POST of `reply` and `command`. SecondBot's e-mail replies are
+//! not followed (Ferrobot sends no e-mail).
+
+use crate::commands::Ctx;
+use ferro_client::events::chat_type;
+use uuid::Uuid;
+
+/// Sends `output` to `target`.
+pub async fn send(ctx: &Ctx, target: &str, output: &str, command: &str) {
+    let target = target.trim();
+    let lower = target.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        let body = format!(
+            "reply={}&command={}",
+            form_encode(output),
+            form_encode(command)
+        );
+        let sent = ctx
+            .http
+            .post(target)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .timeout(std::time::Duration::from_secs(30))
+            .body(body)
+            .send()
+            .await;
+        if let Err(e) = sent {
+            log::warn!("command reply by HTTP failed: {}", e.without_url());
+        }
+        return;
+    }
+    if let Ok(avatar) = Uuid::parse_str(target) {
+        let _ = ctx.client.im(avatar, output).await;
+        return;
+    }
+    if target.split_whitespace().count() == 2 {
+        if let Ok(Some(avatar)) = ctx.client.find_avatar(target).await {
+            let _ = ctx.client.im(avatar, output).await;
+        }
+        return;
+    }
+    if target.contains('@') {
+        log::warn!("command reply by e-mail: not supported");
+        return;
+    }
+    if let Ok(channel) = target.parse::<i32>() {
+        // "output Channel must be zero or higher"
+        let channel = if channel < 0 { 999 } else { channel };
+        let _ = ctx.client.chat(output, channel, chat_type::SAY).await;
+    }
+}
+
+fn form_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            b' ' => "+".to_owned(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}

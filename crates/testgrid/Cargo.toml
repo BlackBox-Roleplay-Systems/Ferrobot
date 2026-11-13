@@ -1,0 +1,22 @@
+[package]
+name = "ferro-testgrid"
+description = "A fake Second Life grid on localhost (login server, region, capabilities), for tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ferro-llsd = { path = "../llsd" }
+ferro-msg = { path = "../msg" }
+glam = "0.34.1"
+log = "0.4.34"
+md5 = "0.8.1"
+tokio = { version = "1", features = ["rt", "macros", "net", "time", "sync", "io-util"] }
+uuid = { version = "1.27.0", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "signal"] }
+
+[lints]
+workspace = true

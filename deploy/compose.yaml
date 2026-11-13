@@ -1,0 +1,23 @@
+# Ferrobot behind a Cloudflare Tunnel: the API is reachable at https://<your hostname>/api/Run and
+# nothing is opened on the host. See the README, "Behind a Cloudflare Tunnel".
+#
+#   cp ferrobot.env.example ferrobot.env    # then fill it in
+#   TUNNEL_TOKEN=<the tunnel's token> docker compose up -d
+#
+# In Cloudflare (Zero Trust > Networks > Tunnels), give the tunnel a public hostname whose
+# service is http://ferrobot:80.
+services:
+  ferrobot:
+    image: ghcr.io/kanikabreed/ferrobot:latest
+    restart: unless-stopped
+    env_file: ferrobot.env
+    stop_grace_period: 20s   # time to log out of Second Life
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.5
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?the tunnel token from Cloudflare}
+    depends_on:
+      - ferrobot

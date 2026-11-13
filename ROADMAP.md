@@ -146,8 +146,8 @@ has it.
 
 | When | Decision |
 |---|---|
-| Phase 1 | Make the repository public, or keep it private for now |
-| Phase 1 | Publish the image (GitHub Container Registry), or build it on the server |
+| Phase 1 | ✅ The repository is public |
+| Phase 1 | ✅ A published image, like SecondBot's: GitHub Container Registry, amd64 and arm64 |
 | Phase 4 | Keep SecondBot's API forever, or add a cleaner JSON API next to it |
 | Phase 5 | Which relays matter (Discord, webhooks, RabbitMQ, e-mail) |
 | Phase 7 | Which of SecondBot's ~200 commands are worth porting |

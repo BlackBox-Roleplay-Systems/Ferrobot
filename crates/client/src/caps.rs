@@ -13,14 +13,21 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "EventQueueGet",
     "AgentPreferences",
     "AgentProfile",
+    "DispatchRegionInfo",
+    "EstateAccess",
+    "EstateChangeInfo",
     "ChatSessionRequest",
     "FetchInventory2",
     "FetchInventoryDescendents2",
     "GetDisplayNames",
     "GroupAPIv1",
     "GroupMemberData",
+    "ParcelPropertiesUpdate",
     "ReadOfflineMsgs",
+    "RemoteParcelRequest",
     "UpdateAvatarAppearance",
+    "UpdateNotecardAgentInventory",
+    "ViewerAsset",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +46,24 @@ pub async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd) -> Result
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(to_xml(body))
+        .send()
+        .await
+        .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(CapsError::Status(status.as_u16()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
+    from_xml(&bytes).map_err(|_| CapsError::Malformed)
+}
+
+pub async fn get_llsd(http: &reqwest::Client, url: &str) -> Result<Llsd, CapsError> {
+    let resp = http
+        .get(url)
+        .header("Accept", "application/llsd+xml")
         .send()
         .await
         .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
@@ -95,6 +120,8 @@ pub struct EqEvent {
 
 #[derive(Debug)]
 pub enum EqMessage {
+    /// The region's capabilities, from its seed (URLs: secrets of the session, never logged).
+    Caps(HashMap<String, String>),
     Event(EqEvent),
     /// The queue failed too many times in a row.
     Lost,

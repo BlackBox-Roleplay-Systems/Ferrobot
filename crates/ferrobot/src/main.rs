@@ -1,15 +1,19 @@
 //! Ferrobot: a Second Life bot in a container.
 
-mod caps;
-mod circuit;
+mod animators;
+mod api;
+mod commands;
 mod config;
-mod login;
-mod session;
-mod xmlrpc;
+mod dialogs;
+mod history;
+mod masters;
+mod services;
+mod smart_reply;
+mod store;
 
 use config::Config;
-use login::{LoginError, LoginRequest};
-use session::End;
+use ferro_client::login::{self, LoginError, LoginRequest};
+use ferro_client::{Client, End, Network};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -17,6 +21,13 @@ use tokio::sync::watch;
 /// 2 a login refusal that retrying can't fix (password, terms of service, 2FA).
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    let health_file = std::env::var("FERRO_HEALTH_FILE")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| services::health::DEFAULT_PATH.to_owned());
+    if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        return std::process::ExitCode::from(services::health::check(health_file.as_ref()));
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     log::info!("Ferrobot {}", login::version());
     let cfg = match Config::from_env() {
@@ -29,9 +40,12 @@ async fn main() -> std::process::ExitCode {
     log::debug!("{cfg:?}");
 
     let (stop_tx, stop_rx) = watch::channel(false);
+    // shared: a signal stops the bot, and so does the Logoff command
+    let stop_tx = std::sync::Arc::new(stop_tx);
+    let signal_stop = stop_tx.clone();
     tokio::spawn(async move {
         wait_for_stop().await;
-        let _ = stop_tx.send(true);
+        let _ = signal_stop.send(true);
     });
 
     let http = match reqwest::Client::builder()
@@ -46,10 +60,108 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(1);
         }
     };
-    std::process::ExitCode::from(run(&cfg, &http, stop_rx).await)
+    let (client, mut network) = Client::new(http.clone());
+    // Each service's subscription is made here, before its task runs and before the login: a
+    // task that subscribed when it first ran could miss the first events after the login.
+    tokio::spawn(services::chat_log::run(client.clone(), client.subscribe()));
+    tokio::spawn(services::health::run(client.clone(), health_file.into()));
+    let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
+    let homebound = std::sync::Arc::new(services::homebound::Homebound::default());
+    let animators = std::sync::Arc::new(animators::Animators::default());
+    tokio::spawn(services::script_permissions::run(
+        client.clone(),
+        client.subscribe(),
+        animators.clone(),
+    ));
+    tokio::spawn(services::interactions::run(
+        client.clone(),
+        client.subscribe(),
+        masters.clone(),
+        cfg.interactions,
+        homebound.clone(),
+    ));
+    match cfg.homebound.clone() {
+        Some(settings) => {
+            log::info!("homebound to {}", settings.home.region);
+            tokio::spawn(services::homebound::run(
+                client.clone(),
+                client.subscribe(),
+                settings,
+                homebound.clone(),
+            ));
+        }
+        // without homebound, a restart sends the bot to its Second Life home
+        None => {
+            tokio::spawn(services::restart::run(client.clone(), client.subscribe()));
+        }
+    }
+    let history = std::sync::Arc::new(history::History::default());
+    tokio::spawn(history::run(
+        client.clone(),
+        client.subscribe(),
+        history.clone(),
+    ));
+    tokio::spawn(services::relays::run(
+        client.clone(),
+        client.subscribe(),
+        cfg.relays.clone(),
+        cfg.shared_secret.clone(),
+    ));
+    let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));
+    tokio::spawn(dialogs::run(
+        client.clone(),
+        client.subscribe(),
+        dialogs.clone(),
+        cfg.shared_secret.clone(),
+    ));
+    let ctx = commands::Ctx {
+        client: client.clone(),
+        history,
+        dialogs,
+        store: std::sync::Arc::new(store::Store::new(cfg.rate_limit)),
+        home: cfg.homebound.as_ref().map(|h| h.home.clone()),
+        stop: stop_tx.clone(),
+        homebound: homebound.clone(),
+        allow_funds: cfg.allow_funds,
+        http: http.clone(),
+        animators: animators.clone(),
+    };
+    if cfg.im_commands {
+        tokio::spawn(services::im_commands::run(
+            ctx.clone(),
+            client.subscribe(),
+            masters.clone(),
+            services::im_commands::Settings {
+                secret: cfg.shared_secret.clone(),
+                enforce_time_window: cfg.enforce_time_window,
+                time_window: cfg.time_window,
+                object_master_optout: cfg.object_master_optout,
+            },
+        ));
+    }
+    match (&cfg.shared_secret, cfg.http_enabled) {
+        (Some(secret), true) => {
+            tokio::spawn(api::serve(
+                ctx,
+                cfg.http_bind,
+                cfg.http_port,
+                secret.clone(),
+                cfg.time_window,
+            ));
+        }
+        (None, true) => log::warn!("HTTP API off: no shared secret (FERRO_SHARED_SECRET)"),
+        (_, false) => log::info!("HTTP API off"),
+    }
+    std::process::ExitCode::from(run(&cfg, &http, &mut network, stop_rx).await)
 }
 
-async fn run(cfg: &Config, http: &reqwest::Client, mut stop: watch::Receiver<bool>) -> u8 {
+/// Log in, run the session, and log in again when it ends, as the settings say.
+async fn run(
+    cfg: &Config,
+    http: &reqwest::Client,
+    network: &mut Network,
+    mut stop: watch::Receiver<bool>,
+) -> u8 {
     let req = LoginRequest {
         login_uri: cfg.login_uri.clone(),
         username: cfg.username.clone(),
@@ -69,7 +181,7 @@ async fn run(cfg: &Config, http: &reqwest::Client, mut stop: watch::Receiver<boo
                 if !resp.message.trim().is_empty() {
                     log::info!("message of the day: {}", resp.message.trim());
                 }
-                match session::run(http, &resp, stop.clone()).await {
+                match network.session(&resp, stop.clone()).await {
                     End::LoggedOut => {
                         log::info!("logged out");
                         return 0;
