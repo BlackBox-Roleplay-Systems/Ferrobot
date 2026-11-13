@@ -1416,3 +1416,80 @@ async fn homebound_goes_home_and_leaves_before_a_restart() {
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
+
+/// Relays: local chat to a channel, an avatar's IMs to a webhook (Discord's format).
+#[tokio::test]
+async fn relays_carry_what_the_bot_hears() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let hook = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let hook_url = format!("http://{}/hook", hook.local_addr().expect("address"));
+    let caught = tokio::spawn(async move {
+        let (mut s, _) = hook.accept().await.expect("the webhook's call");
+        let mut buf = vec![0u8; 8192];
+        let mut got = Vec::new();
+        // the head, then the body by its length
+        loop {
+            let n = s.read(&mut buf).await.expect("read");
+            got.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&got).to_string();
+            if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                let len: usize = head
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap_or(0))
+                    })
+                    .unwrap_or(0);
+                if body.len() >= len {
+                    s.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                        .await
+                        .expect("answer");
+                    return body.to_owned();
+                }
+            }
+            if n == 0 {
+                return String::new();
+            }
+        }
+    });
+    let other = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0002),
+        first: "Other".into(),
+        last: "Avatar".into(),
+    };
+    let im_relay = format!(
+        "sType::avatar{{}}sFilter::{}{{}}tType::webhook{{}}tConfig::{hook_url}",
+        other.id
+    );
+    let grid = grid().await;
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            (
+                "FERRO_RELAY_1",
+                "sType::localchat{}sFilter::avatar{}tType::localchat{}tConfig::9",
+            ),
+            ("FERRO_RELAY_2", im_relay.as_str()),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    bot.wait_log("2 relays").await;
+    grid.say("Other Avatar", "hello there");
+    wait_for(&grid, &bot, "the line relayed on channel 9", |s| {
+        matches!(s, Seen::Chat { message, channel: 9, .. }
+            if message.contains(r#""message":"{Relay} hello there""#) && message.contains(r#""source":"localchat""#))
+    })
+    .await;
+    grid.im_from(&other, "ping");
+    let body = tokio::time::timeout(WAIT, caught)
+        .await
+        .expect("the webhook called")
+        .expect("the hook task");
+    let v: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(v["content"], "**Other Avatar**: ping");
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}

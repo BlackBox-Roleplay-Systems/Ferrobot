@@ -36,6 +36,7 @@ All settings come from environment variables.
 | `FERRO_HOME_AFTER` | `1` | Minutes away before it goes home |
 | `FERRO_HOME_SEEK` | `true` | At home, go to the spot given |
 | `FERRO_RATE_LIMIT` | `60` | Commands that change things in world (invites, ejects, chat…) per minute, bursts of 20; they wait their turn, up to a minute. `0`: no limit |
+| `FERRO_RELAY_1`, `FERRO_RELAY_2`… | (none) | Relays, in SecondBot's short form: `sType::localchat{}sFilter::avatar{}tType::webhook{}tConfig::https://…` |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
@@ -48,7 +49,19 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`, `dialogrelay_RelayChannel`,
 `dialogrelay_RelayAvatar`, `dialogrelay_RelayHttpurl`, `dialogrelay_RelayObjectOwnerOnly`,
 `homebound_Enabled`, `homebound_HomeSimSlUrl`, `homebound_BackupSimSLUrl`,
-`homebound_ReturnToHomeSimAfterMins`, `homebound_AtHomeSeekLocation`. The `FERRO_*` name
+`homebound_ReturnToHomeSimAfterMins`, `homebound_AtHomeSeekLocation`, and the relays:
+`relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
+`relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
+`relay_<n>_target_option`, `relay_<n>_RelayConfig`.
+
+### Relays
+
+What the bot hears, sent on (SecondBot's RelayService). Sources: `localchat` (filter: `avatar`,
+`object`, `system`, `ownersay`, or a key), `avatar` (IMs; filter: the sender's key), `object`
+(objects' IMs; filter: the owner's key), `group` (group chat; filter: the group's name or key).
+Targets: `localchat` (a channel), `avatar` (a key), `group` (a key), `http` (SecondBot's signed
+POST to `<url>/Relay/Service`), `webhook` (a JSON `{"content": …}` POST, as a Discord webhook
+takes it). Relayed lines are marked `{Relay}` and never relayed again. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
 
 ### SecondBot's HTTP API

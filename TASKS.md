@@ -140,7 +140,10 @@ region).
   440 s, relayed as its JSON to channels, avatars and HTTP (signed); DialogResponce,
   DialogRelayChatTarget, DialogRelayAvatarTarget, DialogRelayHttpTarget. Deliberate difference:
   expired dialogs are cleaned, not the live ones
-- ⬜ Relays: Discord, webhooks
+- 🟡 Relays (services/relays.rs, SecondBot's RelayService): local chat, avatar and object IMs,
+  group chat, to local chat, an avatar, a group, HTTP (signed) or a webhook (Discord's format);
+  SecondBot's relay settings and the short form; tested on the test grid
+- ⬜ Relays: SecondBot's Discord bot (two ways) and RabbitMQ targets
 - 🟡 Homebound (services/homebound.rs, SecondBot's HomeboundService): home sim after
   FERRO_HOME_AFTER minutes away, backup sim when home fails, evacuation on a restart, the spot at
   home, paused by a master's teleport until the next login; regions by name (MapNameRequest, as

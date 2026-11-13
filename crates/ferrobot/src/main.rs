@@ -85,6 +85,11 @@ async fn main() -> std::process::ExitCode {
     }
     let history = std::sync::Arc::new(history::History::default());
     tokio::spawn(history::run(client.clone(), history.clone()));
+    tokio::spawn(services::relays::run(
+        client.clone(),
+        cfg.relays.clone(),
+        cfg.shared_secret.clone(),
+    ));
     let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));
     tokio::spawn(dialogs::run(
         client.clone(),

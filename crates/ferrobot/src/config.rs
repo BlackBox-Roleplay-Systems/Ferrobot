@@ -36,6 +36,8 @@ pub struct Config {
     pub interactions: Rules,
     /// Where script dialogs are relayed (SecondBot's DialogRelayConfig).
     pub dialog_relay: crate::dialogs::Targets,
+    /// The relays (SecondBot's RelayConfig, and FERRO_RELAY_<n>).
+    pub relays: Vec<crate::services::relays::Relay>,
     /// Commands that change things in world, per minute (0: no limit).
     pub rate_limit: u32,
     /// Homebound: off unless a home sim is given (SecondBot's HomeboundConfig).
@@ -64,6 +66,7 @@ impl std::fmt::Debug for Config {
             .field("dialog_relay", &self.dialog_relay)
             .field("homebound", &self.homebound)
             .field("rate_limit", &self.rate_limit)
+            .field("relays", &self.relays.len())
             .finish_non_exhaustive()
     }
 }
@@ -114,6 +117,54 @@ fn setting_flag(
     default: bool,
 ) -> Result<bool, ConfigError> {
     setting(ferro, secondbot).map_or(Ok(default), |(name, v)| parse_flag(name, &v))
+}
+
+/// The relays: FERRO_RELAY_1, FERRO_RELAY_2… in SecondBot's short form, then SecondBot's own
+/// (relay_count, and for each relay_<n>_enabled, _extended, _source_type, _source_option,
+/// _target_type, _target_option, or relay_<n>_RelayConfig with relay_UseShortEncoder).
+fn relays() -> Result<Vec<crate::services::relays::Relay>, ConfigError> {
+    use crate::services::relays::Relay;
+    let mut out = Vec::new();
+    for n in 1.. {
+        let Ok(v) = std::env::var(format!("FERRO_RELAY_{n}")) else {
+            break;
+        };
+        out.push(Relay::parse_short(&v).ok_or(ConfigError::Invalid(
+            "FERRO_RELAY_<n>",
+            "sType::…{}sFilter::…{}tType::…{}tConfig::…".into(),
+        ))?);
+    }
+    let count: u32 = number(
+        var("relay_count").map(|v| ("relay_count", v)),
+        0,
+        "a number",
+    )?;
+    let short = flag("relay_UseShortEncoder", false)?;
+    let get = |n: u32, k: &str| {
+        std::env::var(format!("relay_{n}_{k}"))
+            .ok()
+            .map(|v| v.trim().to_owned())
+    };
+    for n in 1..=count {
+        if short {
+            if let Some(r) = get(n, "RelayConfig").and_then(|v| Relay::parse_short(&v)) {
+                out.push(r);
+            }
+            continue;
+        }
+        let on = |k: &str| get(n, k).is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        if !on("enabled") {
+            continue;
+        }
+        out.push(Relay {
+            source_type: get(n, "source_type").unwrap_or_default(),
+            source_option: get(n, "source_option").unwrap_or_default(),
+            target_type: get(n, "target_type").unwrap_or_default(),
+            target_option: get(n, "target_option").unwrap_or_default(),
+            extended: on("extended"),
+        });
+    }
+    Ok(out)
 }
 
 /// Homebound's settings: on with a home sim (FERRO_HOME_SIM, or SecondBot's homebound_Enabled
@@ -268,6 +319,7 @@ impl Config {
                 false,
             )?,
             homebound: homebound()?,
+            relays: relays()?,
             rate_limit: number(
                 var("FERRO_RATE_LIMIT").map(|v| ("FERRO_RATE_LIMIT", v)),
                 60,
