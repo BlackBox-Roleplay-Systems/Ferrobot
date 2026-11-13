@@ -360,6 +360,12 @@ pub async fn run(mailer: Arc<Mailer>, client: Client, mut events: Receiver<Event
                 continue;
             }
             Ok(Event::Alert(message)) if s.alerts => ("Bot - Alert message", message),
+            // the client takes a restart's AlertMessage apart; LibreMetaverse's AlertMessage
+            // event, which SecondBot mails, carries its message
+            Ok(Event::RegionRestart { .. }) if s.alerts => (
+                "Bot - Alert message",
+                "The region you are in now is about to restart.".to_owned(),
+            ),
             Ok(_) => continue,
             Err(RecvError::Lagged(n)) => {
                 log::warn!("e-mail service: {n} events missed");
