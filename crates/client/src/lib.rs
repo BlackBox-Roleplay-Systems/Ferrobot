@@ -133,6 +133,22 @@ pub(crate) enum Interaction {
         index: i32,
         label: String,
     },
+    /// MoneyBalanceRequest.
+    RequestBalance,
+    /// MoneyTransferRequest: to an avatar (a gift), or to an object (its name given).
+    Pay {
+        to: Uuid,
+        amount: i32,
+        object_name: Option<String>,
+    },
+    /// IM_TELEPORT_REQUEST: ask an avatar for a teleport to them.
+    RequestTeleport { to: Uuid, message: String },
+    /// IM_FRIENDSHIP_OFFERED: offer an avatar friendship.
+    OfferFriendship { to: Uuid },
+    /// TerminateFriendship.
+    EndFriendship { to: Uuid },
+    /// GrantUserRights: what a friend may see and do (LLRelationship's rights).
+    GrantRights { to: Uuid, rights: i32 },
     /// StartLure: offer an avatar a teleport to the bot.
     OfferTeleport { to: Uuid, message: String },
     /// IM_LURE_DECLINED: no to a teleport request.
@@ -518,5 +534,70 @@ impl Client {
         self.ask_within(Duration::from_secs(60), |reply| Request::Rebake { reply })
             .await?
             .map_err(ClientError::Refused)
+    }
+
+    /// The L$ balance: asked of the grid (MoneyBalanceRequest), answered when it says.
+    pub async fn balance(&self) -> Result<i32, ClientError> {
+        let before = self.shared.state().balance_updates;
+        self.interact(Interaction::RequestBalance).await?;
+        let deadline = tokio::time::Instant::now() + REQUEST_TIMEOUT;
+        loop {
+            {
+                let st = self.shared.state();
+                if st.balance_updates > before
+                    && let Some(b) = st.balance
+                {
+                    return Ok(b);
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(ClientError::Timeout);
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Pay an avatar (a gift), or an object by its key and name (LLGiveMoney, PayObject).
+    pub async fn pay(
+        &self,
+        to: Uuid,
+        amount: i32,
+        object_name: Option<&str>,
+    ) -> Result<(), ClientError> {
+        self.interact(Interaction::Pay {
+            to,
+            amount,
+            object_name: object_name.map(str::to_owned),
+        })
+        .await
+    }
+
+    /// Ask an avatar for a teleport to them (IM_TELEPORT_REQUEST).
+    pub async fn request_teleport(&self, to: Uuid, message: &str) -> Result<(), ClientError> {
+        self.interact(Interaction::RequestTeleport {
+            to,
+            message: message.to_owned(),
+        })
+        .await
+    }
+
+    /// Offer an avatar friendship.
+    pub async fn offer_friendship(&self, to: Uuid) -> Result<(), ClientError> {
+        self.interact(Interaction::OfferFriendship { to }).await
+    }
+
+    /// End a friendship.
+    pub async fn end_friendship(&self, to: Uuid) -> Result<(), ClientError> {
+        self.interact(Interaction::EndFriendship { to }).await?;
+        let mut st = self.shared.state_mut();
+        st.friends.retain(|f| *f != to);
+        st.friends_online.retain(|f| *f != to);
+        Ok(())
+    }
+
+    /// What a friend may do: see the bot online (1), on the map (2), edit its objects (4)
+    /// (LLRelationship::GRANT_*).
+    pub async fn grant_rights(&self, to: Uuid, rights: i32) -> Result<(), ClientError> {
+        self.interact(Interaction::GrantRights { to, rights }).await
     }
 }

@@ -38,6 +38,8 @@ pub struct Config {
     pub dialog_relay: crate::dialogs::Targets,
     /// The relays (SecondBot's RelayConfig, and FERRO_RELAY_<n>).
     pub relays: Vec<crate::services::relays::Relay>,
+    /// The Funds commands: off by default (SecondBot's AllowFundsCommands).
+    pub allow_funds: bool,
     /// Commands that change things in world, per minute (0: no limit).
     pub rate_limit: u32,
     /// Homebound: off unless a home sim is given (SecondBot's HomeboundConfig).
@@ -66,6 +68,7 @@ impl std::fmt::Debug for Config {
             .field("dialog_relay", &self.dialog_relay)
             .field("homebound", &self.homebound)
             .field("rate_limit", &self.rate_limit)
+            .field("allow_funds", &self.allow_funds)
             .field("relays", &self.relays.len())
             .finish_non_exhaustive()
     }
@@ -320,6 +323,7 @@ impl Config {
             )?,
             homebound: homebound()?,
             relays: relays()?,
+            allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
             rate_limit: number(
                 var("FERRO_RATE_LIMIT").map(|v| ("FERRO_RATE_LIMIT", v)),
                 60,

@@ -11,6 +11,7 @@ mod info;
 mod inventory;
 mod notecard;
 pub mod reply;
+mod world;
 
 use crate::dialogs::Dialogs;
 use crate::history::History;
@@ -32,6 +33,10 @@ pub struct Ctx {
     pub home: Option<Place>,
     /// Stops the bot (Logoff).
     pub stop: Arc<tokio::sync::watch::Sender<bool>>,
+    /// Homebound, paused by a teleport command.
+    pub homebound: Arc<crate::services::homebound::Homebound>,
+    /// The Funds commands (FERRO_ALLOW_FUNDS).
+    pub allow_funds: bool,
 }
 
 /// The commands that change things in world: under the rate limit.
@@ -40,6 +45,14 @@ const CHANGING: &[&str] = &[
     "SendFolder",
     "NotecardSend",
     "NotecardDirectSend",
+    "Teleport",
+    "TeleportSLURL",
+    "SendTeleportLure",
+    "RequestTeleport",
+    "FriendRequest",
+    "FriendFullPerms",
+    "PayAvatar",
+    "PayObject",
     "GroupInvite",
     "GroupEject",
     "GroupAddRole",
@@ -123,6 +136,19 @@ const COMMANDS: &[(&str, usize)] = &[
     ("DeleteInventoryFolder", 1),
     ("MoveInventoryItem", 2),
     ("MoveInventoryFolder", 2),
+    ("Teleport", 4),
+    ("TeleportSLURL", 1),
+    ("SendTeleportLure", 1),
+    ("RequestTeleport", 1),
+    ("Key2Name", 1),
+    ("GetDisplayName", 1),
+    ("Nearme", 0),
+    ("Friendslist", 0),
+    ("FriendRequest", 2),
+    ("FriendFullPerms", 2),
+    ("Balance", 0),
+    ("PayAvatar", 2),
+    ("PayObject", 3),
     ("NotecardAdd", 2),
     ("NotecardClear", 1),
     ("NotecardSend", 3),
@@ -219,6 +245,19 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "DeleteInventoryFolder" => inventory::delete_folder(ctx, a(0)).await,
         "MoveInventoryItem" => inventory::move_item(ctx, a(0), a(1)).await,
         "MoveInventoryFolder" => inventory::move_folder(ctx, a(0), a(1)).await,
+        "Teleport" => world::teleport_to(ctx, a(0), a(1), a(2), a(3)).await,
+        "TeleportSLURL" => world::teleport_slurl(ctx, a(0)).await,
+        "SendTeleportLure" => world::send_teleport_lure(ctx, a(0)).await,
+        "RequestTeleport" => world::request_teleport(ctx, a(0)).await,
+        "Key2Name" => world::key2name(ctx, a(0)).await,
+        "GetDisplayName" => world::display_name(ctx, a(0)).await,
+        "Nearme" => world::nearme(ctx).await,
+        "Friendslist" => world::friends_list(ctx).await,
+        "FriendRequest" => world::friend_request(ctx, a(0), a(1)).await,
+        "FriendFullPerms" => world::friend_full_perms(ctx, a(0), a(1)).await,
+        "Balance" => world::balance(ctx).await,
+        "PayAvatar" => world::pay_avatar(ctx, a(0), a(1)).await,
+        "PayObject" => world::pay_object(ctx, a(0), a(1), a(2)).await,
         "NotecardAdd" => notecard::add(ctx, a(0), a(1)),
         "NotecardClear" => notecard::clear(ctx, a(0)),
         "NotecardSend" => notecard::send(ctx, a(0), a(1), a(2)).await,
@@ -282,6 +321,8 @@ mod tests {
             store: Arc::new(Store::new(0)),
             home: None,
             stop: Arc::new(tokio::sync::watch::channel(false).0),
+            homebound: Arc::default(),
+            allow_funds: false,
         };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,

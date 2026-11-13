@@ -21,6 +21,13 @@ pub struct State {
     pub inventory_root: Uuid,
     /// The bot's friends (the login's buddy list, then the friendships it accepts).
     pub friends: Vec<Uuid>,
+    /// The friends online (OnlineNotification, OfflineNotification).
+    pub friends_online: Vec<Uuid>,
+    /// The avatars in the region, the bot left out (CoarseLocationUpdate).
+    pub nearby: Vec<Uuid>,
+    /// The L$ balance, once the grid has said it (MoneyBalanceReply), and how many times it has.
+    pub balance: Option<i32>,
+    pub balance_updates: u64,
     /// The group chats the bot is in (their session id is the group's).
     pub group_chats: Vec<Uuid>,
     /// Logins that reached the region since the start.

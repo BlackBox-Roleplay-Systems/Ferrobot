@@ -414,6 +414,34 @@ impl Region {
                     self.send(from, &r, true);
                 }
             }
+        } else if id == MoneyBalanceRequest::ID {
+            self.balance(from);
+        } else if id == MoneyTransferRequest::ID {
+            if let Ok(m) = pkt.decode::<MoneyTransferRequest>() {
+                let d = &m.money_data;
+                self.shared.state().balance -= d.amount;
+                self.shared.saw(Seen::Pay {
+                    to: d.dest_id,
+                    amount: d.amount,
+                    transaction_type: d.transaction_type,
+                });
+                self.balance(from);
+            }
+        } else if id == TerminateFriendship::ID {
+            if let Ok(m) = pkt.decode::<TerminateFriendship>() {
+                self.shared.saw(Seen::EndFriendship {
+                    other: m.ex_block.other_id,
+                });
+            }
+        } else if id == GrantUserRights::ID {
+            if let Ok(m) = pkt.decode::<GrantUserRights>() {
+                for r in &m.rights {
+                    self.shared.saw(Seen::GrantRights {
+                        to: r.agent_related,
+                        rights: r.related_rights,
+                    });
+                }
+            }
         } else if id == CreateInventoryItem::ID {
             if let Ok(m) = pkt.decode::<CreateInventoryItem>() {
                 let b = &m.inventory_block;
@@ -684,7 +712,7 @@ impl Region {
                         self.shared
                             .queue_event(n, "ChatterBoxSessionStartReply", Llsd::Map(body));
                     }
-                    5 | 6 | 10 | 11 | 24 => self.shared.saw(Seen::ImAnswer {
+                    5 | 6 | 10 | 11 | 24 | 26 | 38 => self.shared.saw(Seen::ImAnswer {
                         to: b.to_agent_id,
                         dialog: b.dialog,
                         id: b.id,
@@ -777,6 +805,14 @@ impl Region {
                 m.roles.retain(|r| *r != role);
             }
         }
+    }
+
+    fn balance(&mut self, to: SocketAddr) {
+        let mut r = MoneyBalanceReply::default();
+        r.money_data.agent_id = self.shared.agent_id;
+        r.money_data.transaction_success = true;
+        r.money_data.money_balance = self.shared.state().balance;
+        self.send(to, &r, true);
     }
 
     /// AgentDataUpdate alone (an ActivateGroup's answer).
@@ -923,6 +959,45 @@ impl Region {
 
     fn ping_all(&mut self, ping_id: u8) {
         self.forget_departed();
+        // the avatars in the region (CoarseLocationUpdate): the residents and the bot
+        let bot = self.shared.agent_id;
+        let ids: Vec<Uuid> = self
+            .shared
+            .cfg
+            .residents
+            .iter()
+            .map(|r| r.id)
+            .chain(std::iter::once(bot))
+            .collect();
+        let addrs: Vec<SocketAddr> = self.clients.keys().copied().collect();
+        for addr in &addrs {
+            let m = CoarseLocationUpdate {
+                location: ids
+                    .iter()
+                    .map(|_| coarse_location_update::Location {
+                        x: 128,
+                        y: 128,
+                        z: 6,
+                    })
+                    .collect(),
+                index: coarse_location_update::Index {
+                    you: (ids.len() - 1) as i16,
+                    prey: -1,
+                },
+                agent_data: ids
+                    .iter()
+                    .map(|id| coarse_location_update::AgentData { agent_id: *id })
+                    .collect(),
+            };
+            self.send(*addr, &m, false);
+            // the friend is online
+            let n = OnlineNotification {
+                agent_block: vec![online_notification::AgentBlock {
+                    agent_id: Uuid::from_u128(0x5eed_0001),
+                }],
+            };
+            self.send(*addr, &n, true);
+        }
         let addrs: Vec<SocketAddr> = self.clients.keys().copied().collect();
         for addr in addrs {
             let mut m = StartPingCheck::default();

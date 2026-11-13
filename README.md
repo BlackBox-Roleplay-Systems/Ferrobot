@@ -37,13 +37,15 @@ All settings come from environment variables.
 | `FERRO_HOME_SEEK` | `true` | At home, go to the spot given |
 | `FERRO_RATE_LIMIT` | `60` | Commands that change things in world (invites, ejects, chat…) per minute, bursts of 20; they wait their turn, up to a minute. `0`: no limit |
 | `FERRO_RELAY_1`, `FERRO_RELAY_2`… | (none) | Relays, in SecondBot's short form: `sType::localchat{}sFilter::avatar{}tType::webhook{}tConfig::https://…` |
+| `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
 SecondBot's names work too, so that a SecondBot container's settings can stay as they are:
 `basic_Username`, `basic_Password`, `basic_LoginURI`, `commands_MastersCSV`,
 `commands_SharedSecret`, `commands_TimeWindowSecs`, `commands_AllowIMcontrol`,
-`commands_EnforceTimeWindow`, `commands_ObjectMasterOptout`, `http_Enabled`, `http_Port`,
+`commands_EnforceTimeWindow`, `commands_ObjectMasterOptout`, `commands_AllowFundsCommands`,
+`http_Enabled`, `http_Port`,
 `interaction_AcceptTeleports`, `interaction_TeleportRequestLevel`, `interaction_AcceptGroupInvites`,
 `interaction_GroupInviteLevel`, `interaction_AcceptInventory`, `interaction_InventoryTransferLevel`,
 `interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`, `dialogrelay_RelayChannel`,
@@ -78,7 +80,9 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `InventoryFoldersLimited`, `InventoryContents`, `SendItem`, `SendFolder`, `GetRealUUID`,
 `CreateInventoryFolder`, `RenameInventory`, `DeleteInventoryItem` (to the Trash),
 `DeleteInventoryFolder`, `MoveInventoryItem`, `MoveInventoryFolder`; notecards: `NotecardAdd`,
-`NotecardClear`, `NotecardSend`, `NotecardDirectSend`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
+`NotecardClear`, `NotecardSend`, `NotecardDirectSend`; `Teleport`, `TeleportSLURL`,
+`SendTeleportLure`, `RequestTeleport`, `Key2Name`, `GetDisplayName`, `Nearme`, `Friendslist`,
+`FriendRequest`, `FriendFullPerms`, `Balance`, `PayAvatar`, `PayObject`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`
 (in world, region, logins, uptime, commands run and failed); SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,

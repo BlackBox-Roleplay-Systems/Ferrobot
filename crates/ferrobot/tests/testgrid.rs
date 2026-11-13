@@ -1014,6 +1014,155 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// Teleports, names, friends, avatars nearby, and the money commands (off, then on).
+    #[tokio::test]
+    async fn world_commands() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        let other = uuid_from(0x5eed_0002);
+        let some = uuid_from(0x5eed_0001);
+
+        assert_eq!(api.reply("Key2Name", &[OTHER]).await, "Other Avatar");
+        assert_eq!(
+            api.reply("Key2Name", &["00000000-0000-0000-0000-00000000dead"])
+                .await,
+            "lookup"
+        );
+        assert_eq!(api.reply("GetDisplayName", &[SOME]).await, "Sunny");
+
+        // the region tells who is here (every ping, 2 s)
+        let deadline = tokio::time::Instant::now() + WAIT;
+        let near = loop {
+            let near: Value = serde_json::from_str(&api.reply("Nearme", &[]).await).expect("map");
+            if near.as_object().is_some_and(|m| m.len() == 2) {
+                break near;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "{near}");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        assert_eq!(near[OTHER], "Other Avatar");
+
+        // the friend from the login, online
+        let friends: Vec<Value> =
+            serde_json::from_str(&api.reply("Friendslist", &[]).await).expect("list");
+        assert_eq!(friends[0]["name"], "Some Resident");
+        assert_eq!(friends[0]["online"], true);
+        assert_eq!(
+            api.reply("FriendFullPerms", &[SOME, "true"]).await,
+            "granted"
+        );
+        assert_eq!(
+            api.failure("FriendFullPerms", &[OTHER, "true"]).await.0,
+            "Not A friend"
+        );
+        assert_eq!(
+            api.reply("FriendRequest", &[OTHER, "true"]).await,
+            "Request sent"
+        );
+        assert_eq!(
+            api.reply("FriendRequest", &[SOME, "false"]).await,
+            "Removed"
+        );
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.contains(&Seen::GrantRights {
+                    to: some,
+                    rights: 7,
+                }) && seen.contains(&Seen::EndFriendship { other: some })
+                    && seen
+                        .iter()
+                        .any(|s| matches!(s, Seen::ImAnswer { to, dialog: 38, .. } if *to == other))
+            })
+            .await
+        );
+
+        // teleports by command, a lure, a request
+        assert_eq!(
+            api.reply("Teleport", &["Second Region", "10", "20", "30"])
+                .await,
+            "Accepted"
+        );
+        assert_eq!(
+            api.reply(
+                "TeleportSLURL",
+                &["http://maps.secondlife.com/secondlife/Test%20Region/40/50/60"]
+            )
+            .await,
+            "True"
+        );
+        assert_eq!(
+            api.failure("Teleport", &["Nowhere", "1", "2", "3"]).await.0,
+            "Error Unable to Teleport to location"
+        );
+        assert_eq!(api.reply("SendTeleportLure", &[OTHER]).await, "ok");
+        assert_eq!(api.reply("RequestTeleport", &[OTHER]).await, "ok");
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.contains(&Seen::StartLure { target: other })
+                    && seen
+                        .iter()
+                        .any(|s| matches!(s, Seen::ImAnswer { to, dialog: 26, .. } if *to == other))
+            })
+            .await
+        );
+
+        // money: off by default
+        assert_eq!(
+            api.failure("Balance", &[]).await.0,
+            "Funds commands are disabled"
+        );
+        assert_eq!(
+            api.failure("PayAvatar", &[OTHER, "10"]).await.0,
+            "Transfer funds to avatars disabled"
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+
+        // money on
+        let port = free_port().to_string();
+        let mut bot = Bot::start(
+            &grid,
+            &[
+                ("FERRO_HTTP_PORT", port.as_str()),
+                ("commands_SharedSecret", SECRET),
+                ("FERRO_ALLOW_FUNDS", "true"),
+            ],
+        );
+        bot.wait_log("in world").await;
+        let api = Api {
+            url: format!("http://127.0.0.1:{port}/api/Run"),
+            http: reqwest::Client::new(),
+        };
+        assert_eq!(api.reply("Balance", &[]).await, "500");
+        assert_eq!(api.reply("PayAvatar", &[OTHER, "25"]).await, "Accepted");
+        assert_eq!(
+            api.failure("PayAvatar", &[OTHER, "100000"]).await.0,
+            "Amount out of range current max: 475"
+        );
+        let object = "00000000-0000-0000-0000-0000000000bb";
+        assert_eq!(
+            api.reply("PayObject", &[object, "Tip jar", "5"]).await,
+            "ok"
+        );
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.contains(&Seen::Pay {
+                    to: other,
+                    amount: 25,
+                    transaction_type: 5001,
+                }) && seen.contains(&Seen::Pay {
+                    to: object.parse().expect("key"),
+                    amount: 5,
+                    transaction_type: 5008,
+                })
+            })
+            .await
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's Info, Core and Self commands, and BotStatus; Logoff stops the bot.
     #[tokio::test]
     async fn bot_commands() {

@@ -170,7 +170,13 @@ region).
 
 ## Phase 7 - The rest of SecondBot
 
-- ⬜ Movement, avatars, friends, animations, parcels, estate, funds (order set by the human)
+- 🟡 Teleports by command (Teleport, TeleportSLURL, SendTeleportLure, RequestTeleport), names
+  (Key2Name, GetDisplayName), avatars nearby (Nearme, from CoarseLocationUpdate), friends
+  (Friendslist with who is online, FriendRequest, FriendFullPerms), funds (Balance, PayAvatar,
+  PayObject; off unless FERRO_ALLOW_FUNDS, as SecondBot's AllowFundsCommands); tested on the test
+  grid. Deliberate difference: Key2Name works (SecondBot's looks up the nil key)
+- ⬜ Movement (walk, fly, sit, stand, autopilot), profiles, animations and gestures, parcels,
+  estate
 
 ## Phase 8 - Running it for real
 

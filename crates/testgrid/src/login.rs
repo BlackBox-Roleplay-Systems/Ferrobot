@@ -71,6 +71,12 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
         r.insert("home".into(), cfg.home.clone().into());
     }
     r.insert("message".into(), "Welcome to the test grid".into());
+    // the bot's friend: Some Resident
+    let mut buddy = Map::new();
+    buddy.insert("buddy_id".into(), Uuid::from_u128(0x5eed_0001).into());
+    buddy.insert("buddy_rights_given".into(), 1.into());
+    buddy.insert("buddy_rights_has".into(), 1.into());
+    r.insert("buddy-list".into(), Llsd::Array(vec![Llsd::Map(buddy)]));
     let mut root = Map::new();
     root.insert("folder_id".into(), crate::inventory::ROOT.into());
     r.insert("inventory-root".into(), Llsd::Array(vec![Llsd::Map(root)]));

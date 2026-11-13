@@ -113,6 +113,8 @@ async fn main() -> std::process::ExitCode {
         store: std::sync::Arc::new(store::Store::new(cfg.rate_limit)),
         home: cfg.homebound.as_ref().map(|h| h.home.clone()),
         stop: stop_tx.clone(),
+        homebound: homebound.clone(),
+        allow_funds: cfg.allow_funds,
     };
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(

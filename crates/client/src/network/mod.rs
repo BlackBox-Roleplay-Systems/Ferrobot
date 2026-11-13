@@ -120,6 +120,8 @@ impl Network {
             // chat sessions end with the login
             st.group_chats.clear();
             st.friends = login.buddies.clone();
+            st.friends_online.clear();
+            st.nearby.clear();
             st.inventory_root = login.inventory_root;
         }
         self.shared
@@ -295,6 +297,58 @@ impl Session<'_> {
                 };
                 self.send_im(to, d, transaction, "", bucket);
             }
+            Interaction::RequestBalance => self.request_balance(),
+            Interaction::Pay {
+                to,
+                amount,
+                object_name,
+            } => {
+                // LLGiveMoney / LLPayObject: a gift (5001) or an object's pay (5008)
+                let mut m = MoneyTransferRequest::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.money_data.source_id = agent;
+                m.money_data.dest_id = to;
+                m.money_data.amount = amount;
+                m.money_data.transaction_type = if object_name.is_some() { 5008 } else { 5001 };
+                m.money_data.description = str_field(object_name.as_deref().unwrap_or(""));
+                self.send(&m, true);
+            }
+            Interaction::RequestTeleport { to, message } => {
+                self.send_im(
+                    to,
+                    dialog::TELEPORT_REQUEST,
+                    Uuid::new_v4(),
+                    &message,
+                    Vec::new(),
+                );
+            }
+            Interaction::OfferFriendship { to } => {
+                self.send_im(
+                    to,
+                    dialog::FRIENDSHIP_OFFERED,
+                    Uuid::new_v4(),
+                    "",
+                    Vec::new(),
+                );
+            }
+            Interaction::EndFriendship { to } => {
+                let mut m = TerminateFriendship::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.ex_block.other_id = to;
+                self.send(&m, true);
+            }
+            Interaction::GrantRights { to, rights } => {
+                let mut m = GrantUserRights::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.rights = vec![grant_user_rights::Rights {
+                    agent_related: to,
+                    related_rights: rights,
+                }];
+                self.send(&m, true);
+            }
             Interaction::DialogReply {
                 object_id,
                 channel,
@@ -324,6 +378,13 @@ impl Session<'_> {
                 self.send_im(to, dialog::LURE_DECLINED, transaction, "", Vec::new());
             }
         }
+    }
+
+    fn request_balance(&mut self) {
+        let mut m = MoneyBalanceRequest::default();
+        m.agent_data.agent_id = self.login.agent_id;
+        m.agent_data.session_id = self.login.session_id;
+        self.send(&m, true);
     }
 
     fn send_logout_request(&mut self) {
@@ -372,6 +433,8 @@ impl Session<'_> {
             }
         }
         if first {
+            // the balance, as the viewer asks for it once arrived (Aurora's session)
+            self.request_balance();
             // LLAgent: the active group and title (AgentDataUpdate), and the groups
             // (AgentGroupDataUpdate) come in answer
             let mut r = AgentDataUpdateRequest::default();
@@ -752,6 +815,41 @@ impl Session<'_> {
             };
             self.on_session_message(&im);
             self.shared.emit(Event::InstantMessage(im));
+        } else if id == MoneyBalanceReply::ID {
+            let m: MoneyBalanceReply = pkt.decode()?;
+            let mut st = self.shared.state_mut();
+            st.balance = Some(m.money_data.money_balance);
+            st.balance_updates += 1;
+        } else if id == CoarseLocationUpdate::ID {
+            // the avatars in the region (LLWorld::processCoarseUpdate), the bot left out
+            let m: CoarseLocationUpdate = pkt.decode()?;
+            let me = self.login.agent_id;
+            self.shared.state_mut().nearby = m
+                .agent_data
+                .iter()
+                .map(|a| a.agent_id)
+                .filter(|id| *id != me && !id.is_nil())
+                .collect();
+        } else if id == OnlineNotification::ID || id == OfflineNotification::ID {
+            let online = id == OnlineNotification::ID;
+            let ids: Vec<Uuid> = if online {
+                pkt.decode::<OnlineNotification>()?
+                    .agent_block
+                    .iter()
+                    .map(|b| b.agent_id)
+                    .collect()
+            } else {
+                pkt.decode::<OfflineNotification>()?
+                    .agent_block
+                    .iter()
+                    .map(|b| b.agent_id)
+                    .collect()
+            };
+            let mut st = self.shared.state_mut();
+            st.friends_online.retain(|f| !ids.contains(f));
+            if online {
+                st.friends_online.extend(ids);
+            }
         } else if id == UpdateCreateInventoryItem::ID {
             let m: UpdateCreateInventoryItem = pkt.decode()?;
             for it in &m.inventory_data {

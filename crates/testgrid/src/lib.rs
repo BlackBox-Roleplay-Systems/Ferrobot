@@ -327,6 +327,19 @@ pub enum Seen {
         folder: Uuid,
         parent: Uuid,
     },
+    /// The bot paid: an avatar (5001) or an object (5008).
+    Pay {
+        to: Uuid,
+        amount: i32,
+        transaction_type: i32,
+    },
+    EndFriendship {
+        other: Uuid,
+    },
+    GrantRights {
+        to: Uuid,
+        rights: i32,
+    },
     /// The bot looked a region up by name (MapNameRequest).
     MapNameRequest {
         name: String,
@@ -399,6 +412,8 @@ struct State {
     bans: HashMap<Uuid, Vec<Uuid>>,
     /// The bot's inventory.
     inventory: inventory::Inventory,
+    /// The bot's L$.
+    balance: i32,
 }
 
 /// A region as the others see it.
@@ -567,6 +582,7 @@ impl TestGrid {
                 active_group,
                 bans: HashMap::new(),
                 inventory: inventory::Inventory::default(),
+                balance: 500,
             }),
             eq_wake: Notify::new(),
         });
