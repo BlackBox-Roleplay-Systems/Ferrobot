@@ -148,7 +148,18 @@ baking: the bot says so and goes on.
 - 🟡 Masters and interactions (services/interactions.rs, SecondBot's InteractionService): teleport
   offers and requests, group invitations, inventory offers, friendship offers; a switch and a
   level (Owner, Friends, Anyone) for each; the friends from the login's buddy list
-- ⬜ SecondBot's one-time "next accept" list and its JSON interaction events
+- 🟡 SecondBot's one-time "next accept" list and its JSON interaction events (src/grants.rs,
+  services/interactions.rs; SecondBot's DataStoreService accept-next store, its Avatars commands
+  AcceptNext and IsOnAcceptNext, InteractionService's JsonOuput, JsonOuputCleaner and
+  BotInventoryAdd): the list checked last, as ProcessRequest, and used up; the events
+  (FERRO_INTERACTION_EVENTS, FERRO_INTERACTION_EVENTS_TARGET, or interaction_EnableJsonOutputEvents,
+  interaction_JsonOutputEventsTarget) sent as SmartCommandReply sends them; tested on the test grid.
+  Deliberate differences: an avatar at level Friends that is not a friend is told "rejected
+  request" (SecondBot says "on friends list"); a group invitation's grant is found by the group's
+  key or the inviter's name; an offer's "itemname" is the name the offer gives (no fetch);
+  "InventoryAdd" comes from BulkUpdateInventory, not from every item a fetch shows
+- ⬜ Interactions: SecondBot's interaction_Enabled (every offer left unanswered),
+  interaction_EnableDebug and interaction_HideStatusOutput
 - 🟡 Commands by IM (services/im_commands.rs, SecondBot's BotImMessage and SignedCommand): from
   masters unsigned, from objects signed (FERRO_OBJECT_MASTER_OPTOUT), the text and JSON forms,
   the reply target (channel, avatar, HTTP POST; not e-mail). Deliberate difference: a master is
@@ -215,9 +226,17 @@ baking: the bot says so and goes on.
   differences: no inventory cache or preload (the tree is fetched when asked, the preload is
   always "Ready", the count is what fetches have shown); the update watch list is always on, and
   takes the viewer's short type names too; InventoryPurgeNotecards fails when the folder is
-  missing (SecondBot's check is inverted); SetPermFlag has no effect, as SecondBot's
-- ⬜ SetPermFlag with an effect (SecondBot's is a "@todo"): one-time and sticky accepts of
-  friendships, group invites, animations, teleports, commands and items, for an avatar
+  missing (SecondBot's check is inverted); SetPermFlag's effect is its own line below
+- 🟡 SetPermFlag with an effect (src/grants.rs; SecondBot's is a "@todo" that only answers): for
+  an avatar, once (sticky false) or until the bot stops (sticky true), "friend", "group",
+  "teleport", "inventory" through the interaction rules, "animation" through the ScriptQuestion
+  answer (PERMISSION_TRIGGER_ANIMATION only, as AddToAllowAnimations, now a lasting grant), and
+  "command": that avatar's IMs run as commands without a signature (services/im_commands.rs);
+  state false takes a grant back (a lasting one with any one-time one); the answers are
+  SecondBot's; tested on the test grid. Deliberate differences: it has an effect; "command" never
+  reaches SetPermFlag, AcceptNext or AddToAllowAnimations (a grant cannot grow or pass itself
+  on), its one-time grant is used by the next known command only (plain talk keeps it), and the
+  avatar's objects still sign their commands
 - 🟡 Notecards: created (CreateInventoryItem, UpdateNotecardAgentInventory's uploader, the
   "Linden text version 2" asset, as Aurora) and sent; SecondBot's NotecardAdd, NotecardClear,
   NotecardSend, NotecardDirectSend; tested on the test grid

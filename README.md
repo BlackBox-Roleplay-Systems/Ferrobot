@@ -31,6 +31,8 @@ All settings come from environment variables.
 | `FERRO_ACCEPT_GROUP_INVITES`, `FERRO_GROUP_INVITE_LEVEL` | `true`, `Owner` | Group invitations (never one with a fee) |
 | `FERRO_ACCEPT_INVENTORY`, `FERRO_INVENTORY_LEVEL` | `true`, `Owner` | Inventory offers (else declined) |
 | `FERRO_ACCEPT_FRIENDS`, `FERRO_FRIEND_LEVEL` | `true`, `Owner` | Friendship offers (`Friends` does not apply) |
+| `FERRO_INTERACTION_EVENTS` | `false` | Each offer told as SecondBot's interaction JSON (accepted or not, why), and the items that come in |
+| `FERRO_INTERACTION_EVENTS_TARGET` | (none) | Where those events go, as a command's reply target: a channel, an avatar (key or name), an http(s) address (a form POST of `reply`, `command=interactions`) |
 | `FERRO_DIALOG_CHANNEL`, `FERRO_DIALOG_AVATAR`, `FERRO_DIALOG_HTTP` | (none) | Where script dialogs are relayed: a channel, an avatar's key, an address |
 | `FERRO_DIALOG_OWNER` | (none) | Only the dialogs of this avatar's objects |
 | `FERRO_HOME_SIM` | (none) | Homebound: the bot's home sim, `Region Name/x/y/z`; it goes back there |
@@ -58,7 +60,8 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `http_Enabled`, `http_Port`,
 `interaction_AcceptTeleports`, `interaction_TeleportRequestLevel`, `interaction_AcceptGroupInvites`,
 `interaction_GroupInviteLevel`, `interaction_AcceptInventory`, `interaction_InventoryTransferLevel`,
-`interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`, `dialogrelay_RelayChannel`,
+`interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`,
+`interaction_EnableJsonOutputEvents`, `interaction_JsonOutputEventsTarget`, `dialogrelay_RelayChannel`,
 `dialogrelay_RelayAvatar`, `dialogrelay_RelayHttpurl`, `dialogrelay_RelayObjectOwnerOnly`,
 `homebound_Enabled`, `homebound_HomeSimSlUrl`, `homebound_BackupSimSLUrl`,
 `homebound_ReturnToHomeSimAfterMins`, `homebound_AtHomeSeekLocation`, `homebound_AtHomeAutoSitUuid`,
@@ -101,6 +104,18 @@ POST to `<url>/Relay/Service`), `webhook` (a JSON `{"content": …}` POST, as a 
 takes it). Relayed lines are marked `{Relay}` and never relayed again. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
 
+### Grants
+
+What an avatar may have beyond the `FERRO_ACCEPT_*` levels, until the bot stops (a switch that is
+off stays off). `AcceptNext` (stores `FriendRequest`, `InventoryOffer`, `GroupInvite`, `Teleport`)
+and `SetPermFlag` with sticky `false` accept the avatar's next request of that kind, once;
+`SetPermFlag` with sticky `true` (and `AddToAllowAnimations`, for animations) until taken back
+(`SetPermFlag` with state `false`). SetPermFlag's flags: `friend`, `group` (found by the inviter's
+name), `teleport`, `inventory`, `animation` (that avatar's objects may animate the bot, nothing
+more), and `command`: the avatar's IMs run as commands without a signature, as a master's do,
+except `SetPermFlag`, `AcceptNext` and `AddToAllowAnimations`, so that a grant cannot grow or pass
+itself on (its objects still sign). SecondBot's SetPermFlag answers the same and does nothing.
+
 ### SecondBot's HTTP API
 
 `POST /api/Run` with the form fields `commandName`, `args` (joined with `~#~`), `unixtime` and
@@ -120,8 +135,9 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `InventoryContentsCatched` (the whole tree, fetched when asked: Ferrobot keeps no cache),
 `InventoryPreloadCount`, `InventoryPreloadDone` (always "Ready": Ferrobot fetches on demand),
 `SetInventoryUpdate` (a target hears of each item of a type that comes into the inventory);
-`SetPermFlag` (SecondBot's answer, no effect, as SecondBot's); `ListSculptys` (owners and names
-asked of the region);
+`SetPermFlag` (grants an avatar's friendships, group invites, teleports, items, animations or
+commands by IM, once or lasting: see "Grants" below); `AcceptNext`, `IsOnAcceptNext` (SecondBot's
+one-time accept list); `ListSculptys` (owners and names asked of the region);
 `FetchNextNotecard` (StreamAdmin's next notecard, sent); notecards: `NotecardAdd`,
 `NotecardClear`, `NotecardSend`, `NotecardDirectSend`, `NotecardRead` (the text to a reply target); `Teleport`, `TeleportSLURL`,
 `SendTeleportLure`, `RequestTeleport`, `Key2Name`, `GetDisplayName`, `Nearme`, `Friendslist`,
