@@ -1147,7 +1147,7 @@ mod api {
         assert!(mail.data.contains(r#""reply":"Test Bot""#), "{}", mail.data);
 
         // an alert from the region
-        grid.alert("Something to know.");
+        grid.alert("Something to know.", None);
         let mail = next().await;
         assert_eq!(mail.to, vec!["owner@example.invalid".to_owned()]);
         assert!(
