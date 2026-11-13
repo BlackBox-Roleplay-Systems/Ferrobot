@@ -2460,6 +2460,108 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// Attachments and outfits, through the Current Outfit Folder.
+    #[tokio::test]
+    async fn outfit_commands() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let did =
+            |what: String| move |s: &Seen| matches!(s, Seen::Object { what: w } if *w == what);
+
+        // the hat worn at login, taken off by its point's name
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            let (_, inner) = api.run("Detach", &["Skull"]).await;
+            if inner["status"] == true {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "{inner}");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            grid.wait_for(WAIT, did(format!("detach {}", inv::HAT)))
+                .await
+        );
+        assert!(
+            grid.wait_for(WAIT, did(format!("unlink {}", inv::HAT)))
+                .await
+        );
+
+        // an object worn and kept worn, then taken off by its key
+        assert_eq!(
+            api.reply("Attach", &[&inv::NECKLACE.to_string()]).await,
+            "Ok"
+        );
+        assert!(
+            grid.wait_for(WAIT, did(format!("link {} in {}", inv::NECKLACE, inv::COF)))
+                .await
+        );
+        assert!(
+            grid.wait_for(WAIT, did(format!("attach {} pt 128", inv::NECKLACE)))
+                .await
+        );
+        assert_eq!(
+            api.reply("Detach", &[&inv::NECKLACE.to_string()]).await,
+            "Ok"
+        );
+        assert!(
+            grid.wait_for(WAIT, did(format!("unlink {}", inv::NECKLACE)))
+                .await
+        );
+        assert_eq!(
+            api.failure("Attach", &[&inv::SHIRT.to_string()]).await.0,
+            "not an object"
+        );
+        assert_eq!(
+            api.failure("Detach", &["Chest"]).await.0,
+            "invaild item uuid pr invaild attach point"
+        );
+
+        // an outfit: its shirt and hair replace those worn, the other body parts stay
+        let bakes = grid.count(|s| matches!(s, Seen::AppearanceRequest { .. }));
+        let (key, inner) = api.run("Outfit", &["Party"]).await;
+        assert!(key && inner["status"] == true, "{inner}");
+        assert_eq!(inner["command"], "SwapOutfit", "as SecondBot's answers");
+        for gone in [inv::SHIRT, inv::HAIR] {
+            assert!(grid.wait_for(WAIT, did(format!("unlink {gone}"))).await);
+        }
+        for new in [inv::PARTY_SHIRT, inv::PARTY_HAIR, inv::NECKLACE] {
+            assert!(
+                grid.wait_for(WAIT, did(format!("link {new} in {}", inv::COF)))
+                    .await
+            );
+        }
+        assert!(
+            grid.wait_for(WAIT, did(format!("attach {} pt 128", inv::NECKLACE)))
+                .await
+        );
+        for kept in [inv::SHAPE, inv::SKIN, inv::EYES] {
+            assert_eq!(
+                grid.count(did(format!("unlink {kept}"))),
+                0,
+                "a body part stays"
+            );
+        }
+        assert!(
+            grid.wait_until(WAIT, |seen| seen
+                .iter()
+                .filter(|s| matches!(s, Seen::AppearanceRequest { .. }))
+                .count()
+                > bakes)
+                .await,
+            "baked again"
+        );
+        let (_, inner) = api.run("Outfit", &["Nowhere"]).await;
+        assert_eq!(inner["command"], "SwapOutfitByPath");
+        assert_eq!(inner["reply"], "Named folder value is empty");
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

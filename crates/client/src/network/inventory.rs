@@ -53,6 +53,17 @@ pub(crate) enum InventoryRequest {
         inv_type: i8,
         reply: oneshot::Sender<Uuid>,
     },
+    /// A link to an item, in a folder (LinkInventoryItem).
+    Link {
+        folder: Uuid,
+        target: Box<InvItem>,
+        reply: oneshot::Sender<()>,
+    },
+    /// Items removed for good (RemoveInventoryItem): links, not what they point to.
+    Remove {
+        items: Vec<Uuid>,
+        reply: oneshot::Sender<()>,
+    },
     /// A protected asset of the bot's (a notecard, a script), over UDP (TransferRequest).
     ReadAsset {
         item: InvItem,
@@ -70,6 +81,41 @@ impl Session<'_> {
     pub(super) fn on_inventory_request(&mut self, r: InventoryRequest) {
         let (agent, session) = (self.login.agent_id, self.login.session_id);
         match r {
+            InventoryRequest::Link {
+                folder,
+                target,
+                reply,
+            } => {
+                // LLAppearanceMgr's link_inventory_item without AIS
+                self.next_callback = self.next_callback.wrapping_add(1).max(1);
+                let mut m = LinkInventoryItem::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                let b = &mut m.inventory_block;
+                b.callback_id = self.next_callback;
+                b.folder_id = folder;
+                b.transaction_id = Uuid::new_v4();
+                b.old_item_id = target.id;
+                b.type_ = 24;
+                b.inv_type = target.inv_type as i8;
+                b.name = ferro_msg::str_field(&target.name);
+                b.description = ferro_msg::str_field(&target.desc);
+                self.send(&m, true);
+                let _ = reply.send(());
+            }
+            InventoryRequest::Remove { items, reply } => {
+                for chunk in items.chunks(100) {
+                    let mut m = RemoveInventoryItem::default();
+                    m.agent_data.agent_id = agent;
+                    m.agent_data.session_id = session;
+                    m.inventory_data = chunk
+                        .iter()
+                        .map(|id| remove_inventory_item::InventoryData { item_id: *id })
+                        .collect();
+                    self.send(&m, true);
+                }
+                let _ = reply.send(());
+            }
             InventoryRequest::ReadAsset { item, reply } => {
                 let m = crate::transfer::request(agent, session, Uuid::nil(), &item);
                 if self.transfers.start(m.transfer_info.transfer_id, reply) {

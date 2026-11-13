@@ -14,6 +14,7 @@ mod inventory;
 mod movement;
 mod notecard;
 mod objects;
+mod outfit;
 mod parcel;
 pub mod reply;
 mod world;
@@ -131,6 +132,11 @@ const CHANGING: &[&str] = &[
     "UnRezObject",
     "TransferInventoryToObject",
     "AsyncTransferInventoryToObject",
+    "Attach",
+    "Detach",
+    "SwapOutfit",
+    "SwapOutfitByPath",
+    "Outfit",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -260,6 +266,11 @@ const COMMANDS: &[(&str, usize)] = &[
     ("GetObjectsInParcel", 0),
     ("TransferInventoryToObject", 3),
     ("AsyncTransferInventoryToObject", 4),
+    ("Attach", 1),
+    ("Detach", 1),
+    ("SwapOutfit", 1),
+    ("SwapOutfitByPath", 1),
+    ("Outfit", 1),
     ("GetProfileAbout", 1),
     ("GetProfileImage", 1),
     ("SetProfileAbout", 1),
@@ -489,6 +500,11 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "AsyncTransferInventoryToObject" => {
             objects::async_transfer_to_object(ctx, a(0), a(1), a(2), a(3)).await
         }
+        "Attach" => outfit::attach(ctx, a(0)).await,
+        "Detach" => outfit::detach(ctx, a(0)).await,
+        "SwapOutfit" => outfit::swap_outfit(ctx, a(0)).await,
+        "SwapOutfitByPath" => outfit::swap_outfit_by_path(ctx, a(0)).await,
+        "Outfit" => outfit::outfit(ctx, a(0)).await,
         "GetProfileAbout" => avatars::profile_about(client, a(0)).await,
         "GetProfileImage" => avatars::profile_image(client, a(0)).await,
         "SetProfileAbout" => avatars::set_profile_about(client, a(0)).await,

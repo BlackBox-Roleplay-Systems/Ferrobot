@@ -24,6 +24,25 @@ pub struct Placed {
     pub avatar: bool,
     /// Its owner (full and compressed updates).
     pub owner: Option<Uuid>,
+    /// Its state byte: an attachment's point (full and compressed updates).
+    pub state: u8,
+    /// The inventory item an attachment was worn from (its AttachItemID name value).
+    pub attach_item: Option<Uuid>,
+}
+
+/// An attachment's point from the state byte (LLViewerObject::getAttachmentPointNumber: its
+/// nibbles swapped), as Aurora's ObjectUpdate::attachment_point.
+pub fn attachment_point(state: u8) -> u8 {
+    ((state & 0xF0) >> 4) | ((state & 0x0F) << 4)
+}
+
+/// The AttachItemID of the name values ("AttachItemID STRING RW SV <key>").
+fn attach_item(name_values: &str) -> Option<Uuid> {
+    name_values.lines().find_map(|line| {
+        let mut it = line.splitn(5, ' ');
+        (it.next()? == "AttachItemID").then_some(())?;
+        Uuid::parse_str(it.nth(3)?.trim()).ok()
+    })
 }
 
 /// LL_PCODE_LEGACY_AVATAR (llprimitive/object_flags.h)
@@ -60,6 +79,19 @@ impl<'a> Reader<'a> {
     }
     fn uuid(&mut self) -> Option<Uuid> {
         Uuid::from_slice(self.take(16)?).ok()
+    }
+    /// A NUL-terminated string.
+    fn cstr(&mut self) -> Option<String> {
+        let rest = self.d.get(self.p..)?;
+        let end = rest.iter().position(|&c| c == 0)?;
+        let s = String::from_utf8_lossy(&rest[..end]).into_owned();
+        self.p += end + 1;
+        Some(s)
+    }
+    /// An S32-sized binary.
+    fn binary(&mut self) -> Option<&'a [u8]> {
+        let n = self.u32()? as usize;
+        self.take(n)
     }
 }
 
@@ -110,6 +142,8 @@ pub fn from_full(b: &object_update::ObjectData) -> Option<Placed> {
         rotation: sane_quat(rotation),
         avatar: b.p_code == PCODE_AVATAR,
         owner: Some(b.owner_id),
+        state: b.state,
+        attach_item: attach_item(&ferro_msg::field_str(&b.name_value)),
     })
 }
 
@@ -120,7 +154,7 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
     let full_id = r.uuid()?;
     let local_id = r.u32()?;
     let pcode = r.u8()?;
-    let _state = r.u8()?;
+    let state = r.u8()?;
     let _crc = r.u32()?;
     let _material = r.u8()?;
     let _click_action = r.u8()?;
@@ -133,6 +167,37 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
         let _angular_velocity = r.vec3()?;
     }
     let parent_id = if flags & 0x20 != 0 { r.u32()? } else { 0 };
+    // what lies before the name values, skipped as Aurora's parse_compressed reads it; a blob
+    // cut short only loses them
+    let attach = (|| {
+        if flags & 0x2 != 0 {
+            r.u8()?;
+        } else if flags & 0x1 != 0 {
+            r.u32()?;
+            r.binary()?;
+        }
+        if flags & 0x4 != 0 {
+            r.cstr()?;
+            r.take(4)?;
+        }
+        if flags & 0x200 != 0 {
+            r.cstr()?;
+        }
+        if flags & 0x8 != 0 {
+            r.take(86)?;
+        }
+        for _ in 0..r.u8()? {
+            r.u16()?;
+            r.binary()?;
+        }
+        if flags & 0x10 != 0 {
+            r.take(16 + 4 + 1 + 4)?;
+        }
+        if flags & 0x100 != 0 {
+            return attach_item(&r.cstr()?);
+        }
+        None
+    })();
     Some(Placed {
         local_id,
         full_id: Some(full_id),
@@ -141,6 +206,8 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
         rotation: sane_quat(rotation),
         avatar: pcode == PCODE_AVATAR,
         owner: Some(owner),
+        state,
+        attach_item: attach,
     })
 }
 
@@ -169,6 +236,8 @@ pub fn from_terse(b: &improved_terse_object_update::ObjectData) -> Option<Placed
         rotation: sane_quat(Quat::from_xyzw(q(6), q(7), q(8), q(9))),
         avatar,
         owner: None,
+        state: 0,
+        attach_item: None,
     })
 }
 
@@ -187,6 +256,16 @@ pub struct Known {
     pub full_id: Uuid,
     pub parent: u32,
     pub owner: Uuid,
+    pub state: u8,
+    pub attach_item: Option<Uuid>,
+}
+
+/// Something the bot wears: where, worn from which item.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Worn {
+    pub point: u8,
+    pub item: Uuid,
+    pub local_id: u32,
 }
 
 /// A root object and where it stands (GetObjectsInParcel).
@@ -234,6 +313,8 @@ impl Places {
                     full_id,
                     parent,
                     owner: p.owner.unwrap_or_default(),
+                    state: p.state,
+                    attach_item: p.attach_item,
                 },
             );
             self.by_key.insert(full_id, p.local_id);
@@ -284,6 +365,24 @@ impl Places {
     /// An object by its key: a prim of a linkset, an attachment, anything the region sent.
     pub fn find(&self, key: Uuid) -> Option<Known> {
         self.known.get(self.by_key.get(&key)?).copied()
+    }
+
+    /// What the bot wears: the objects attached to its avatar that name their item.
+    pub fn worn(&self) -> Vec<Worn> {
+        let Some(me) = self.own else {
+            return Vec::new();
+        };
+        self.known
+            .values()
+            .filter(|k| k.parent == me)
+            .filter_map(|k| {
+                Some(Worn {
+                    point: attachment_point(k.state),
+                    item: k.attach_item?,
+                    local_id: k.local_id,
+                })
+            })
+            .collect()
     }
 
     /// The root objects (not avatars) and where they stand.
@@ -452,6 +551,35 @@ mod tests {
             Some((9, 3))
         );
         assert!(places.find(Uuid::from_u128(10)).is_none());
+    }
+
+    #[test]
+    fn what_the_bot_wears() {
+        let mut places = Places::default();
+        places.update(&full(7, AGENT, 0, true, Vec3::ONE), AGENT);
+        let item = Uuid::from_u128(0x17e3);
+        let b = object_update::ObjectData {
+            id: 20,
+            full_id: Uuid::from_u128(20),
+            parent_id: 7,
+            p_code: 9,
+            // the chest (1), nibbles swapped
+            state: 0x10,
+            name_value: format!("AttachItemID STRING RW SV {item}\0").into_bytes(),
+            object_data: vec![0; 60],
+            ..Default::default()
+        };
+        places.update(&from_full(&b).expect("an attachment"), AGENT);
+        assert_eq!(
+            places.worn(),
+            vec![Worn {
+                point: 1,
+                item,
+                local_id: 20
+            }]
+        );
+        assert_eq!(attachment_point(0x10), 1);
+        assert_eq!(attachment_point(0x23), 0x32);
     }
 
     #[test]

@@ -255,8 +255,14 @@ baking: the bot says so and goes on.
   (SecondBot prints a C# pair), GetObjectsInParcel lists ID, LocalID, OwnerID and Position of each
   root object by the parcel's x and y (SecondBot serialises LibreMetaverse's whole Primitive and
   also compares the height with the parcel's 0, so finds nothing)
-- ⬜ Attach, Detach, the outfits (Outfit, SwapOutfit, SwapOutfitByPath: the Current Outfit
-  Folder's links, then a rebake)
+- 🟡 What the bot wears, through the Current Outfit Folder (crates/client/src/outfit.rs, as
+  LibreMetaverse's AppearanceManager and CurrentOutfitFolder: LinkInventoryItem and
+  RemoveInventoryItem for its links, RezSingleAttachmentFromInv to add an object,
+  DetachAttachmentIntoInv; what is worn from the attachments' object updates, their point and
+  AttachItemID): SecondBot's Attach, Detach (a key, a point's name, or "*"), SwapOutfit,
+  SwapOutfitByPath, Outfit; an outfit's clothing replaces all, its body parts those of their types,
+  its objects the objects worn (one request at a time), then a rebake; tested on the test grid.
+  Deliberate difference: Detach "*" takes off everything (SecondBot's skips all)
 - 🟡 Animations and gestures: PlayGesture and PlayGestureDirect (the asset by ViewerAsset, decoded
   as Aurora's gesture.rs, its steps played as LLGestureMgr: animations, sounds by SoundTrigger,
   chat with its channel, waits; its animations stopped at its end), ResetAnimations (what

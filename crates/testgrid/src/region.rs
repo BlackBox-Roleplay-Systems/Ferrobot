@@ -43,6 +43,8 @@ struct Region {
     controls: HashMap<SocketAddr, u32>,
     /// The animations each bot plays.
     playing: HashMap<SocketAddr, Vec<Uuid>>,
+    /// What the bot wears: its objects' local ids by the item they were worn from.
+    attached: HashMap<Uuid, u32>,
     /// Where each bot's avatar stands, as the object updates told it.
     avatar_at: HashMap<SocketAddr, Vec3>,
 }
@@ -306,6 +308,8 @@ impl Region {
             .parcel
             .properties(0, self.shared.agent_id);
         self.shared.queue_event(n, "ParcelProperties", body);
+        // the hat, worn on the skull
+        self.attachment(to, crate::inventory::HAT, 2);
         // a linkset of two prims on the parcel, owned by a resident
         let owner = Uuid::from_u128(0x5eed_0001);
         let mut root = object_block(OBJECT_LOCAL_ID, OBJECT, 0, LL_PCODE_VOLUME, OBJECT_POSITION);
@@ -399,6 +403,30 @@ impl Region {
             p.transfer_data.data = chunk.to_vec();
             self.send(to, &p, true);
         }
+    }
+
+    /// An object worn from `item` at `point`: a child of the avatar, its state the point with its
+    /// nibbles swapped, its AttachItemID name value.
+    fn attachment(&mut self, to: SocketAddr, item: Uuid, point: u8) {
+        let next = 0xa700 + self.attached.len() as u32;
+        let local = *self.attached.entry(item).or_insert(next);
+        let mut b = object_block(
+            local,
+            Uuid::from_u128(item.as_u128() + 0x0a00_0000),
+            AVATAR_LOCAL_ID,
+            LL_PCODE_VOLUME,
+            Vec3::ZERO,
+        );
+        b.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
+        b.name_value = format!("AttachItemID STRING RW SV {item}\0").into_bytes();
+        let m = ObjectUpdate {
+            region_data: object_update::RegionData {
+                region_handle: self.shared.regions[self.index].handle(),
+                time_dilation: u16::MAX,
+            },
+            object_data: vec![b],
+        };
+        self.send(to, &m, true);
     }
 
     /// The bot's avatar in a full ObjectUpdate, standing or seated on `parent`.
@@ -795,6 +823,68 @@ impl Region {
                 };
                 self.send(from, &r, true);
             }
+        } else if id == LinkInventoryItem::ID {
+            if let Ok(m) = pkt.decode::<LinkInventoryItem>() {
+                let b = &m.inventory_block;
+                self.shared.saw(Seen::Object {
+                    what: format!("link {} in {}", b.old_item_id, b.folder_id),
+                });
+                self.shared
+                    .state()
+                    .inventory
+                    .items
+                    .push(crate::inventory::Item {
+                        id: Uuid::new_v4(),
+                        parent: b.folder_id,
+                        name: field_str(&b.name),
+                        asset_type: 24,
+                        inv_type: i32::from(b.inv_type),
+                        asset_id: b.old_item_id,
+                        flags: 0,
+                    });
+            }
+        } else if id == RemoveInventoryItem::ID {
+            if let Ok(m) = pkt.decode::<RemoveInventoryItem>() {
+                let gone: Vec<Uuid> = m.inventory_data.iter().map(|d| d.item_id).collect();
+                let mut st = self.shared.state();
+                for id in &gone {
+                    // a link: what it pointed to, for the tests
+                    let target = st
+                        .inventory
+                        .items
+                        .iter()
+                        .find(|i| i.id == *id)
+                        .map(|i| i.asset_id);
+                    st.inventory.items.retain(|i| i.id != *id);
+                    drop(st);
+                    self.shared.saw(Seen::Object {
+                        what: format!("unlink {}", target.unwrap_or_default()),
+                    });
+                    st = self.shared.state();
+                }
+            }
+        } else if id == RezSingleAttachmentFromInv::ID {
+            if let Ok(m) = pkt.decode::<RezSingleAttachmentFromInv>() {
+                let d = &m.object_data;
+                self.shared.saw(Seen::Object {
+                    what: format!("attach {} pt {}", d.item_id, d.attachment_pt),
+                });
+                // worn at the chest
+                self.attachment(from, d.item_id, 1);
+            }
+        } else if id == DetachAttachmentIntoInv::ID {
+            if let Ok(m) = pkt.decode::<DetachAttachmentIntoInv>() {
+                let item = m.object_data.item_id;
+                self.shared.saw(Seen::Object {
+                    what: format!("detach {item}"),
+                });
+                if let Some(local) = self.attached.remove(&item) {
+                    let k = KillObject {
+                        object_data: vec![kill_object::ObjectData { id: local }],
+                    };
+                    self.send(from, &k, true);
+                }
+            }
         } else if id == RezObject::ID {
             if let Ok(m) = pkt.decode::<RezObject>() {
                 let r = &m.rez_data;
@@ -1052,6 +1142,7 @@ impl Region {
                         asset_type: i32::from(b.type_),
                         inv_type: i32::from(b.inv_type),
                         asset_id: Uuid::nil(),
+                        flags: 0,
                     });
                 self.shared.saw(Seen::CreateInventoryItem {
                     item,
@@ -1792,6 +1883,7 @@ pub async fn run(
         facing: HashMap::new(),
         controls: HashMap::new(),
         playing: HashMap::new(),
+        attached: HashMap::new(),
         avatar_at: HashMap::new(),
     };
     let mut data = vec![0u8; 8192];

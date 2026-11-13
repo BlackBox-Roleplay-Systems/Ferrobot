@@ -101,7 +101,8 @@ manager): `EstateKickUser`, `EstateTeleportHomeUser`, `AddEstateManager`, `Remov
 avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileImage`,
 `SetProfileAbout`, `SetProfileImage`; objects: `RezObject`, `RezObjectOnPos`, `RezObjectParcelCenter`,
 `AsyncRezObject`, `AsyncRezObjectOnPos`, `AsyncRezObjectParcelCenter`, `ClickObject`, `UnRezObject`,
-`GetObjectsInParcel`, `TransferInventoryToObject`, `AsyncTransferInventoryToObject`; movement: `Fly`,
+`GetObjectsInParcel`, `TransferInventoryToObject`, `AsyncTransferInventoryToObject`; what it wears:
+`Attach`, `Detach`, `SwapOutfit`, `SwapOutfitByPath`, `Outfit`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
 `RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`

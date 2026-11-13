@@ -5,7 +5,7 @@
 
 use super::Session;
 use crate::inventory::InvItem;
-use crate::objects::{Known, Root};
+use crate::objects::{Known, Root, Worn};
 use ferro_msg::msgs::*;
 use ferro_msg::str_field;
 use glam::Vec3;
@@ -38,6 +38,20 @@ pub(crate) enum ObjectRequest {
     DeRez {
         local_id: u32,
         folder: Uuid,
+        reply: oneshot::Sender<()>,
+    },
+    /// What the bot wears.
+    Worn {
+        reply: oneshot::Sender<Vec<Worn>>,
+    },
+    /// Wear an object from the inventory, added to what is worn (RezSingleAttachmentFromInv).
+    Attach {
+        item: Box<InvItem>,
+        reply: oneshot::Sender<()>,
+    },
+    /// Take off what was worn from this item (DetachAttachmentIntoInv).
+    Detach {
+        item: Uuid,
         reply: oneshot::Sender<()>,
     },
     /// Put an item in an object; a script running or not.
@@ -93,6 +107,35 @@ impl Session<'_> {
             }
             ObjectRequest::Roots { reply } => {
                 let _ = reply.send(self.places.roots());
+            }
+            ObjectRequest::Worn { reply } => {
+                let _ = reply.send(self.places.worn());
+            }
+            ObjectRequest::Attach { item, reply } => {
+                // point 0: where the object was last worn; 0x80 adds it to what is worn
+                // (ATTACHMENT_ADD, LLAppearanceMgr::rezAttachment)
+                let mut m = RezSingleAttachmentFromInv::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                let d = &mut m.object_data;
+                d.item_id = item.id;
+                d.owner_id = item.owner;
+                d.attachment_pt = 0x80;
+                d.item_flags = item.flags;
+                d.group_mask = item.group_mask;
+                d.everyone_mask = item.everyone_mask;
+                d.next_owner_mask = item.next_owner_mask;
+                d.name = str_field(&item.name);
+                d.description = str_field(&item.desc);
+                self.send(&m, true);
+                let _ = reply.send(());
+            }
+            ObjectRequest::Detach { item, reply } => {
+                let mut m = DetachAttachmentIntoInv::default();
+                m.object_data.agent_id = agent;
+                m.object_data.item_id = item;
+                self.send(&m, true);
+                let _ = reply.send(());
             }
             ObjectRequest::Click { local_id, reply } => {
                 // a click is a grab at once let go (LLToolGrab)
