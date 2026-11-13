@@ -8,7 +8,7 @@
 //! FERRO_ENFORCE_TIME_WINDOW is on (then the command must be recent too). The answer goes to the
 //! reply target, when there is one (crate::smart_reply).
 
-use crate::api::signing::{same, sign_with};
+use crate::api::signing::{Unpacked, same, sign_with, unpack};
 use crate::commands::{self, Ctx};
 use crate::masters::Masters;
 use ferro_client::events::dialog;
@@ -25,63 +25,6 @@ pub struct Settings {
     pub enforce_time_window: bool,
     pub time_window: u64,
     pub object_master_optout: bool,
-}
-
-/// A command as SignedCommand unpacks it.
-#[derive(Debug, Default, PartialEq)]
-pub struct Unpacked {
-    pub command: String,
-    pub args: Vec<String>,
-    pub reply: Option<String>,
-    pub signing: Option<String>,
-    pub unixtime: i64,
-}
-
-/// SignedCommand.UnpackInput: JSON when the text is an object, else the text form.
-pub fn unpack(text: &str) -> Option<Unpacked> {
-    let t = text.trim();
-    let u = if t.starts_with('{') && t.ends_with('}') {
-        let v: serde_json::Value = serde_json::from_str(t).ok()?;
-        let s = |k: &str| v[k].as_str().map(str::to_owned);
-        Unpacked {
-            command: s("cmd").unwrap_or_default(),
-            args: v["args"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .map(|x| x.as_str().map_or_else(|| x.to_string(), str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            reply: s("reply"),
-            signing: s("signing"),
-            unixtime: v["unixtime"].as_i64().unwrap_or(0),
-        }
-    } else {
-        let mut u = Unpacked::default();
-        let mut rest = t;
-        if let Some((head, time)) = rest.split_once(";|;") {
-            u.unixtime = time.trim().parse().ok()?;
-            rest = head;
-        }
-        if let Some((head, sig)) = rest.split_once("@@@") {
-            u.signing = Some(sig.to_owned());
-            rest = head;
-        }
-        if let Some((head, target)) = rest.split_once("#|#") {
-            u.reply = Some(target.to_owned());
-            rest = head;
-        }
-        match rest.split_once("|||") {
-            Some((command, args)) => {
-                u.command = command.to_owned();
-                u.args = args.split("~#~").map(str::to_owned).collect();
-            }
-            None => u.command = rest.to_owned(),
-        }
-        u
-    };
-    (!u.command.trim().is_empty()).then_some(u)
 }
 
 /// SignedCommand.Validate, for commands that need a signature.
@@ -181,36 +124,6 @@ pub async fn run(ctx: Ctx, mut events: Receiver<Event>, masters: Arc<Masters>, s
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_text_form() {
-        let u = unpack("Say|||0~#~hello there#|#42@@@abc;|;1800000000").expect("a command");
-        assert_eq!(
-            u,
-            Unpacked {
-                command: "Say".into(),
-                args: vec!["0".into(), "hello there".into()],
-                reply: Some("42".into()),
-                signing: Some("abc".into()),
-                unixtime: 1_800_000_000,
-            }
-        );
-        let u = unpack("Name").expect("a bare command");
-        assert_eq!((u.command.as_str(), u.args.len()), ("Name", 0));
-        assert!(unpack("   ").is_none());
-        assert!(unpack("Name;|;soon").is_none(), "a bad time");
-    }
-
-    #[test]
-    fn the_json_form() {
-        let u = unpack(
-            r#"{"cmd":"IM","args":["Some Resident","hi"],"reply":"0","signing":"x","unixtime":5}"#,
-        )
-        .expect("a command");
-        assert_eq!(u.command, "IM");
-        assert_eq!(u.args, vec!["Some Resident", "hi"]);
-        assert_eq!((u.reply.as_deref(), u.unixtime), (Some("0"), 5));
-    }
 
     #[test]
     fn signatures_without_and_with_the_time() {
