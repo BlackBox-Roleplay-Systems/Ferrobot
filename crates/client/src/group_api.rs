@@ -119,18 +119,20 @@ impl Client {
         .await
     }
 
-    /// Invite an avatar into the group with a role (the nil role: "everyone"). The grid does not
-    /// answer: the invitation is sent.
+    /// Invite an avatar into the group with these roles (the nil role: "everyone"), one invitation
+    /// block per role as LLGroupMgr::sendGroupMemberInvites. The grid does not answer: the
+    /// invitation is sent.
     pub async fn group_invite(
         &self,
         group: Uuid,
         avatar: Uuid,
-        role: Uuid,
+        roles: &[Uuid],
     ) -> Result<(), ClientError> {
         self.check_group(group)?;
+        let invites = roles.iter().map(|role| (avatar, *role)).collect();
         self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Invite {
             group,
-            invites: vec![(avatar, role)],
+            invites,
             reply,
         })
         .await

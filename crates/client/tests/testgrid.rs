@@ -573,7 +573,7 @@ mod groups {
         let r = ready(GridConfig::default()).await;
         let newcomer = Uuid::from_u128(0x5eed_0009);
         r.client
-            .group_invite(TEST_GROUP, newcomer, BUILDERS)
+            .group_invite(TEST_GROUP, newcomer, &[BUILDERS])
             .await
             .expect("invite");
         assert!(

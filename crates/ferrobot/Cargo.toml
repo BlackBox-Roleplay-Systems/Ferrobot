@@ -7,16 +7,23 @@ publish.workspace = true
 
 [dependencies]
 ferro-client = { path = "../client" }
+# SecondBot's HTTP API: a small HTTP/1 server with form bodies (MIT)
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "form"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+# the commands' signatures are SHA-1, as SecondBot's (MIT / Apache-2.0)
+sha1 = "0.11.0"
+uuid = "1.27.0"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 log = "0.4.34"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip"] }
 thiserror = "2.0.21"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "sync", "net"] }
 
 [dev-dependencies]
 ferro-llsd = { path = "../llsd" }
+serde_json = "1.0.154"
 ferro-testgrid = { path = "../testgrid" }
-uuid = "1.27.0"
 # processes, to run the bot against the test grid
 tokio = { version = "1", features = ["process", "io-util"] }
 

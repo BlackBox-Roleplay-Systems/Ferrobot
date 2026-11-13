@@ -482,3 +482,305 @@ async fn group_chat_is_logged() {
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
+
+/// SecondBot's HTTP API, called the way BB's SlBot.php calls it: form fields, sha1 signature,
+/// `{Key, Value}` answers with the command's JSON inside.
+mod api {
+    use super::*;
+    use ferro_testgrid::{BUILDERS, TEST_GROUP};
+    use serde_json::Value;
+    use sha1::{Digest, Sha1};
+
+    const SECRET: &str = "a shared secret";
+    const SOME: &str = "00000000-0000-0000-0000-00005eed0001";
+    const OTHER: &str = "00000000-0000-0000-0000-00005eed0002";
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind")
+            .local_addr()
+            .expect("address")
+            .port()
+    }
+
+    fn encode(s: &str) -> String {
+        s.bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                    (b as char).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect()
+    }
+
+    fn now() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs() as i64
+    }
+
+    struct Api {
+        url: String,
+        http: reqwest::Client,
+    }
+
+    impl Api {
+        /// POST /api/Run with these fields, the body as it comes.
+        async fn post(&self, fields: &[(&str, String)]) -> String {
+            let body: Vec<String> = fields
+                .iter()
+                .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
+                .collect();
+            self.http
+                .post(&self.url)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(body.join("&"))
+                .send()
+                .await
+                .expect("the API answers")
+                .text()
+                .await
+                .expect("a body")
+        }
+
+        /// A command signed as SlBot::run signs it; the raw body.
+        async fn raw(&self, command: &str, args: &[&str], unixtime: i64, secret: &str) -> String {
+            let joined = args.join("~#~");
+            let sig: String = Sha1::digest(format!("{command}{joined}{unixtime}{secret}"))
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let mut fields = vec![
+                ("commandName", command.to_owned()),
+                ("unixtime", unixtime.to_string()),
+                ("signing", sig),
+            ];
+            if !joined.is_empty() {
+                fields.push(("args", joined));
+            }
+            self.post(&fields).await
+        }
+
+        /// A command's `{Key, Value}`, and its inner JSON when it has one.
+        async fn run(&self, command: &str, args: &[&str]) -> (bool, Value) {
+            let body = self.raw(command, args, now(), SECRET).await;
+            let outer: Value = serde_json::from_str(&body).unwrap_or_else(|_| panic!("{body}"));
+            let key = outer["Key"].as_bool().expect("Key");
+            let value = outer["Value"].as_str().expect("Value");
+            (
+                key,
+                serde_json::from_str(value).unwrap_or(Value::String(value.into())),
+            )
+        }
+
+        /// The `reply` of a command that worked.
+        async fn reply(&self, command: &str, args: &[&str]) -> String {
+            let (key, inner) = self.run(command, args).await;
+            assert!(key && inner["status"] == true, "{command}: {inner}");
+            // the answer names the command as SecondBot spells it, whatever the case asked
+            assert!(
+                inner["command"]
+                    .as_str()
+                    .is_some_and(|c| c.eq_ignore_ascii_case(command)),
+                "{inner}"
+            );
+            inner["reply"].as_str().expect("reply").to_owned()
+        }
+
+        /// The `reply` and `args` of a command that failed.
+        async fn failure(&self, command: &str, args: &[&str]) -> (String, Value) {
+            let (key, inner) = self.run(command, args).await;
+            assert!(key && inner["status"] == false, "{command}: {inner}");
+            assert!(inner["whyfailed"].is_null());
+            (
+                inner["reply"].as_str().expect("reply").to_owned(),
+                inner["args"].clone(),
+            )
+        }
+    }
+
+    async fn bot_with_api(grid: &TestGrid, login: Option<&str>) -> (Bot, Api) {
+        let port = free_port().to_string();
+        let mut env = vec![
+            ("FERRO_HTTP_PORT", port.as_str()),
+            ("commands_SharedSecret", SECRET),
+        ];
+        if let Some(uri) = login {
+            env.push(("FERRO_LOGIN_URI", uri));
+        }
+        let bot = Bot::start(grid, &env);
+        bot.wait_log("HTTP API on port").await;
+        let api = Api {
+            url: format!("http://127.0.0.1:{port}/api/Run"),
+            http: reqwest::Client::new(),
+        };
+        (bot, api)
+    }
+
+    #[tokio::test]
+    async fn refusals_are_plain_text() {
+        let grid = grid().await;
+        // nowhere to log in: the API answers, the bot is not connected
+        let (mut bot, api) = bot_with_api(&grid, Some("http://127.0.0.1:1/")).await;
+        assert_eq!(
+            api.raw("Name", &[], now(), SECRET).await,
+            "No bot connected yet"
+        );
+        assert_eq!(
+            api.post(&[("commandName", "Name".into()), ("unixtime", "soon".into())])
+                .await,
+            "Invaild unixtime was sent"
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        assert_eq!(
+            api.raw("Name", &[], now(), "wrong").await,
+            "Command request rejected"
+        );
+        assert_eq!(
+            api.raw("Name", &[], now() - 36, SECRET).await,
+            "Command request rejected",
+            "older than 35 s"
+        );
+        assert_eq!(
+            api.run("NoSuchCommand", &[]).await,
+            (false, Value::String("Unknown command".into()))
+        );
+        assert_eq!(
+            api.run("Name", &["extra"]).await,
+            (
+                false,
+                Value::String("incorrect number of args expected: 0 but got: 1".into())
+            )
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
+    #[tokio::test]
+    async fn bbs_commands_answer_as_secondbot() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("in 2 groups").await;
+        let group = TEST_GROUP.to_string();
+        let builders = BUILDERS.to_string();
+
+        assert_eq!(api.reply("SimName", &[]).await, "Test Region");
+        assert_eq!(api.reply("name", &[]).await, "Test Bot");
+        assert_eq!(api.run("name", &[]).await.1["command"], "Name");
+        assert_eq!(api.reply("Name2Key", &["Other Avatar"]).await, OTHER);
+        assert_eq!(api.reply("Name2Key", &["Nobody Here"]).await, "lookup");
+
+        let list: Value = serde_json::from_str(&api.reply("GetGroupList", &[]).await).expect("map");
+        assert_eq!(list[&group], "Test Group");
+        let roles: Value =
+            serde_json::from_str(&api.reply("GetGroupRoles", &[&group]).await).expect("map");
+        assert_eq!(roles[&builders], "Builders");
+        assert_eq!(roles["00000000-0000-0000-0000-000000000000"], "Everyone");
+        let members: Vec<String> =
+            serde_json::from_str(&api.reply("GetGroupMembers", &[&group]).await).expect("list");
+        assert_eq!(members.len(), 3);
+        assert!(members.contains(&OTHER.to_owned()));
+        let holders: Vec<String> =
+            serde_json::from_str(&api.reply("GetGroupRoleMembers", &[&group, &builders]).await)
+                .expect("list");
+        assert_eq!(holders, vec![SOME.to_owned()]);
+        assert_eq!(
+            api.reply("IsGroupMember", &[&group, "Other Avatar"]).await,
+            "True"
+        );
+        assert_eq!(
+            api.reply("IsGroupMember", &[&group, "Nobody Here"]).await,
+            "False"
+        );
+
+        // an invitation with "everyone", then one with a role on top
+        let newcomer = "00000000-0000-0000-0000-00005eed0009";
+        assert_eq!(
+            api.reply("GroupInvite", &[&group, newcomer, "everyone"])
+                .await,
+            "Invite sent"
+        );
+        assert_eq!(
+            api.reply("GroupInvite", &[&group, newcomer, &builders])
+                .await,
+            "Invite sent"
+        );
+        let invitee = uuid_from(0x5eed_0009);
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.iter()
+                    .filter(|s| matches!(s, Seen::GroupInvite { invitee: i, .. } if *i == invitee))
+                    .count()
+                    == 3
+            })
+            .await,
+            "{:?}",
+            grid.seen()
+        );
+
+        assert_eq!(
+            api.reply("GroupAddRole", &[&group, OTHER, &builders]).await,
+            "Adding role"
+        );
+        assert!(
+            grid.wait_until(WAIT, |_| grid
+                .group_members(TEST_GROUP)
+                .iter()
+                .any(|m| m.id == uuid_from(0x5eed_0002) && m.roles.contains(&BUILDERS)))
+                .await
+        );
+        assert_eq!(
+            api.reply("GroupRemoveRole", &[&group, OTHER, &builders])
+                .await,
+            "Removing role"
+        );
+        assert_eq!(api.reply("GroupEject", &[&group, OTHER]).await, "Accepted");
+        assert_eq!(
+            api.failure("GroupEject", &[&group, OTHER]).await.0,
+            "Not in group"
+        );
+        // an avatar not in the group is invited instead
+        assert_eq!(
+            api.reply("GroupAddRole", &[&group, OTHER, &builders]).await,
+            "Invite sent"
+        );
+
+        let (why, args) = api.failure("GetGroupRoles", &["nonsense"]).await;
+        assert_eq!(
+            (why.as_str(), args),
+            ("Invaild group UUID", serde_json::json!(["nonsense"]))
+        );
+        let (why, args) = api
+            .failure("GroupAddRole", &["nonsense", OTHER, &builders])
+            .await;
+        assert_eq!(
+            (why.as_str(), args),
+            ("Invaild group UUID", serde_json::json!(["nonsense", OTHER])),
+            "two args, as SecondBot"
+        );
+        assert_eq!(
+            api.failure(
+                "GroupRemoveRole",
+                &[&group, OTHER, "00000000-0000-0000-0000-000000000000"]
+            )
+            .await
+            .0,
+            "The everyone role cannot be removed"
+        );
+        let third = ferro_testgrid::THIRD_GROUP.to_string();
+        assert_eq!(
+            api.failure("GetGroupRoles", &[&third]).await.0,
+            "Unknown group"
+        );
+
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+}

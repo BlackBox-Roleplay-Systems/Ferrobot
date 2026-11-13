@@ -12,13 +12,31 @@ All settings come from environment variables.
 |---|---|---|
 | `FERRO_USERNAME` | (required) | The bot's account: `First Last` or a username |
 | `FERRO_PASSWORD` | (required) | Its password |
-| `FERRO_LOGIN_URI` | Second Life | Another grid's login address |
+| `FERRO_LOGIN_URI` | Second Life | Another grid's login address (`secondlife`: Second Life) |
 | `FERRO_START` | `last` | `last`, `home`, or `Region Name/x/y/z` |
 | `FERRO_RELOG` | `true` | Log in again after the connection is lost |
 | `FERRO_RELOG_DELAY` | `60` | Seconds to wait before logging in again |
 | `FERRO_MASTERS` | (none) | Avatars the bot obeys, comma-separated: `First Last` or usernames. Their teleport offers are accepted |
+| `FERRO_SHARED_SECRET` | (none) | The secret that signs the HTTP API's commands. Without it, the API is off |
+| `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`) |
+| `FERRO_HTTP_PORT` | `80` | Its port |
+| `FERRO_TIME_WINDOW` | `35` | Seconds a signed command stays valid |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
+
+SecondBot's names work too, so that a SecondBot container's settings can stay as they are:
+`basic_Username`, `basic_Password`, `basic_LoginURI`, `commands_MastersCSV`,
+`commands_SharedSecret`, `commands_TimeWindowSecs`, `http_Enabled`, `http_Port`. The `FERRO_*` name
+wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
+
+### SecondBot's HTTP API
+
+`POST /api/Run` with the form fields `commandName`, `args` (joined with `~#~`), `unixtime` and
+`signing` = sha1(command + args + unixtime + shared secret), as SecondBot's. The answers are
+SecondBot's: `{"Key": true, "Value": "{\"command\":…,\"reply\":…,\"status\":true}"}`, or a plain-text
+refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `Name`, `Name2Key`,
+`GetGroupList`, `GetGroupRoles`, `GetGroupMembers`, `GetGroupRoleMembers`, `IsGroupMember`,
+`GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`.
 
 In Second Life, mark the account as a **scripted agent** (account settings on secondlife.com), as the grid's rules ask of bots.
 

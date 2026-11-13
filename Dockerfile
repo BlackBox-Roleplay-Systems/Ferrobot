@@ -13,6 +13,8 @@ RUN apt-get update \
     && useradd --system --uid 10001 ferrobot
 COPY --from=build /src/target/release/ferrobot /usr/local/bin/ferrobot
 USER ferrobot
+# SecondBot's HTTP API (FERRO_HTTP_PORT)
+EXPOSE 80
 # healthy while online, or offline for less than 10 minutes (a relog); see services/health.rs
 HEALTHCHECK --interval=30s --timeout=5s --start-period=2m CMD ["/usr/local/bin/ferrobot", "healthcheck"]
 ENTRYPOINT ["/usr/local/bin/ferrobot"]

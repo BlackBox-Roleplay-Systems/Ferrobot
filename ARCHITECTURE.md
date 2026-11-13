@@ -28,6 +28,8 @@ crates/
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
+    src/api/               SecondBot's HTTP API: POST /api/Run, signatures (axum)
+    src/commands/          SecondBot's commands, one module per area (info, avatars, groups)
     src/services/          one service per job, on the client's events (chat_log, group_invites, health, lures, restart)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)

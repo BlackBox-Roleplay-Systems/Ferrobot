@@ -1,5 +1,7 @@
 //! Ferrobot: a Second Life bot in a container.
 
+mod api;
+mod commands;
 mod config;
 mod services;
 
@@ -54,6 +56,18 @@ async fn main() -> std::process::ExitCode {
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     tokio::spawn(services::lures::run(client.clone(), cfg.masters.clone()));
     tokio::spawn(services::restart::run(client.clone()));
+    match (&cfg.shared_secret, cfg.http_enabled) {
+        (Some(secret), true) => {
+            tokio::spawn(api::serve(
+                client.clone(),
+                cfg.http_port,
+                secret.clone(),
+                cfg.time_window,
+            ));
+        }
+        (None, true) => log::warn!("HTTP API off: no shared secret (FERRO_SHARED_SECRET)"),
+        (_, false) => log::info!("HTTP API off"),
+    }
     tokio::spawn(services::group_invites::run(
         client.clone(),
         cfg.masters.clone(),

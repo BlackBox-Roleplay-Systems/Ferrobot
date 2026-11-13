@@ -92,10 +92,18 @@ region).
 
 ## Phase 4 - SecondBot's HTTP API
 
-- ⬜ `/api/Run`: signature, 35 s window, replies and refusals as SecondBot
-- ⬜ BB's commands: SimName, Name, Name2Key, GetGroupList, GetGroupRoles, GetGroupMembers,
-  GetGroupRoleMembers, IsGroupMember, GroupInvite, GroupEject, GroupAddRole, GroupRemoveRole
-- ⬜ SecondBot setting names accepted next to FERRO_*
+- ✅ `/api/Run` (src/api, axum): form fields, sha1 signature, 35 s window, `{Key, Value}` answers,
+  the plain-text refusals, "Unknown command", the argument count, `{"Message":"Error"}` elsewhere;
+  as SecondBot's HttpService and CommandsService. Off without a shared secret (deliberate)
+- 🟡 BB's commands (src/commands): SimName, Name, Name2Key, GetGroupList, GetGroupRoles,
+  GetGroupMembers, GetGroupRoleMembers, IsGroupMember, GroupInvite, GroupEject, GroupAddRole,
+  GroupRemoveRole; replies, failures and args as SecondBot's Commands/Group.cs, Info.cs,
+  Avatars.cs; tested through the API against the test grid. Deliberate differences: lists are
+  fetched when asked, "Updating" instead of an empty list when the grid does not answer;
+  GroupEject waits for the grid ("Not in group", "Missing group Eject power"); GroupAddRole
+  refuses an unknown avatar; Name2Key asks the grid at once
+- ✅ SecondBot setting names accepted next to FERRO_* (basic_*, commands_*, http_*)
+- ⬜ SecondBot's `/json` endpoint (a signed JSON body); not used by BB
 - ⬜ BB's bot tests pass against Ferrobot on the test grid
 - ⬜ BB dev site runs its SL group sync on Ferrobot (human)
 

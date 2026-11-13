@@ -23,3 +23,14 @@ a Second Life viewer in Rust, GPL-3.0-or-later. They may have been changed since
 
 Aurora's code in turn follows the Second Life viewer's sources (Linden Lab,
 LGPL 2.1), as the comments in each file say.
+
+## Code following SecondBot
+
+[SecondBot](https://github.com/Madpeterz/SecondBot) (C#, GPL-3.0) is rewritten in Rust, not copied:
+these files follow its behaviour closely, its commands' names, replies and checks.
+
+| Ferrobot | Follows SecondBot | SecondBot commit |
+|---|---|---|
+| `crates/ferrobot/src/api/` | `SecondBotEvents/Services/HttpService.cs`, `CommandsService.cs` (SignedCommand, RunCommand) | `a2377e5` (branch `update-libremetaverse`) |
+| `crates/ferrobot/src/commands/` | `SecondBotEvents/Commands/Group.cs`, `Info.cs`, `Avatars.cs` | `a2377e5` (branch `update-libremetaverse`) |
+| `crates/ferrobot/src/services/lures.rs`, `group_invites.rs` | `SecondBotEvents/Services/InteractionService.cs` | `a2377e5` (branch `update-libremetaverse`) |
