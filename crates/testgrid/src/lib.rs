@@ -347,6 +347,13 @@ pub enum Seen {
     SoundTrigger {
         asset: Uuid,
     },
+    /// AvatarPropertiesUpdate: the bot's profile as it now is, and whether the parts not
+    /// changed (the first life text, publishing) came back as they were.
+    ProfileUpdate {
+        about: String,
+        image: Uuid,
+        rest_kept: bool,
+    },
     /// A ViewerAsset download.
     ViewerAsset {
         asset: Uuid,
@@ -490,6 +497,8 @@ struct State {
     parcel: parcels::GridParcel,
     /// Its ban list.
     parcel_bans: Vec<Uuid>,
+    /// Profiles as set (AvatarPropertiesUpdate): about text and picture, by avatar.
+    profiles: HashMap<Uuid, (String, Uuid)>,
     /// Group invitations sent to the bot: transaction to group.
     group_invites: HashMap<Uuid, Uuid>,
     /// The group chats the bot is in.
@@ -673,6 +682,10 @@ impl TestGrid {
                 groups,
                 parcel: parcels::GridParcel::default(),
                 parcel_bans: Vec::new(),
+                profiles: HashMap::from([(
+                    Uuid::from_u128(0x5eed_0001),
+                    ("I like tests".to_owned(), Uuid::from_u128(0x1a6e_0001)),
+                )]),
                 group_invites: HashMap::new(),
                 group_chats: HashSet::new(),
                 active_group,

@@ -2,6 +2,7 @@
 
 use super::reply::{Answer, basic, cs_number};
 use ferro_client::Client;
+use ferro_client::profile::ProfileChange;
 
 /// Name2Key: the avatar's key, or "lookup" when the grid does not know the name (SecondBot answers
 /// "lookup" until its name cache has it; Ferrobot asks the grid at once and waits).
@@ -48,4 +49,71 @@ struct NearMeDetails {
     y: i64,
     z: i64,
     range: serde_json::Value,
+}
+
+/// SecondBot's text when the profile has not come (two spaces, as it writes it).
+const RETRY: &str = "Requesting avatar details  [Retry later]";
+
+pub async fn profile_about(client: &Client, who: &str) -> Answer {
+    const C: &str = "GetProfileAbout";
+    let args = super::owned(&[who]);
+    let Some(id) = super::avatar(client, who).await else {
+        return super::reply::failure(C, "Invaild avatar uuid", &args);
+    };
+    match client.profile(id).await {
+        Ok(p) => basic(C, &p.about, &[]),
+        Err(e) => {
+            log::debug!("{C}: {e}");
+            super::reply::failure(C, RETRY, &args)
+        }
+    }
+}
+
+pub async fn profile_image(client: &Client, who: &str) -> Answer {
+    const C: &str = "GetProfileImage";
+    let args = super::owned(&[who]);
+    let Some(id) = super::avatar(client, who).await else {
+        return super::reply::failure(C, "Invaild avatar uuid", &args);
+    };
+    match client.profile(id).await {
+        Ok(p) => basic(C, &p.image.to_string(), &[]),
+        Err(e) => {
+            log::debug!("{C}: {e}");
+            super::reply::failure(C, RETRY, &args)
+        }
+    }
+}
+
+/// SetProfileAbout: 10 to 300 characters.
+pub async fn set_profile_about(client: &Client, text: &str) -> Answer {
+    const C: &str = "SetProfileAbout";
+    let args = super::owned(&[text]);
+    let n = text.chars().count();
+    if n < 10 {
+        return super::reply::failure(C, "About text to short", &args);
+    }
+    if n > 300 {
+        return super::reply::failure(C, "About text to long", &args);
+    }
+    save(client, C, ProfileChange::About(text.to_owned()), &args).await
+}
+
+pub async fn set_profile_image(client: &Client, texture: &str) -> Answer {
+    const C: &str = "SetProfileImage";
+    let args = super::owned(&[texture]);
+    let Some(id) = super::key(texture) else {
+        // SecondBot's text, its stray quote too
+        return super::reply::failure(C, "Invaild texture uuid\"", &args);
+    };
+    save(client, C, ProfileChange::Image(id), &args).await
+}
+
+async fn save(client: &Client, c: &str, change: ProfileChange, args: &[String]) -> Answer {
+    match client.update_profile(change).await {
+        Ok(()) => basic(c, "ok", &[]),
+        Err(e) => {
+            log::warn!("{c}: {e}");
+            super::reply::failure(c, RETRY, args)
+        }
+    }
 }

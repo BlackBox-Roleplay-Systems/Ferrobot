@@ -775,6 +775,38 @@ impl Region {
                 };
                 self.send(from, &r, true);
             }
+        } else if id == AvatarPropertiesRequest::ID {
+            if let Ok(m) = pkt.decode::<AvatarPropertiesRequest>() {
+                // as OpenSim answers, without the AgentProfile capability
+                let who = m.agent_data.avatar_id;
+                let known = self.shared.state().profiles.get(&who).cloned();
+                if let Some((about, image)) = known
+                    .or_else(|| (who == self.shared.agent_id).then(|| (String::new(), Uuid::nil())))
+                {
+                    let mut r = AvatarPropertiesReply::default();
+                    r.agent_data.agent_id = self.shared.agent_id;
+                    r.agent_data.avatar_id = who;
+                    r.properties_data.about_text = str_field(&about);
+                    r.properties_data.image_id = image;
+                    r.properties_data.fl_about_text = str_field("first life");
+                    r.properties_data.flags = 1;
+                    self.send(from, &r, true);
+                }
+            }
+        } else if id == AvatarPropertiesUpdate::ID {
+            if let Ok(m) = pkt.decode::<AvatarPropertiesUpdate>() {
+                let d = &m.properties_data;
+                let (about, image) = (field_str(&d.about_text), d.image_id);
+                self.shared.saw(Seen::ProfileUpdate {
+                    about: about.clone(),
+                    image,
+                    rest_kept: field_str(&d.fl_about_text) == "first life" && d.allow_publish,
+                });
+                self.shared
+                    .state()
+                    .profiles
+                    .insert(self.shared.agent_id, (about, image));
+            }
         } else if id == SoundTrigger::ID {
             if let Ok(m) = pkt.decode::<SoundTrigger>() {
                 self.shared.saw(Seen::SoundTrigger {

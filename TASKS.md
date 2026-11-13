@@ -255,7 +255,9 @@ baking: the bot says so and goes on.
   objects get PERMISSION_TRIGGER_ANIMATION, nothing more); tested on the test grid. Deliberate
   differences: AddToAllowAnimations works (SecondBot's answers "@todo"), PointAt finds the avatar
   (SecondBot's reads the key before looking it up)
-- ⬜ Profiles
+- 🟡 Profiles (the AgentProfile capability, GET and PUT, else AvatarPropertiesRequest and the
+  whole profile in AvatarPropertiesUpdate, as Aurora's session for OpenSim): SecondBot's
+  GetProfileAbout, GetProfileImage, SetProfileAbout, SetProfileImage; tested on the test grid
 
 ## Phase 8 - Running it for real
 

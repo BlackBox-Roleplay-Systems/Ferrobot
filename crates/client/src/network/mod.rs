@@ -16,9 +16,11 @@ mod estate;
 mod groups;
 mod inventory;
 mod parcels;
+mod profile;
 pub(crate) use estate::EstateRequest;
 pub(crate) use parcels::ParcelRequest;
 pub use parcels::{ObjectOwner, ParcelAction};
+pub(crate) use profile::ProfileRequest;
 
 pub(crate) use groups::GroupRequest;
 pub(crate) use inventory::InventoryRequest;
@@ -211,6 +213,7 @@ struct Session<'a> {
     /// The invoice of the last estate `getinfo`.
     estate_invoice: Uuid,
     estate_waits: estate::EstateWaits,
+    profile_waits: profile::ProfileWaits,
     /// Parcel replies being waited for.
     parcel_waits: parcels::ParcelWaits,
     /// The mute list's file, being downloaded.
@@ -893,6 +896,7 @@ impl Session<'_> {
             Request::Group(r) => self.on_group_request(r),
             Request::Parcel(r) => self.on_parcel_request(r),
             Request::Estate(r) => self.on_estate_request(r),
+            Request::Profile(r) => self.on_profile_request(r),
             Request::Inventory(r) => self.on_inventory_request(r),
             Request::Rebake { reply } => self.request_appearance(Some(reply)),
             Request::HoverHeight { height, reply } => {
@@ -1078,6 +1082,7 @@ impl Session<'_> {
         self.map_waits.retain(|(_, tx)| !tx.is_closed());
         self.parcel_waits.retain_open();
         self.estate_waits.retain_open();
+        self.profile_waits.retain_open();
         self.created.retain(|_, tx| !tx.is_closed());
         if now.duration_since(self.circuit.last_recv) > REGION_TIMEOUT {
             return Some(End::Lost(format!(
@@ -1220,6 +1225,9 @@ impl Session<'_> {
             }
             let avatars = self.places.avatar_positions();
             self.shared.state_mut().avatars = avatars;
+        } else if id == AvatarPropertiesReply::ID {
+            let m: AvatarPropertiesReply = pkt.decode()?;
+            self.on_avatar_properties(&m);
         } else if id == AvatarAnimation::ID {
             // the animations the region plays on the bot (SignaledAnimations)
             let m: AvatarAnimation = pkt.decode()?;
@@ -1859,6 +1867,7 @@ async fn run(
         estate_manager: false,
         estate_invoice: Uuid::new_v4(),
         estate_waits: Default::default(),
+        profile_waits: Default::default(),
         parcel_waits: Default::default(),
         places: Default::default(),
         transfers: Default::default(),

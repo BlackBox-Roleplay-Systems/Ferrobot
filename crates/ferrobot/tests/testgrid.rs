@@ -2241,6 +2241,70 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// Profiles: read, and the bot's own changed (the whole profile sent, as OpenSim needs).
+    #[tokio::test]
+    async fn profile_commands() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+
+        assert_eq!(
+            api.reply("GetProfileAbout", &["Some Resident"]).await,
+            "I like tests"
+        );
+        assert_eq!(
+            api.reply("GetProfileImage", &["Some Resident"]).await,
+            uuid_from(0x1a6e_0001).to_string()
+        );
+        assert_eq!(
+            api.failure("GetProfileAbout", &[&uuid_from(0xdead).to_string()])
+                .await
+                .0,
+            "Requesting avatar details  [Retry later]"
+        );
+
+        assert_eq!(
+            api.reply("SetProfileAbout", &["A bot that helps"]).await,
+            "ok"
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::ProfileUpdate {
+                    about: "A bot that helps".into(),
+                    image: uuid::Uuid::nil(),
+                    rest_kept: true
+                })
+            .await,
+            "the rest of the profile sent back as it was"
+        );
+        let picture = uuid_from(0x91c7);
+        assert_eq!(
+            api.reply("SetProfileImage", &[&picture.to_string()]).await,
+            "ok"
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::ProfileUpdate {
+                    about: "A bot that helps".into(),
+                    image: picture,
+                    rest_kept: true
+                })
+            .await
+        );
+        assert_eq!(
+            api.failure("SetProfileAbout", &["short"]).await.0,
+            "About text to short"
+        );
+        assert_eq!(
+            api.failure("SetProfileImage", &["picture"]).await.0,
+            "Invaild texture uuid\""
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

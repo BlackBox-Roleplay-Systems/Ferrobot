@@ -98,7 +98,8 @@ manager): `EstateKickUser`, `EstateTeleportHomeUser`, `AddEstateManager`, `Remov
 `UpdateEstateBanlist`, `GetEstateBanList`, `SimRestart`, `SimMessage`, `SetEstateCovenant`,
 `GetEstateCovenant`, `SetExtendedRegionInfo`, `SetRegionFlags`, `SetEstateConfig`; animations:
 `PlayGesture`, `PlayGestureDirect`, `ResetAnimations`, `PointAt`, `AddToAllowAnimations` (that
-avatar's objects may animate the bot); movement: `Fly`,
+avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileImage`,
+`SetProfileAbout`, `SetProfileImage`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
 `RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`

@@ -118,6 +118,8 @@ const CHANGING: &[&str] = &[
     "SetRegionFlags",
     "SetEstateConfig",
     "AddToAllowAnimations",
+    "SetProfileAbout",
+    "SetProfileImage",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -236,6 +238,10 @@ const COMMANDS: &[(&str, usize)] = &[
     ("SetRegionFlags", 10),
     ("SetEstateConfig", 10),
     ("AddToAllowAnimations", 1),
+    ("GetProfileAbout", 1),
+    ("GetProfileImage", 1),
+    ("SetProfileAbout", 1),
+    ("SetProfileImage", 1),
     ("PlayGesture", 1),
     ("PlayGestureDirect", 1),
     ("ResetAnimations", 0),
@@ -444,6 +450,10 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
             )
             .await
         }
+        "GetProfileAbout" => avatars::profile_about(client, a(0)).await,
+        "GetProfileImage" => avatars::profile_image(client, a(0)).await,
+        "SetProfileAbout" => avatars::set_profile_about(client, a(0)).await,
+        "SetProfileImage" => avatars::set_profile_image(client, a(0)).await,
         "AddToAllowAnimations" => animation::allow_animations(ctx, a(0)).await,
         "PlayGesture" => animation::play_gesture(ctx, a(0)).await,
         "PlayGestureDirect" => animation::play_gesture_direct(ctx, a(0)).await,

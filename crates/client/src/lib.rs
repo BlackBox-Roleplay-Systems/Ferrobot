@@ -26,6 +26,7 @@ mod network;
 pub use network::{ObjectOwner, ParcelAction};
 pub mod objects;
 pub mod parcels;
+pub mod profile;
 pub mod region_restart;
 pub mod state;
 mod transfer;
@@ -109,6 +110,7 @@ pub(crate) enum Request {
     /// A region's handle by its name (MapNameRequest); `None` when there is no such region.
     Parcel(network::ParcelRequest),
     Estate(network::EstateRequest),
+    Profile(network::ProfileRequest),
     /// An asset from the ViewerAsset capability (`kind` its query key, gesture_id…).
     ViewerAsset {
         kind: &'static str,
@@ -745,6 +747,31 @@ impl Client {
     /// lands in the state's `friend_locations`.
     pub async fn map_friend(&self, friend: Uuid) -> Result<(), ClientError> {
         self.interact(Interaction::FindAgent { prey: friend }).await
+    }
+
+    /// An avatar's profile.
+    pub async fn profile(&self, id: Uuid) -> Result<profile::Profile, ClientError> {
+        // the region does not answer for an avatar it does not know: a short wait
+        self.ask_within(Duration::from_secs(5), |reply| {
+            Request::Profile(network::ProfileRequest::Get { id, reply })
+        })
+        .await?
+        .map_err(ClientError::Refused)
+    }
+
+    /// Change the bot's own profile (its about text or its picture).
+    pub async fn update_profile(&self, change: profile::ProfileChange) -> Result<(), ClientError> {
+        let me = self.state().agent_id;
+        let current = Box::new(self.profile(me).await?);
+        self.ask(|reply| {
+            Request::Profile(network::ProfileRequest::Save {
+                current,
+                change,
+                reply,
+            })
+        })
+        .await?
+        .map_err(ClientError::Refused)
     }
 
     /// Start and stop animations (AgentAnimation).
