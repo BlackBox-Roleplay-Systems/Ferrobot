@@ -1,8 +1,9 @@
 //! Scripts asking for permissions (ScriptQuestion, llRequestPermissions): an object of an avatar
-//! on the animators list (AddToAllowAnimations) gets PERMISSION_TRIGGER_ANIMATION, and only that;
-//! any other question is left unanswered, which is a no.
+//! granted animations (AddToAllowAnimations, or SetPermFlag's "animation", once or lasting) gets
+//! PERMISSION_TRIGGER_ANIMATION, and only that; any other question is left unanswered, which is a
+//! no. A one-time grant is used up by the first question it answers.
 
-use crate::animators::Animators;
+use crate::grants::{Grant, Grants};
 use ferro_client::events::ScriptQuestion;
 use ferro_client::{Client, Event};
 use std::sync::Arc;
@@ -12,27 +13,19 @@ use tokio::sync::broadcast::error::RecvError;
 /// SCRIPT_PERMISSION_TRIGGER_ANIMATION (lscript_byteformat.h)
 const TRIGGER_ANIMATION: i32 = 0x10;
 
-/// "First Resident" is shown as "First" (LLCacheName::buildLegacyName); names compared so.
-fn legacy(name: &str) -> String {
-    let n = name.trim().to_ascii_lowercase();
-    n.strip_suffix(" resident").map_or(n.clone(), str::to_owned)
-}
-
-async fn on_question(client: Client, animators: Arc<Animators>, q: ScriptQuestion) {
+async fn on_question(client: Client, grants: Arc<Grants>, q: ScriptQuestion) {
     if q.questions & TRIGGER_ANIMATION == 0 {
         return;
     }
-    let allowed = animators.list();
-    if allowed.is_empty() {
-        return;
-    }
-    let names = client.names(&allowed).await.unwrap_or_default();
-    let owner = legacy(&q.owner_name);
-    if !names.values().any(|n| legacy(n) == owner) {
+    // the message names the owner, it gives no key
+    let Some(used) = grants
+        .use_name(&client, Grant::Animation, &q.owner_name)
+        .await
+    else {
         log::info!("{} asks to animate the bot: not allowed", q.object_name);
         return;
-    }
-    log::info!("{} may animate the bot", q.object_name);
+    };
+    log::info!("{} may animate the bot ({used:?} grant)", q.object_name);
     if let Err(e) = client
         .answer_script(q.task, q.item, TRIGGER_ANIMATION)
         .await
@@ -41,27 +34,15 @@ async fn on_question(client: Client, animators: Arc<Animators>, q: ScriptQuestio
     }
 }
 
-pub async fn run(client: Client, mut events: Receiver<Event>, animators: Arc<Animators>) {
+pub async fn run(client: Client, mut events: Receiver<Event>, grants: Arc<Grants>) {
     loop {
         match events.recv().await {
             Ok(Event::ScriptQuestion(q)) => {
-                tokio::spawn(on_question(client.clone(), animators.clone(), q));
+                tokio::spawn(on_question(client.clone(), grants.clone(), q));
             }
             Ok(_) => {}
             Err(RecvError::Lagged(n)) => log::warn!("script permissions: {n} events missed"),
             Err(RecvError::Closed) => return,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn names_with_and_without_resident() {
-        assert_eq!(legacy("Some Resident"), "some");
-        assert_eq!(legacy("Other Avatar"), "other avatar");
-        assert_eq!(legacy(" some "), "some");
     }
 }

@@ -4,11 +4,23 @@
 //! not followed (Ferrobot sends no e-mail).
 
 use crate::commands::Ctx;
+use ferro_client::Client;
 use ferro_client::events::chat_type;
 use uuid::Uuid;
 
 /// Sends `output` to `target`.
 pub async fn send(ctx: &Ctx, target: &str, output: &str, command: &str) {
+    send_with(&ctx.client, &ctx.http, target, output, command).await;
+}
+
+/// The same, for a service that has no command context (the interaction events).
+pub async fn send_with(
+    client: &Client,
+    http: &reqwest::Client,
+    target: &str,
+    output: &str,
+    command: &str,
+) {
     let target = target.trim();
     let lower = target.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
@@ -17,8 +29,7 @@ pub async fn send(ctx: &Ctx, target: &str, output: &str, command: &str) {
             form_encode(output),
             form_encode(command)
         );
-        let sent = ctx
-            .http
+        let sent = http
             .post(target)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .timeout(std::time::Duration::from_secs(30))
@@ -31,12 +42,12 @@ pub async fn send(ctx: &Ctx, target: &str, output: &str, command: &str) {
         return;
     }
     if let Ok(avatar) = Uuid::parse_str(target) {
-        let _ = ctx.client.im(avatar, output).await;
+        let _ = client.im(avatar, output).await;
         return;
     }
     if target.split_whitespace().count() == 2 {
-        if let Ok(Some(avatar)) = ctx.client.find_avatar(target).await {
-            let _ = ctx.client.im(avatar, output).await;
+        if let Ok(Some(avatar)) = client.find_avatar(target).await {
+            let _ = client.im(avatar, output).await;
         }
         return;
     }
@@ -47,7 +58,7 @@ pub async fn send(ctx: &Ctx, target: &str, output: &str, command: &str) {
     if let Ok(channel) = target.parse::<i32>() {
         // "output Channel must be zero or higher"
         let channel = if channel < 0 { 999 } else { channel };
-        let _ = ctx.client.chat(output, channel, chat_type::SAY).await;
+        let _ = client.chat(output, channel, chat_type::SAY).await;
     }
 }
 

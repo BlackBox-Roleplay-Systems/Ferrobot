@@ -37,6 +37,9 @@ pub struct Config {
     pub object_master_optout: bool,
     /// What the bot accepts from whom (SecondBot's InteractionConfig).
     pub interactions: Rules,
+    /// Where the interactions are told as JSON events, when they are (EnableJsonOutputEvents,
+    /// JsonOutputEventsTarget).
+    pub interaction_events: Option<String>,
     /// Where script dialogs are relayed (SecondBot's DialogRelayConfig).
     pub dialog_relay: crate::dialogs::Targets,
     /// The relays (SecondBot's RelayConfig, and FERRO_RELAY_<n>).
@@ -71,6 +74,7 @@ impl std::fmt::Debug for Config {
             .field("enforce_time_window", &self.enforce_time_window)
             .field("object_master_optout", &self.object_master_optout)
             .field("interactions", &self.interactions)
+            .field("interaction_events", &self.interaction_events.is_some())
             .field("dialog_relay", &self.dialog_relay)
             .field("homebound", &self.homebound)
             .field("rate_limit", &self.rate_limit)
@@ -315,6 +319,28 @@ fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigErr
     }))
 }
 
+/// The interaction events' target: off by default, as SecondBot's EnableJsonOutputEvents, and
+/// off when on without a target ("none", SecondBot's default target, sends nowhere).
+fn interaction_events() -> Result<Option<String>, ConfigError> {
+    if !setting_flag(
+        "FERRO_INTERACTION_EVENTS",
+        "interaction_EnableJsonOutputEvents",
+        false,
+    )? {
+        return Ok(None);
+    }
+    let target = setting(
+        "FERRO_INTERACTION_EVENTS_TARGET",
+        "interaction_JsonOutputEventsTarget",
+    )
+    .map(|(_, v)| v)
+    .filter(|v| !v.eq_ignore_ascii_case("none"));
+    if target.is_none() {
+        log::warn!("interaction events off: they need a target (FERRO_INTERACTION_EVENTS_TARGET)");
+    }
+    Ok(target)
+}
+
 /// An interaction rule: its switch (on by default) and its level ("Owner" by default).
 fn rule(
     switch: (&'static str, &'static str),
@@ -483,6 +509,7 @@ impl Config {
                 owner_only: setting("FERRO_DIALOG_OWNER", "dialogrelay_RelayObjectOwnerOnly")
                     .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok()),
             },
+            interaction_events: interaction_events()?,
             interactions: Rules {
                 teleports: rule(
                     ("FERRO_ACCEPT_TELEPORTS", "interaction_AcceptTeleports"),

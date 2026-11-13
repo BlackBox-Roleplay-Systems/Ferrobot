@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use uuid::Uuid;
 
 /// "First Last", lower case: "some" and "Some.Resident" are both "some resident".
-fn canonical(name: &str) -> String {
+pub fn canonical(name: &str) -> String {
     let parts: Vec<&str> = name.split([' ', '.']).filter(|p| !p.is_empty()).collect();
     match parts.as_slice() {
         [one] => format!("{one} resident"),

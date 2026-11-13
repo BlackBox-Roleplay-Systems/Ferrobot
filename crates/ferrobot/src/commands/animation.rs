@@ -2,7 +2,7 @@
 //! ResetAnimations) and its Self command PointAt.
 //!
 //! Deliberate differences: AddToAllowAnimations works (SecondBot's answers "@todo"): that
-//! avatar's objects may animate the bot; PointAt looks the avatar up before using it (SecondBot's
+//! avatar's objects may animate the bot (a lasting "animation" grant, as SetPermFlag's); PointAt looks the avatar up before using it (SecondBot's
 //! reads the key first, so it never finds it).
 
 use super::reply::{Answer, basic, failure};
@@ -18,7 +18,7 @@ pub async fn allow_animations(ctx: &Ctx, who: &str) -> Answer {
     let Some(id) = avatar(&ctx.client, who).await else {
         return basic(C, "avatar lookup", &args);
     };
-    ctx.animators.add(id);
+    ctx.grants.add(crate::grants::Grant::Animation, id, true);
     basic(C, "ok", &args)
 }
 
