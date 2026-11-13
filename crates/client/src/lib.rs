@@ -36,7 +36,7 @@ mod xmlrpc;
 pub use events::{ChatMessage, Event, InstantMessage, ScriptDialog};
 pub use login::{LoginError, LoginRequest, LoginResponse, StartLocation};
 pub use names::DisplayName;
-pub use network::{End, Network};
+pub use network::{End, Network, Timeouts};
 pub use state::{Group, Health, Home, State};
 
 use std::collections::HashMap;
