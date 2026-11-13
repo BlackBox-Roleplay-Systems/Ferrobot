@@ -61,7 +61,9 @@ crates/
                            (folders.rs); services/rlv.rs hears and does them (SecondBot's RLVService)
     src/discord/           the bot on a Discord server (twilight): its channels, both ways
     src/rabbit/            RabbitMQ (amqprs): the connection task, publishing, the signed queues read
-    src/services/          one service per job, on the client's events (chat_log, chatgpt, events, health, homebound, im_commands, interactions, on_event, relays, restart, rlv, script_permissions)
+    src/services/          one service per job, on the client's events (chat_log, chatgpt, events, health, homebound, im_commands, interactions, on_event, relays, restart, rlv, script_permissions, smtp)
+    src/services/smtp.rs   e-mail through an SMTP server (lettre): SendEmail, e-mail reply targets,
+                           alert and login mails (SecondBot's SmtpService)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it

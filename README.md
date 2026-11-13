@@ -32,7 +32,7 @@ All settings come from environment variables.
 | `FERRO_ACCEPT_INVENTORY`, `FERRO_INVENTORY_LEVEL` | `true`, `Owner` | Inventory offers (else declined) |
 | `FERRO_ACCEPT_FRIENDS`, `FERRO_FRIEND_LEVEL` | `true`, `Owner` | Friendship offers (`Friends` does not apply) |
 | `FERRO_INTERACTION_EVENTS` | `false` | Each offer told as SecondBot's interaction JSON (accepted or not, why), and the items that come in |
-| `FERRO_INTERACTION_EVENTS_TARGET` | (none) | Where those events go, as a command's reply target: a channel, an avatar (key or name), an http(s) address (a form POST of `reply`, `command=interactions`) |
+| `FERRO_INTERACTION_EVENTS_TARGET` | (none) | Where those events go, as a command's reply target: a channel, an avatar (key or name), an http(s) address (a form POST of `reply`, `command=interactions`), an e-mail address (with `FERRO_SMTP_REPLY_TARGET`) |
 | `FERRO_EVENTS` | `false` | SecondBot's events service (see "Events" below) |
 | `FERRO_EVENTS_CHANNEL`, `FERRO_EVENTS_AVATAR`, `FERRO_EVENTS_HTTP` | (none) | Where the events go: a channel (0 or more), an avatar's key, an http(s) address (a signed POST to `<address>/Event/Service`) |
 | `FERRO_EVENTS_SECRET` | SecondBot's | What signs each event's `Hash` (a secret, never logged). Set your own |
@@ -83,6 +83,16 @@ All settings come from environment variables.
 | `FERRO_CHATGPT_TYPING` | `true` | Wait 1 to 3 s before replying, with the typing animation in local chat |
 | `FERRO_CHATGPT_DEBUG` | `false` | Log what is asked and answered at `info` (else `debug`) |
 | `FERRO_CUSTOM_COMMAND_1_TRIGGER`, `…_1_ARGS`, `…_1_STEP_1`, `…_1_STEP_2`… | (none), `0` | A custom command: its name, the arguments it takes, its steps (see "Custom commands" below); `FERRO_CUSTOM_COMMAND_2_…` for the next |
+| `FERRO_SMTP` | `false` | E-mail through an SMTP server (see "E-mail" below) |
+| `FERRO_SMTP_HOST`, `FERRO_SMTP_PORT` | (none), `587` | The SMTP server and its port |
+| `FERRO_SMTP_TLS` | `starttls` | `starttls` (must succeed), `tls` (from the first byte, usually port 465), or `none` (only for a relay on the same host or network) |
+| `FERRO_SMTP_USER`, `FERRO_SMTP_PASSWORD` | (none) | The login on the server; without a password (or `none`) the bot does not log in. The password is a secret, never logged |
+| `FERRO_SMTP_FROM` | (none) | The address mail comes from; nothing is sent without it |
+| `FERRO_SMTP_COMMAND` | `false` | The `SendEmail` command |
+| `FERRO_SMTP_REPLY_TARGET` | `false` | An e-mail address as a command's reply target |
+| `FERRO_SMTP_ALLOWED` | (none: any) | The only addresses mailed, comma-separated |
+| `FERRO_SMTP_ALERTS`, `FERRO_SMTP_LOGIN_NOTICE` | `false`, `false` | The grid's alerts, and each login, mailed to `FERRO_SMTP_NOTIFY` |
+| `FERRO_SMTP_NOTIFY` | (none) | Where alerts and login notices go |
 | `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy, GroupCreate, and UploadMediaWave unless the grid's sounds are free) |
 | `FERRO_RLV` | `false` | RLV: the bot's own objects (and its masters') drive it with `@` commands (see "RLV" below). Homebound is off while it is on, as SecondBot's |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
@@ -120,7 +130,11 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `onevent_DebugMe`, `onevent_Count`, and for each `onevent_Event<n>Enabled`,
 `onevent_Event<n>Source`, `onevent_Event<n>Monitor`, `onevent_Event<n>WhereCount`,
 `onevent_Event<n>Where<m>`, `onevent_Event<n>ActionCount`, `onevent_Event<n>Action<m>`; RLV:
-`rlv_Enabled`; and the relays:
+`rlv_Enabled`; e-mail: `smtp_Enabled`, `smtp_Host`, `smtp_Port`, `smtp_useSSL` (`true`:
+`FERRO_SMTP_TLS=tls`), `smtp_User`, `smtp_Token`, `smtp_MailReplyAddress`,
+`smtp_AllowCommandSendMail`, `smtp_AllowEmailAsReplyTarget`, `smtp_UseAllowedRecivers` with
+`smtp_AllowedReciversCSV`, `smtp_AllowSendAlertStatus`, `smtp_AllowSendLoginNotice`,
+`smtp_SendAlertsAndLoginsTo`; and the relays:
 `relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
 `relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
 `relay_<n>_target_option`, `relay_<n>_RelayConfig`; and the custom commands: `customcommands_count`,
@@ -264,6 +278,24 @@ Folders are paths under `#RLV` in the inventory's root (`Gear/Hats`), whatever t
 The version answers are SecondBot's texts with Ferrobot's name:
 `RestrainedLife viewer v1.23 (Ferrobot)`, `RestrainedLove viewer v1.23 (Ferrobot)`, `1230100`.
 
+### E-mail
+
+SecondBot's SMTP service, off unless `FERRO_SMTP` is on, each part off until allowed:
+`SendEmail` (`to`, `subject`, `body`; answers `sending` once the server took the message),
+a command's answer sent to an e-mail reply target (subject `<command>##commandreply`), and the
+grid's alerts and each login mailed to `FERRO_SMTP_NOTIFY` ("Bot - Alert message", "Bot - Login
+message"). Mail comes from `FERRO_SMTP_FROM`, one connection per message; a server that does not
+answer costs a failed send (20 s a step, 60 s a message), never a stuck bot.
+
+Any signed command or master can mail any address once `SendEmail` or the reply target is on:
+set `FERRO_SMTP_ALLOWED` so that the bot cannot be used to mail anyone else. `SendEmail` counts
+in `FERRO_RATE_LIMIT`. Neither the password nor an address is logged.
+
+Unlike SecondBot's: STARTTLS is required unless `FERRO_SMTP_TLS=none` (MailKit falls back to a
+clear connection, password included, when the server offers no STARTTLS); the login notice
+follows `smtp_AllowSendLoginNotice` (SecondBot reads `smtp_AllowSendAlertStatus` for both); the
+allowed list ignores spaces and case.
+
 ### Grants
 
 What an avatar may have beyond the `FERRO_ACCEPT_*` levels, until the bot stops (a switch that is
@@ -386,8 +418,9 @@ avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileI
 `forward`, `back`, `left` or `right`, and seconds up to 60), `WalkStop`, `Turn` (`left` or `right`,
 and degrees), `Follow` (an avatar, by key or name, and the metres to keep from it, 0.5 to 20; until
 it leaves the region), `FollowStop` (`AutoPilotStop` stops a walk and a follow too); `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
-`GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`
-(in world, region, logins, uptime, commands run and failed); SecondBot's chat commands:
+`GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`, `SendEmail` (see "E-mail");
+Ferrobot's own `BotStatus` (in world, region, logins, uptime, commands run and failed, e-mails
+sent and failed); SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,
 `haveunreadims`, `getimchat`, `Groupchat`, `GroupchatHistory`, `GroupchatListAllUnreadGroups`,
 `GroupchatGroupHasUnread`, `GroupchatAnyUnread`, `GroupchatClearAll`; Discord: `Discord_AddRole`,
@@ -404,7 +437,8 @@ signature made over `a~#~` is refused).
 
 `POST /json` is SecondBot's other entry: the body is one command, as a JSON object
 `{"cmd": "Name2Key", "args": ["Some Resident"], "unixtime": 1800000000, "signing": "…", "reply": "7"}`
-(`reply` optional: a channel, an avatar or an address that gets the answer too), or in the text form
+(`reply` optional: a channel, an avatar, an http(s) address or an e-mail address that gets the
+answer too), or in the text form
 of commands by IM, `Name2Key|||Some Resident#|#7@@@signature;|;unixtime`. The signature is the same
 as `/api/Run`'s, and here empty arguments are kept. Every answer, the refusals ("No bot connected
 yet", "No body sent", "Command request rejected") as much as `{"Key": …, "Value": …}`, comes as a
