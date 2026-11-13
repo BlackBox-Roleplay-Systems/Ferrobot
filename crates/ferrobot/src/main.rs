@@ -6,6 +6,7 @@ mod config;
 mod dialogs;
 mod discord;
 mod download;
+mod event_output;
 mod grants;
 mod history;
 mod inventory_updates;
@@ -113,6 +114,16 @@ async fn main() -> std::process::ExitCode {
         http.clone(),
         cfg.shared_secret.clone(),
     ));
+    if let Some(settings) = cfg.events.clone() {
+        log::info!("events service on");
+        tokio::spawn(services::events::run(
+            client.clone(),
+            client.subscribe(),
+            settings,
+            http.clone(),
+            cfg.shared_secret.clone(),
+        ));
+    }
     let history = std::sync::Arc::new(history::History::default());
     tokio::spawn(history::run(
         client.clone(),

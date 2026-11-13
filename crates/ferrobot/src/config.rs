@@ -3,6 +3,7 @@
 use crate::commands::custom::{CustomCommand, Step};
 use crate::services::interactions::{Level, Rule, Rules};
 use ferro_client::login::{SL_MAIN_GRID, StartLocation};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct Config {
@@ -59,6 +60,8 @@ pub struct Config {
     pub chatgpt: Option<crate::services::chatgpt::Settings>,
     /// The operator's custom commands (SecondBot's CustomCommandsConfig).
     pub custom_commands: Vec<CustomCommand>,
+    /// SecondBot's events service: off unless on (EventsConfig).
+    pub events: Option<crate::services::events::Settings>,
 }
 
 impl std::fmt::Debug for Config {
@@ -99,6 +102,7 @@ impl std::fmt::Debug for Config {
                     .map(|c| c.trigger.as_str())
                     .collect::<Vec<_>>(),
             )
+            .field("events", &self.events)
             .finish_non_exhaustive()
     }
 }
@@ -644,6 +648,81 @@ fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigErr
     }))
 }
 
+/// Seconds, at least 1.
+fn seconds(found: Option<(&'static str, String)>, default: u64) -> Result<Duration, ConfigError> {
+    let n: u64 = number(found, default, "a number of seconds, at least 1")?;
+    if n == 0 {
+        return Err(ConfigError::Invalid(
+            "a check's pace",
+            "a number of seconds, at least 1".into(),
+        ));
+    }
+    Ok(Duration::from_secs(n))
+}
+
+/// SecondBot's events service (EventsConfig): on with FERRO_EVENTS (events_Enabled), each event
+/// on unless turned off, as SecondBot's defaults.
+fn events() -> Result<Option<crate::services::events::Settings>, ConfigError> {
+    if !setting_flag("FERRO_EVENTS", "events_Enabled", false)? {
+        return Ok(None);
+    }
+    let key = |ferro: &'static str, secondbot: &'static str| {
+        setting(ferro, secondbot)
+            .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok())
+            .filter(|id| !id.is_nil())
+    };
+    let channel: i32 = number(
+        setting("FERRO_EVENTS_CHANNEL", "events_OutputChannel"),
+        -1,
+        "a channel number",
+    )?;
+    // SecondBot's defaults: "example" names no place, "n/a" no address
+    let name = |ferro: &'static str, secondbot: &'static str| {
+        setting(ferro, secondbot).map_or_else(|| "example".to_owned(), |(_, v)| v)
+    };
+    let secret = ["FERRO_EVENTS_SECRET", "events_OutputSecret"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok().filter(|s| !s.is_empty()));
+    if secret.is_none() {
+        log::warn!("events: no FERRO_EVENTS_SECRET, SecondBot's default one signs them");
+    }
+    Ok(Some(crate::services::events::Settings {
+        group: key("FERRO_EVENTS_GROUP", "events_GroupMemberEventsGroupUUID"),
+        group_joins: setting_flag("FERRO_EVENTS_GROUP_JOINS", "events_GroupMemberJoins", true)?,
+        group_leaves: setting_flag(
+            "FERRO_EVENTS_GROUP_LEAVES",
+            "events_GroupMemberLeaves",
+            true,
+        )?,
+        group_every: seconds(
+            var("FERRO_EVENTS_GROUP_CHECK").map(|v| ("FERRO_EVENTS_GROUP_CHECK", v)),
+            120,
+        )?,
+        guest_enters: setting_flag("FERRO_EVENTS_GUEST_ENTERS", "events_GuestEntersArea", true)?,
+        guest_leaves: setting_flag("FERRO_EVENTS_GUEST_LEAVES", "events_GuestLeavesArea", true)?,
+        guest_sim: name("FERRO_EVENTS_GUEST_SIM", "events_GuestTrackingSimname"),
+        guest_parcel: name(
+            "FERRO_EVENTS_GUEST_PARCEL",
+            "events_GuestTrackingParcelname",
+        ),
+        guest_every: seconds(
+            var("FERRO_EVENTS_GUEST_CHECK").map(|v| ("FERRO_EVENTS_GUEST_CHECK", v)),
+            30,
+        )?,
+        alerts: setting_flag("FERRO_EVENTS_ALERTS", "events_SimAlertMessage", true)?,
+        status: setting_flag("FERRO_EVENTS_STATUS", "events_StatusMessage", true)?,
+        money: setting_flag("FERRO_EVENTS_MONEY", "events_MoneyEvent", true)?,
+        change_sim: setting_flag("FERRO_EVENTS_CHANGE_SIM", "events_ChangeSim", true)?,
+        change_parcel: setting_flag("FERRO_EVENTS_CHANGE_PARCEL", "events_ChangeParcel", true)?,
+        channel: (channel >= 0).then_some(channel),
+        avatar: key("FERRO_EVENTS_AVATAR", "events_OutputIMuuid"),
+        url: setting("FERRO_EVENTS_HTTP", "events_OutputHttpURL")
+            .map(|(_, v)| v)
+            .filter(|v| v.starts_with("http")),
+        secret: secret.unwrap_or_else(|| "donttellanyone".to_owned()),
+    }))
+}
+
 /// The interaction events' target: off by default, as SecondBot's EnableJsonOutputEvents, and
 /// off when on without a target ("none", SecondBot's default target, sends nowhere).
 fn interaction_events() -> Result<Option<String>, ConfigError> {
@@ -814,6 +893,7 @@ impl Config {
             discord: discord()?,
             rabbit: rabbit()?,
             chatgpt: chatgpt()?,
+            events: events()?,
             relays: relays()?,
             custom_commands: custom_commands()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,

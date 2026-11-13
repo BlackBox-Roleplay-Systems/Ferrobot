@@ -709,11 +709,18 @@ impl Client {
         let (x, y) = (cell(at.x), cell(at.y));
         {
             let st = self.shared.state();
-            if let Some(p) = st.parcel.as_ref().filter(|p| parcels::covers(&p.bitmap, x, y)) {
+            if let Some(p) = st
+                .parcel
+                .as_ref()
+                .filter(|p| parcels::covers(&p.bitmap, x, y))
+            {
                 return Ok(Some(p.clone()));
             }
             if let Some(all) = &st.region_parcels
-                && let Some(id) = all.map.get(y * parcels::MAP_SIZE + x).filter(|id| **id != 0)
+                && let Some(id) = all
+                    .map
+                    .get(y * parcels::MAP_SIZE + x)
+                    .filter(|id| **id != 0)
                 && let Some(p) = all.parcels.iter().find(|p| p.local_id == *id)
             {
                 return Ok(Some(p.clone()));

@@ -4629,6 +4629,198 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
         assert!(!bot.log().contains("a broker password"), "{}", bot.log());
     }
+
+    /// The events as SecondBot's EventsService sends them on a channel: one, parsed.
+    fn event_on(seen: &Seen, channel: i32, name: &str, data: &[(&str, &str)]) -> bool {
+        let Seen::Chat {
+            message,
+            channel: c,
+            ..
+        } = seen
+        else {
+            return false;
+        };
+        let Ok(v) = serde_json::from_str::<Value>(message) else {
+            return false;
+        };
+        *c == channel
+            && v["EventName"] == name
+            && data.iter().all(|(k, want)| v["Data"][*k] == *want)
+    }
+
+    /// SecondBot's EventsService: the events of the bot's state, its parcel and region, alerts,
+    /// money, a group's members and the guests of its parcel, to a channel and signed by HTTP.
+    #[tokio::test]
+    async fn events_service() {
+        let grid = grid().await;
+        let (base, posted) = serve_a_post("204 No Content", String::new()).await;
+        let group = TEST_GROUP.to_string();
+        let (mut bot, api) = bot_with_settings(
+            &grid,
+            &[
+                ("events_Enabled", "true"),
+                ("events_OutputChannel", "7"),
+                ("events_OutputHttpURL", &base),
+                ("FERRO_EVENTS_SECRET", "out secret"),
+                ("events_GroupMemberEventsGroupUUID", &group),
+                ("FERRO_EVENTS_GROUP_CHECK", "1"),
+                ("events_GuestTrackingSimname", "Test Region"),
+                ("events_GuestTrackingParcelname", "Plaza"),
+                ("FERRO_EVENTS_GUEST_CHECK", "1"),
+            ],
+        )
+        .await;
+        let wait_event = |name: &'static str, data: Vec<(&'static str, String)>| {
+            let grid = &grid;
+            let bot = &bot;
+            async move {
+                let pairs: Vec<(&str, &str)> = data.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                if !grid.wait_for(WAIT, |s| event_on(s, 7, name, &pairs)).await {
+                    panic!(
+                        "no {name} {data:?} on channel 7: {:?}\n{}",
+                        grid.seen(),
+                        bot.log()
+                    );
+                }
+            }
+        };
+        let bot_key = grid.agent_id().to_string();
+        wait_event(
+            "StatusMessage",
+            vec![("Message", "In world: Test Bot in Test Region".into())],
+        )
+        .await;
+        wait_event(
+            "ChangedParcel",
+            vec![("oldparcel", String::new()), ("newparcel", "Plaza".into())],
+        )
+        .await;
+        // the balance asked at the login
+        wait_event(
+            "MoneyEvent",
+            vec![("balance", "500".into()), ("amount", "0".into())],
+        )
+        .await;
+
+        // the first event, signed by HTTP to <address>/Event/Service
+        let (path, body) = tokio::time::timeout(WAIT, posted)
+            .await
+            .expect("a POST")
+            .expect("the server");
+        assert_eq!(path, "/Event/Service");
+        assert_eq!(form_field(&body, "method").as_deref(), Some("Dialog"));
+        assert_eq!(form_field(&body, "action").as_deref(), Some("Relay"));
+        assert_eq!(form_field(&body, "botname").as_deref(), Some("Test Bot"));
+        let event = form_field(&body, "event").expect("the event");
+        let unixtime = form_field(&body, "unixtime").expect("the time");
+        let token: String = Sha1::digest(format!("{unixtime}EventService{bot_key}{event}{SECRET}"))
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(form_field(&body, "token"), Some(token));
+        let v: Value = serde_json::from_str(&event).expect("JSON");
+        assert_eq!(v["EventName"], "StatusMessage");
+        assert_eq!(v["BotUUID"], bot_key.as_str());
+        let data = v["Data"]["Message"].as_str().expect("a message");
+        let hash: String = Sha1::digest(format!(
+            "{bot_key}StatusMessage{data}{}out secret",
+            v["Unixtime"]
+        ))
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+        assert_eq!(v["Hash"], hash.as_str());
+
+        // an alert, and a payment
+        grid.alert("Hello from the region", Some("Hello"));
+        wait_event(
+            "AlertMessage",
+            vec![
+                ("Message", "Hello from the region".into()),
+                ("NotificationId", "Hello".into()),
+            ],
+        )
+        .await;
+        grid.pay_bot(uuid::Uuid::from_u128(0x5eed_0001), 25);
+        wait_event(
+            "MoneyEvent",
+            vec![
+                ("fromuuid", SOME.into()),
+                ("touuid", bot_key.clone()),
+                ("amount", "25".into()),
+                ("balance", "525".into()),
+                ("fromname", "Some Resident".into()),
+                ("toname", "Test Bot".into()),
+            ],
+        )
+        .await;
+
+        // the group's members: learned first, then compared
+        bot.wait_log("events: 3 members in the group").await;
+        grid.leave_group(TEST_GROUP, uuid::Uuid::from_u128(0x5eed_0002));
+        wait_event(
+            "GroupMembership",
+            vec![
+                ("uuid", OTHER.into()),
+                ("name", "Other Avatar".into()),
+                ("action", "leave".into()),
+            ],
+        )
+        .await;
+        grid.join_group(TEST_GROUP, uuid::Uuid::from_u128(0x5eed_0002));
+        wait_event(
+            "GroupMembership",
+            vec![("uuid", OTHER.into()), ("action", "join".into())],
+        )
+        .await;
+
+        // guests: the residents stand in the region, then one leaves and comes back
+        bot.wait_log("events: 2 guests").await;
+        grid.remove_resident(0);
+        wait_event(
+            "GuestTracking",
+            vec![
+                ("uuid", SOME.into()),
+                ("name", "Some Resident".into()),
+                ("action", "exit".into()),
+            ],
+        )
+        .await;
+        grid.move_resident(0, glam::Vec3::new(100.0, 120.0, 25.0));
+        wait_event(
+            "GuestTracking",
+            vec![("uuid", SOME.into()), ("action", "enter".into())],
+        )
+        .await;
+
+        // the parcel renamed, then another region
+        assert_eq!(api.reply("SetParcelName", &["New Plaza"]).await, "ok");
+        wait_event(
+            "ChangedParcel",
+            vec![
+                ("oldparcel", "Plaza".into()),
+                ("newparcel", "New Plaza".into()),
+            ],
+        )
+        .await;
+        api.reply("Teleport", &["Second Region", "10", "20", "30"])
+            .await;
+        wait_event(
+            "ChangedSim",
+            vec![
+                ("lastsim", "Test Region".into()),
+                ("newsim", "Second Region".into()),
+            ],
+        )
+        .await;
+        wait_event(
+            "StatusMessage",
+            vec![("Message", "In world: Test Bot in Second Region".into())],
+        )
+        .await;
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
 }
 
 /// Commands by IM, as SecondBot takes them: a master's run, the answer goes to the reply target;
