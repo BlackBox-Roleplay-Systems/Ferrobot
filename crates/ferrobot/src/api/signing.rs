@@ -22,7 +22,7 @@ pub fn split_args(args: Option<&str>) -> Vec<String> {
 }
 
 /// A command as SignedCommand unpacks it.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Unpacked {
     pub command: String,
     pub args: Vec<String>,

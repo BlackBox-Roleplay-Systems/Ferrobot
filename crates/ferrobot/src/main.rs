@@ -11,6 +11,7 @@ mod grants;
 mod history;
 mod inventory_updates;
 mod masters;
+mod on_event;
 mod rabbit;
 mod services;
 mod smart_reply;
@@ -227,6 +228,14 @@ async fn main() -> std::process::ExitCode {
                 time_window: cfg.time_window,
                 object_master_optout: cfg.object_master_optout,
             },
+        ));
+    }
+    if let Some(settings) = cfg.on_event.clone() {
+        // subscribed here, before the login, as every service
+        tokio::spawn(services::on_event::run(
+            ctx.clone(),
+            client.subscribe(),
+            settings,
         ));
     }
     match (&cfg.shared_secret, cfg.http_enabled) {

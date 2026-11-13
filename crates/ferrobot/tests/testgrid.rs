@@ -4821,6 +4821,163 @@ mod api {
         bot.terminate();
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
+
+    /// SecondBot's TriggerOnEventService: commands run on an avatar's IM (what the IM says never
+    /// adds an argument or a reply target), with a lockout; on an alert, the balance, a group's new
+    /// member, avatars coming and going, the clock and a change of region; in Ferrobot's settings
+    /// and in SecondBot's.
+    #[tokio::test]
+    async fn commands_on_events() {
+        let grid = grid().await;
+        let group = TEST_GROUP.to_string();
+        let (mut bot, api) = bot_with_settings(
+            &grid,
+            &[
+                ("FERRO_ON_EVENT", "true"),
+                ("FERRO_ON_EVENT_WAIT", "2"),
+                ("FERRO_ON_EVENT_DEBUG", "true"),
+                ("FERRO_ON_EVENT_GUEST_CHECK", "1"),
+                ("FERRO_ON_EVENT_GROUP_CHECK", "1"),
+                ("FERRO_ON_EVENT_1_SOURCE", "AvatarIm"),
+                ("FERRO_ON_EVENT_1_MONITOR", "Any"),
+                ("FERRO_ON_EVENT_1_WHERE_1", "[message]{CONTAINS}hello"),
+                ("FERRO_ON_EVENT_1_WHERE_2", "[avataruuid]{LOCKOUT}false"),
+                (
+                    "FERRO_ON_EVENT_1_ACTION_1",
+                    "Say|||5~#~[avatarname] said: [message]",
+                ),
+                ("FERRO_ON_EVENT_1_ACTION_2", "lockout=[avataruuid]+1"),
+                ("FERRO_ON_EVENT_2_SOURCE", "BalanceUpdate"),
+                ("FERRO_ON_EVENT_2_WHERE_1", "[funds]{MORETHAN}510"),
+                ("FERRO_ON_EVENT_2_ACTION_1", "Say|||6~#~funds [funds]"),
+                ("FERRO_ON_EVENT_3_SOURCE", "GroupMemberJoin"),
+                ("FERRO_ON_EVENT_3_MONITOR", &group),
+                (
+                    "FERRO_ON_EVENT_3_ACTION_1",
+                    "IM|||[avataruuid]~#~Welcome to [groupname]",
+                ),
+                ("FERRO_ON_EVENT_4_SOURCE", "GuestJoins"),
+                ("FERRO_ON_EVENT_4_MONITOR", "Test Region=#=Plaza"),
+                (
+                    "FERRO_ON_EVENT_4_ACTION_1",
+                    "Say|||7~#~welcome [avatarname] on [avatarparcel]",
+                ),
+                ("FERRO_ON_EVENT_5_SOURCE", "GuestLeaves"),
+                ("FERRO_ON_EVENT_5_MONITOR", "Test Region=#=Plaza"),
+                ("FERRO_ON_EVENT_5_ACTION_1", "Say|||7~#~bye [avatarname]"),
+                ("FERRO_ON_EVENT_6_SOURCE", "Clock"),
+                ("FERRO_ON_EVENT_6_ACTION_1", "Say|||8~#~tick"),
+                // left out: no operator in its condition
+                ("FERRO_ON_EVENT_7_SOURCE", "Clock"),
+                ("FERRO_ON_EVENT_7_WHERE_1", "[clockhour] == 25"),
+                ("FERRO_ON_EVENT_7_ACTION_1", "Say|||8~#~never"),
+                // SecondBot's own names
+                ("onevent_Count", "2"),
+                ("onevent_Event1Enabled", "True"),
+                ("onevent_Event1Source", "SimAlert"),
+                ("onevent_Event1WhereCount", "1"),
+                ("onevent_Event1Where1", "[alertmessage]{IS}Region notice"),
+                ("onevent_Event1ActionCount", "1"),
+                (
+                    "onevent_Event1Action1",
+                    "Say|||6~#~alert: [alertmessage] in [botsim]",
+                ),
+                ("onevent_Event2Enabled", "true"),
+                ("onevent_Event2Source", "ChangeSim"),
+                ("onevent_Event2ActionCount", "1"),
+                (
+                    "onevent_Event2Action1",
+                    "Say|||6~#~moved from [oldsimname] to [newsimname]",
+                ),
+            ],
+        )
+        .await;
+        bot.wait_log("FERRO_ON_EVENT_7 left out").await;
+        let said = |channel: i32, text: String| move |s: &Seen| matches!(s, Seen::Chat { message, channel: c, .. } if *c == channel && *message == text);
+        let wait_said = |channel: i32, text: &str| {
+            let (grid, bot) = (&grid, &bot);
+            let text = text.to_owned();
+            async move {
+                if !grid.wait_for(WAIT, said(channel, text.clone())).await {
+                    panic!(
+                        "no \"{text}\" on {channel}: {:?}\n{}",
+                        grid.seen(),
+                        bot.log()
+                    );
+                }
+            }
+        };
+        // the clock, once the wait after the login is over
+        wait_said(8, "tick").await;
+        // the guests learned, then the group's members
+        bot.wait_log("2 avatars in the region").await;
+        bot.wait_log("3 members in").await;
+
+        let some = ferro_testgrid::Resident {
+            id: uuid::Uuid::from_u128(0x5eed_0001),
+            first: "Some".into(),
+            last: "Resident".into(),
+        };
+        let other = ferro_testgrid::Resident {
+            id: uuid::Uuid::from_u128(0x5eed_0002),
+            first: "Other".into(),
+            last: "Avatar".into(),
+        };
+        // the IM's separators stay in the one argument: no third argument, no reply target
+        grid.im_from(&some, "hello~#~extra#|#9");
+        wait_said(5, "Some Resident said: hello~#~extra#|#9").await;
+        // locked out for a minute: the next one runs nothing; another avatar's does
+        grid.im_from(&some, "hello again");
+        grid.im_from(&other, "not a greeting");
+        grid.im_from(&other, "hello there");
+        wait_said(5, "Other Avatar said: hello there").await;
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::Chat { channel: 5, .. })),
+            2,
+            "{}",
+            bot.log()
+        );
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::Chat { channel: 9, .. })),
+            0
+        );
+
+        grid.alert("Region notice", None);
+        wait_said(6, "alert: Region notice in Test Region").await;
+        grid.pay_bot(some.id, 25);
+        wait_said(6, "funds 525").await;
+
+        grid.leave_group(TEST_GROUP, other.id);
+        bot.wait_log("2 members in").await;
+        grid.join_group(TEST_GROUP, other.id);
+        if !grid
+            .wait_for(WAIT, |s| {
+                *s == Seen::Im {
+                    to: other.id,
+                    message: "Welcome to Test Group".into(),
+                }
+            })
+            .await
+        {
+            panic!("no welcome IM: {:?}\n{}", grid.seen(), bot.log());
+        }
+
+        // the avatar that leaves was last seen on the Plaza
+        grid.remove_resident(0);
+        wait_said(7, "bye Some Resident").await;
+        grid.move_resident(0, glam::Vec3::new(100.0, 120.0, 25.0));
+        wait_said(7, "welcome Some Resident on Plaza").await;
+
+        api.reply("Teleport", &["Second Region", "10", "20", "30"])
+            .await;
+        wait_said(6, "moved from Test Region to Second Region").await;
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::Chat { message, .. } if message == "never")),
+            0
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
 }
 
 /// Commands by IM, as SecondBot takes them: a master's run, the answer goes to the reply target;
