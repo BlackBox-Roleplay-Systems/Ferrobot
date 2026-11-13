@@ -46,6 +46,10 @@ Run on NGC (the local OpenSim server, 2026-11-12): login, arrival, event queue, 
 then the relog, SIGTERM then the logout (exit 0), the health file; a region restart from NGC's
 console (alert, "The simulator is going down.", the relog once it is back). Teleports not yet (one
 region).
+Run on NGC again (2026-11-12, feat/more-commands): the API answering SimName, BotStatus, Balance,
+Nearme, Friendslist; the inventory tree fetched from the server; a folder created; a notecard
+written (the server's "Notecard updated") and listed; both thrown away. OpenSim has no server-side
+baking: the bot says so and goes on.
 
 - ✅ `crates/client` (ferro-client): the protocol code moved out of the bot; `Client` (requests with
   replies and a timeout, a broadcast of events, the state) and `Network` (the network task, one
