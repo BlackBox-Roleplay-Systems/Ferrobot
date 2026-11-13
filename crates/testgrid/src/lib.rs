@@ -21,7 +21,7 @@ pub mod inventory;
 pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GROUP};
 pub use region::{
     MAPPABLE_FRIEND, OBJECT, OBJECT_CHILD, OBJECT_CREATOR, OBJECT_LOCAL_ID, OBJECT_NAME,
-    OBJECT_OWNER, OBJECT_POSITION, SEAT_POSITION, map_tile,
+    OBJECT_OWNER, OBJECT_POSITION, SEAT_POSITION, attachment_key, map_tile,
 };
 mod http;
 mod login;
@@ -686,6 +686,13 @@ enum RegionCommand {
         from: String,
         text: String,
     },
+    /// An object says something to its owner (llOwnerSay).
+    OwnerSay {
+        object: Uuid,
+        name: String,
+        owner: Uuid,
+        text: String,
+    },
     /// An IM with a sender key: a resident's (IM_NOTHING_SPECIAL), or an object's owner's
     /// (IM_FROM_TASK).
     ImFrom {
@@ -898,6 +905,24 @@ impl TestGrid {
             from: from.into(),
             text: text.into(),
         });
+    }
+
+    /// An object owned by `owner` says `text` to its owner (llOwnerSay), as the grid sends it to
+    /// the bot: an RLV command when it starts with "@". The grid sends an OwnerSay only to the
+    /// object's owner; a test may send another's, as a forged one.
+    pub fn owner_say(&self, object: Uuid, name: &str, owner: Uuid, text: &str) {
+        self.command(RegionCommand::OwnerSay {
+            object,
+            name: name.into(),
+            owner,
+            text: text.into(),
+        });
+    }
+
+    /// The shared folder #RLV in the bot's inventory ([`inventory::Inventory::share`]); before
+    /// the login.
+    pub fn share_folders(&self) {
+        self.shared.state().inventory.share();
     }
 
     /// Someone sends the bot an IM.

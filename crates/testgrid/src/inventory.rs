@@ -45,6 +45,15 @@ pub const SCRIPT: Uuid = Uuid::from_u128(0x2000_0005);
 pub const GESTURE_ASSET: Uuid = Uuid::from_u128(0x3000_0004);
 pub const GESTURE_ANIMATION: Uuid = Uuid::from_u128(0x3000_0005);
 pub const GESTURE_SOUND: Uuid = Uuid::from_u128(0x3000_0006);
+/// The shared folder (RLV), once [`Inventory::share`]d: #RLV, #RLV/Gear, #RLV/Gear/Spare,
+/// #RLV/Hats; a collar, socks (in Gear), a ring (in Spare).
+pub const RLV: Uuid = Uuid::from_u128(0x1000_0020);
+pub const RLV_GEAR: Uuid = Uuid::from_u128(0x1000_0021);
+pub const RLV_SPARE: Uuid = Uuid::from_u128(0x1000_0022);
+pub const RLV_HATS: Uuid = Uuid::from_u128(0x1000_0023);
+pub const COLLAR: Uuid = Uuid::from_u128(0x2000_0301);
+pub const SOCKS: Uuid = Uuid::from_u128(0x2000_0302);
+pub const RING: Uuid = Uuid::from_u128(0x2000_0303);
 
 /// The Welcome notecard's text: an embedded item in it, and long enough for several packets.
 pub fn welcome_text() -> String {
@@ -275,6 +284,35 @@ fn item_llsd(i: &Item, owner: Uuid) -> Llsd {
 }
 
 impl Inventory {
+    /// The shared folder: #RLV with Gear (a collar and socks), Gear/Spare (a ring), and Hats,
+    /// where the hat the bot wears moves.
+    pub fn share(&mut self) {
+        let f = |id, parent, name: &str| Folder {
+            id,
+            parent,
+            name: name.into(),
+            kind: -1,
+        };
+        self.folders.extend([
+            f(RLV, ROOT, "#RLV"),
+            f(RLV_GEAR, RLV, "Gear"),
+            f(RLV_SPARE, RLV_GEAR, "Spare"),
+            f(RLV_HATS, RLV, "Hats"),
+        ]);
+        let in_folder = |mut i: Item, parent| {
+            i.parent = parent;
+            i
+        };
+        self.items.extend([
+            in_folder(wearable(COLLAR, "Collar", 6, 0), RLV_GEAR),
+            in_folder(wearable(SOCKS, "Socks", 5, 7), RLV_GEAR),
+            in_folder(wearable(RING, "Ring", 6, 0), RLV_SPARE),
+        ]);
+        for i in self.items.iter_mut().filter(|i| i.id == HAT) {
+            i.parent = RLV_HATS;
+        }
+    }
+
     /// FetchInventoryDescendents2's answer for these folders; unknown ones go in bad_folders.
     pub fn descendents(&self, folders: &[Uuid], owner: Uuid) -> Llsd {
         let mut out = Vec::new();
