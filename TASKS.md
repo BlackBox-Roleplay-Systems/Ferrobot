@@ -254,7 +254,10 @@ baking: the bot says so and goes on.
   Deliberate differences: ClickObject answers "ok" or fails when it cannot see the object
   (SecondBot prints a C# pair), GetObjectsInParcel lists ID, LocalID, OwnerID and Position of each
   root object by the parcel's x and y (SecondBot serialises LibreMetaverse's whole Primitive and
-  also compares the height with the parcel's 0, so finds nothing)
+  also compares the height with the parcel's 0, so finds nothing). Tried on NGC: GetObjectsInParcel
+  listed the region's objects
+- ⬜ Objects' owners and names (ObjectPropertiesFamily): an object update names its owner only
+  for an object with a sound, so GetObjectsInParcel's OwnerID is often nil
 - 🟡 What the bot wears, through the Current Outfit Folder (crates/client/src/outfit.rs, as
   LibreMetaverse's AppearanceManager and CurrentOutfitFolder: LinkInventoryItem and
   RemoveInventoryItem for its links, RezSingleAttachmentFromInv to add an object,
@@ -273,7 +276,8 @@ baking: the bot says so and goes on.
   (SecondBot's reads the key before looking it up)
 - 🟡 Profiles (the AgentProfile capability, GET and PUT, else AvatarPropertiesRequest and the
   whole profile in AvatarPropertiesUpdate, as Aurora's session for OpenSim): SecondBot's
-  GetProfileAbout, GetProfileImage, SetProfileAbout, SetProfileImage; tested on the test grid
+  GetProfileAbout, GetProfileImage, SetProfileAbout, SetProfileImage; tested on the test grid (NGC
+  has its profile service off: no viewer sees profiles there either)
 
 ## Phase 8 - Running it for real
 

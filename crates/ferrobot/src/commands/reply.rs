@@ -59,6 +59,13 @@ pub fn cs_number(v: f64) -> serde_json::Value {
     }
 }
 
+/// A C# float as System.Text.Json writes it: the shortest form that reads back the same float
+/// (125.11583, not the double 125.11582946777344), no ".0" when it is whole.
+pub fn cs_single(v: f32) -> serde_json::Value {
+    let shortest: f64 = format!("{v}").parse().unwrap_or(0.0);
+    cs_number(shortest)
+}
+
 /// A JSON object of text values in the order given, as C# writes a Dictionary<string, string>.
 pub fn json_pairs(pairs: &[(&str, String)]) -> String {
     let body: Vec<String> = pairs
@@ -85,6 +92,13 @@ pub fn cs_bool_text(b: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn floats_as_csharp_writes_them() {
+        assert_eq!(cs_single(125.115_83).to_string(), "125.11583");
+        assert_eq!(cs_single(100.0).to_string(), "100");
+        assert_eq!(cs_number(0.5).to_string(), "0.5");
+    }
 
     #[test]
     fn answers_are_secondbots() {

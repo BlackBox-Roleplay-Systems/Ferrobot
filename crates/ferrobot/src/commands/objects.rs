@@ -10,7 +10,7 @@
 //! which is 0, so finds nothing).
 
 use super::inventory::{AsyncReply, async_reply};
-use super::reply::{Answer, basic, cs_number, failure, json};
+use super::reply::{Answer, basic, cs_single, failure, json};
 use super::{Ctx, cs_bool, key, owned};
 use ferro_client::inventory::InvItem;
 use glam::Vec3;
@@ -281,9 +281,9 @@ pub async fn objects_in_parcel(ctx: &Ctx) -> Answer {
             local_id: r.local_id,
             owner_id: r.owner.to_string(),
             position: Vector3 {
-                x: cs_number(f64::from(r.position.x)),
-                y: cs_number(f64::from(r.position.y)),
-                z: cs_number(f64::from(r.position.z)),
+                x: cs_single(r.position.x),
+                y: cs_single(r.position.y),
+                z: cs_single(r.position.z),
             },
         })
         .collect();

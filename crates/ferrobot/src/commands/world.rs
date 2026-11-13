@@ -5,7 +5,7 @@
 //! off by default too). Deliberate difference: Key2Name gives the avatar's name (SecondBot's
 //! looks up the nil key).
 
-use super::reply::{Answer, basic, cs_number, failure, json};
+use super::reply::{Answer, basic, cs_single, failure, json};
 use super::{Ctx, avatar, key, owned};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -294,10 +294,10 @@ pub async fn friend_location(ctx: &Ctx, who: &str) -> Answer {
         .ok()
         .and_then(|n| n.get(&id).cloned())
         .unwrap_or_default();
-    let v3 = |x: f64, y: f64, z: f64| Vector3 {
-        x: cs_number(x),
-        y: cs_number(y),
-        z: cs_number(z),
+    let v3 = |x: f32, y: f32, z: f32| Vector3 {
+        x: cs_single(x),
+        y: cs_single(y),
+        z: cs_single(z),
     };
     let (gx, gy) = (found.region_handle >> 32, found.region_handle & 0xffff_ffff);
     let time = found
@@ -307,8 +307,8 @@ pub async fn friend_location(ctx: &Ctx, who: &str) -> Answer {
     let p = found.position;
     let value = FriendLocations {
         name,
-        pos: v3(f64::from(p.x), f64::from(p.y), f64::from(p.z)),
-        region_pos: v3((gx / 256) as f64, (gy / 256) as f64, 10.0),
+        pos: v3(p.x, p.y, p.z),
+        region_pos: v3((gx / 256) as f32, (gy / 256) as f32, 10.0),
         time,
     };
     basic(C, &json(&value), &args)
