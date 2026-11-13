@@ -4122,6 +4122,235 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// GetProfilePicks, as OpenSim answers it (the GenericMessage "avatarpicksrequest") and as
+    /// Second Life does (the AgentProfile capability).
+    #[tokio::test]
+    async fn profile_picks() {
+        let some_picks = serde_json::json!([
+            {"id": uuid_from(0x91c4_0001).to_string(), "name": "Sunny Beach"},
+            {"id": uuid_from(0x91c4_0002).to_string(), "name": "Club <Night> & \"Day\""},
+        ]);
+        for cap in [false, true] {
+            let grid = TestGrid::start(GridConfig {
+                agent_profile_cap: cap,
+                ..GridConfig::default()
+            })
+            .await
+            .expect("the test grid starts");
+            let (mut bot, api) = bot_with_api(&grid, None).await;
+            arrived(&grid, &bot, 1).await;
+            bot.wait_log("capabilities").await;
+
+            let (key, inner) = api.run("GetProfilePicks", &["Some Resident"]).await;
+            assert!(key && inner["status"] == true, "{inner}");
+            assert_eq!(inner["args"], serde_json::json!(["Some Resident"]));
+            let picks: Value =
+                serde_json::from_str(inner["reply"].as_str().expect("reply")).expect("a list");
+            assert_eq!(picks, some_picks);
+            assert_eq!(api.reply("GetProfilePicks", &[OTHER]).await, "[]");
+            let some = uuid_from(0x5eed_0001);
+            wait_for(&grid, &bot, "the picks asked for", |s| {
+                *s == Seen::PicksRequest { avatar: some, cap }
+            })
+            .await;
+            assert_eq!(
+                api.failure("GetProfilePicks", &["Nobody Here"]).await,
+                (
+                    "Invaild avatar uuid".to_owned(),
+                    serde_json::json!(["Nobody Here"])
+                )
+            );
+            // the grid does not answer for an avatar it does not know (the capability: 404)
+            let unknown = uuid_from(0xdead).to_string();
+            assert_eq!(
+                api.failure("GetProfilePicks", &[&unknown]).await.0,
+                "No reply from the grid [Retry later]"
+            );
+            if cap {
+                assert_eq!(
+                    api.reply("GetProfileAbout", &["Some Resident"]).await,
+                    "I like tests"
+                );
+            }
+            assert_eq!(api.reply("Logoff", &[]).await, "ok");
+            assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+        }
+    }
+
+    /// GroupCreate: a Funds command; the grid takes L$100 and the bot is in the new group.
+    #[tokio::test]
+    async fn group_create() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        let args = ["Bots United", "A place for bots", "true", "25", "false"];
+        assert_eq!(
+            api.failure("GroupCreate", &args).await,
+            (
+                "Funds commands are disabled".to_owned(),
+                serde_json::json!(args)
+            )
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+        assert_eq!(grid.count(|s| matches!(s, Seen::CreateGroup { .. })), 0);
+
+        let (mut bot, api) = bot_with_settings(&grid, &[("FERRO_ALLOW_FUNDS", "true")]).await;
+        arrived(&grid, &bot, 2).await;
+        bot.wait_log("in 2 groups").await;
+        let id = api.reply("GroupCreate", &args).await;
+        let id = uuid::Uuid::parse_str(&id).unwrap_or_else(|_| panic!("a key: {id}"));
+        assert!(grid.seen().contains(&Seen::CreateGroup {
+            name: "Bots United".into(),
+            charter: "A place for bots".into(),
+            show_in_list: false,
+            membership_fee: 25,
+            open_enrollment: true,
+            allow_publish: false,
+        }));
+        bot.wait_log("in 3 groups").await;
+        let list: Value = serde_json::from_str(&api.reply("GetGroupList", &[]).await).expect("map");
+        assert_eq!(list[id.to_string()], "Bots United");
+        assert_eq!(api.reply("Balance", &[]).await, "400");
+
+        // the grid's refusal, then SecondBot's checks
+        assert_eq!(
+            api.failure(
+                "GroupCreate",
+                &["Test Group", "Taken", "false", "0", "true"]
+            )
+            .await
+            .0,
+            "Create failed: The group name is already in use."
+        );
+        assert_eq!(
+            api.failure("GroupCreate", &["Bots", "x", "maybe", "0", "true"])
+                .await
+                .0,
+            "Invaild openenrollment value"
+        );
+        assert_eq!(api.reply("PayAvatar", &[OTHER, "350"]).await, "Accepted");
+        assert_eq!(
+            api.failure("GroupCreate", &["Poor Bots", "x", "true", "0", "true"])
+                .await
+                .0,
+            "Not enough funds (L$100 needed)"
+        );
+        assert_eq!(grid.count(|s| matches!(s, Seen::CreateGroup { .. })), 2);
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
+    /// UploadMediaWave: an Ogg Vorbis sound downloaded, checked and uploaded to the Sounds folder
+    /// through NewFileAgentInventory, paid when the grid asks.
+    #[tokio::test]
+    async fn sound_upload() {
+        use ferro_testgrid::sound::ogg_vorbis;
+        let grid = grid().await;
+        let ding = ogg_vorbis(1, 44_100, 3);
+        let (len, sum) = (ding.len(), ferro_testgrid::checksum(&ding));
+        let url = grid.serve_file("ding.ogg", ding);
+
+        // L$10 a sound: off without the Funds commands
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        assert_eq!(
+            api.failure("UploadMediaWave", &[&url, "Ding"]).await,
+            (
+                "Funds commands are disabled".to_owned(),
+                serde_json::json!([url, "Ding"])
+            )
+        );
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+
+        let (mut bot, api) = bot_with_settings(&grid, &[("FERRO_ALLOW_FUNDS", "true")]).await;
+        arrived(&grid, &bot, 2).await;
+        bot.wait_log("capabilities").await;
+        assert_eq!(api.reply("UploadMediaWave", &[&url, "Ding"]).await, "ok");
+        assert!(grid.seen().contains(&Seen::AssetUploaded {
+            asset_type: "sound".into(),
+            inventory_type: "sound".into(),
+            folder: ferro_testgrid::inventory::SOUNDS,
+            name: "Ding".into(),
+            expected_cost: 10,
+            next_owner_mask: 0x7fff_ffff,
+            len,
+            checksum: sum,
+        }));
+        bot.wait_log("\"Ding\" uploaded (3.0 s)").await;
+        assert_eq!(api.reply("Balance", &[]).await, "490");
+        let sounds: Value = serde_json::from_str(
+            &api.reply(
+                "InventoryContents",
+                &[&ferro_testgrid::inventory::SOUNDS.to_string()],
+            )
+            .await,
+        )
+        .expect("a list");
+        assert!(
+            sounds
+                .as_array()
+                .expect("a list")
+                .iter()
+                .any(|i| i["name"] == "Ding" && i["typename"] == "InventorySound"),
+            "{sounds}"
+        );
+
+        // what cannot be uploaded: never sent to the grid
+        let fail = |source: String| {
+            let api = &api;
+            async move { api.failure("UploadMediaWave", &[&source, "Bad"]).await.0 }
+        };
+        let mut wav = b"RIFF\x24\0\0\0WAVEfmt ".to_vec();
+        wav.extend_from_slice(&[0; 64]);
+        let why = fail(grid.serve_file("ding.wav", wav)).await;
+        assert!(
+            why.starts_with("Not an Ogg Vorbis sound: a WAV file, which the bot cannot encode"),
+            "{why}"
+        );
+        let why = fail(grid.serve_file("stereo.ogg", ogg_vorbis(2, 44_100, 2))).await;
+        assert_eq!(
+            why,
+            "Not an Ogg Vorbis sound: 2 channels, the grid takes mono sounds"
+        );
+        let why = fail(grid.serve_file("long.ogg", ogg_vorbis(1, 44_100, 31))).await;
+        assert_eq!(
+            why,
+            "Not an Ogg Vorbis sound: 31.0 s long, the grid takes 30 s at most"
+        );
+        assert_eq!(
+            fail(url.replace("ding.ogg", "missing.ogg")).await,
+            "Unable to download the sound from url error Response status code does not \
+             indicate success: 404 (Not Found)."
+        );
+        assert_eq!(
+            fail("file:///etc/hostname".into()).await,
+            "sourcePath must start with http:// or https://"
+        );
+        assert_eq!(grid.count(|s| matches!(s, Seen::AssetUploaded { .. })), 1);
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+
+        // a grid where sounds are free: no need for the Funds commands
+        let free = TestGrid::start(GridConfig {
+            sound_upload_cost: Some(0),
+            ..GridConfig::default()
+        })
+        .await
+        .expect("the test grid starts");
+        let url = free.serve_file("ding.ogg", ogg_vorbis(1, 44_100, 1));
+        let (mut bot, api) = bot_with_api(&free, None).await;
+        arrived(&free, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        assert_eq!(api.reply("UploadMediaWave", &[&url, "Free"]).await, "ok");
+        assert!(free.seen().iter().any(
+            |s| matches!(s, Seen::AssetUploaded { name, expected_cost: 0, .. } if name == "Free")
+        ));
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's Chat and Groupchat commands, and the history behind them.
     #[tokio::test]
     async fn chat_commands_and_their_history() {
