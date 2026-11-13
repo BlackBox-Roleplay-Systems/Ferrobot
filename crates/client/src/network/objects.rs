@@ -1,7 +1,9 @@
 //! The session's side of objects: what the region told of them (objects::Places), clicking one
 //! (ObjectGrab then ObjectDeGrab, as LLToolGrab's click), rezzing from the inventory (RezObject,
 //! LLToolDragAndDrop::dropObject, Aurora's inventory/rez.rs), taking one back (DeRezObject) and
-//! putting an item in one (UpdateTaskInventory, RezScript for a script: dropInventory).
+//! putting an item in one (UpdateTaskInventory, RezScript for a script: dropInventory), and
+//! learning root objects' owners and names (ObjectSelect then ObjectDeselect, as Aurora's Area
+//! Search; see objects.rs).
 
 use super::Session;
 use crate::inventory::InvItem;
@@ -9,6 +11,8 @@ use crate::objects::{Known, Root, Sculpt, Worn};
 use ferro_msg::msgs::*;
 use ferro_msg::str_field;
 use glam::Vec3;
+use std::collections::HashSet;
+use std::time::Instant;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -26,6 +30,12 @@ pub(crate) enum ObjectRequest {
     },
     Sculpts {
         reply: oneshot::Sender<Vec<Sculpt>>,
+    },
+    /// Learn the properties (owner, name) of these root objects; answered once the region told
+    /// of them all, or they are gone.
+    Learn {
+        keys: Vec<Uuid>,
+        reply: oneshot::Sender<()>,
     },
     Click {
         local_id: u32,
@@ -113,6 +123,21 @@ impl Session<'_> {
             }
             ObjectRequest::Sculpts { reply } => {
                 let _ = reply.send(self.places.sculpts());
+            }
+            ObjectRequest::Learn { keys, reply } => {
+                let ids: HashSet<u32> = keys
+                    .iter()
+                    .filter_map(|k| self.places.unnamed_root(*k))
+                    .collect();
+                if ids.is_empty() {
+                    let _ = reply.send(());
+                    return;
+                }
+                for id in &ids {
+                    self.property_asks.want(*id);
+                }
+                self.property_waits.push((ids, reply));
+                self.ask_properties(Instant::now());
             }
             ObjectRequest::Worn { reply } => {
                 let _ = reply.send(self.places.worn());
@@ -228,5 +253,67 @@ impl Session<'_> {
                 let _ = reply.send(());
             }
         }
+    }
+}
+
+impl Session<'_> {
+    /// A round of ObjectSelect and ObjectDeselect for the objects whose properties are wanted,
+    /// at the pace PropertyAsks keeps. Selected then deselected at once, as Area Search does, so
+    /// the bot holds no selection.
+    pub(super) fn ask_properties(&mut self, now: Instant) {
+        let places = &self.places;
+        let ids = self.property_asks.round(now, |id| places.lacks_props(id));
+        if ids.is_empty() {
+            return;
+        }
+        log::debug!("asking the properties of {} objects", ids.len());
+        let (agent, session) = (self.login.agent_id, self.login.session_id);
+        let mut select = ObjectSelect::default();
+        select.agent_data.agent_id = agent;
+        select.agent_data.session_id = session;
+        select.object_data = ids
+            .iter()
+            .map(|&id| object_select::ObjectData {
+                object_local_id: id,
+            })
+            .collect();
+        self.send(&select, true);
+        let mut deselect = ObjectDeselect::default();
+        deselect.agent_data.agent_id = agent;
+        deselect.agent_data.session_id = session;
+        deselect.object_data = ids
+            .iter()
+            .map(|&id| object_deselect::ObjectData {
+                object_local_id: id,
+            })
+            .collect();
+        self.send(&deselect, true);
+    }
+
+    /// Properties from the region (ObjectProperties or ObjectPropertiesFamily).
+    pub(super) fn on_properties(&mut self, props: Vec<(Uuid, crate::objects::Props)>) {
+        for (key, p) in props {
+            if let Some(id) = self.places.set_props(key, p) {
+                self.property_asks.answered(id);
+            }
+        }
+        self.settle_property_waits();
+    }
+
+    /// Answer those who wait for properties now known, or for objects now gone.
+    pub(super) fn settle_property_waits(&mut self) {
+        let places = &self.places;
+        self.property_waits = std::mem::take(&mut self.property_waits)
+            .into_iter()
+            .filter_map(|(mut ids, reply)| {
+                ids.retain(|id| places.lacks_props(*id));
+                if ids.is_empty() {
+                    let _ = reply.send(());
+                    None
+                } else {
+                    (!reply.is_closed()).then_some((ids, reply))
+                }
+            })
+            .collect();
     }
 }
