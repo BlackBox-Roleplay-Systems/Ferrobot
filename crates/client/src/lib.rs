@@ -30,6 +30,7 @@ pub mod parcels;
 pub mod profile;
 pub mod region_restart;
 pub mod state;
+pub mod terrain;
 mod transfer;
 mod xmlrpc;
 
@@ -774,6 +775,27 @@ impl Client {
         self.ask(|reply| Request::Estate(network::EstateRequest::Post { cap, body, reply }))
             .await?
             .map_err(ClientError::Refused)
+    }
+
+    /// Upload a terrain RAW file to the region, as the estate tools' "Upload RAW"
+    /// (terrain::raw_width tells a file's size): answered once the region was told of the file,
+    /// with what tells how the upload ended. Refused while another is under way.
+    pub async fn upload_terrain(
+        &self,
+        name: String,
+        data: Vec<u8>,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, ClientError> {
+        if data.is_empty() || data.len() > terrain::MAX_RAW_FILE {
+            return Err(ClientError::Refused(format!(
+                "a terrain file of {} bytes",
+                data.len()
+            )));
+        }
+        self.ask(|reply| {
+            Request::Estate(network::EstateRequest::TerrainUpload { name, data, reply })
+        })
+        .await?
+        .map_err(ClientError::Refused)
     }
 
     /// A parcel's access list (parcels::AL_ACCESS) or ban list (parcels::AL_BAN).
