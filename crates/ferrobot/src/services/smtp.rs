@@ -15,8 +15,9 @@
 //! SecondBot's useSSL picks implicit TLS, else STARTTLS is required (MailKit uses it only when the
 //! server offers it, which lets a password go out in clear); the login notice follows
 //! AllowSendLoginNotice (SecondBot reads AllowSendAlertStatus for both and never reads
-//! AllowSendLoginNotice); the allowed list ignores spaces and case; HideStatusOutput has nothing to
-//! hide (no status output).
+//! AllowSendLoginNotice); the allowed list ignores spaces and case; the sender is named
+//! "via Ferrobot" (SecondBot's "via secondbot"); a line break in a subject becomes a space;
+//! HideStatusOutput is ignored (BotStatus shows the counts).
 
 use ferro_client::{Client, Event};
 use lettre::message::header::ContentType;
