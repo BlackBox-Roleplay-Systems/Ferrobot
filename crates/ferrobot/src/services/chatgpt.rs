@@ -5,7 +5,8 @@
 //! What it answers, each switched on by its own setting:
 //! - local chat said, whispered or shouted by an avatar (not objects, not the system, not the
 //!   bot, not "Second Life"), in one conversation for everyone, with one cooldown;
-//! - IMs from avatars (friends only if asked), one conversation and one cooldown per avatar;
+//! - IMs from avatars, and lines of conferences (friends only if asked), one conversation and
+//!   one cooldown per avatar, answered by IM;
 //! - the chat of one group, one conversation and one cooldown for the group.
 //!
 //! Each conversation starts with SecondBot's system line ("You are <name>, <prompt>, you are
@@ -22,7 +23,8 @@
 //! conversations are forgotten as they age (SecondBot forgets them only when its status is
 //! asked); an IM that is a command for the bot is not sent to the API (it may carry a
 //! signature); at most 100 conversations and 4 requests at once, the reply cut to 2046 bytes
-//! (two chat lines), the answer read up to 1 MiB, 60 s for the whole request, no redirects.
+//! (two chat lines), the answer read up to 1 MiB, 60 s for the whole request, no redirects;
+//! errors are always logged (SecondBot's only with ShowDebug), the key taken out.
 
 use crate::api::signing::unpack;
 use ferro_client::events::{chat_type, dialog};
