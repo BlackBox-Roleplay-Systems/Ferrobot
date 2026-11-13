@@ -848,6 +848,16 @@ impl Client {
             .await
     }
 
+    /// Learn the owners and names of these root objects (ObjectSelect, as Aurora's Area Search):
+    /// done once the region told of them all, or they are gone; a timeout after `wait`, with
+    /// what came by then kept. Objects already known are not asked about again.
+    pub async fn learn_objects(&self, keys: Vec<Uuid>, wait: Duration) -> Result<(), ClientError> {
+        self.ask_within(wait, |reply| {
+            Request::Object(network::ObjectRequest::Learn { keys, reply })
+        })
+        .await
+    }
+
     /// The sculpted prims the bot knows of in its region (SecondBot's ListSculptys).
     pub async fn sculpts(&self) -> Result<Vec<objects::Sculpt>, ClientError> {
         self.ask(|reply| Request::Object(network::ObjectRequest::Sculpts { reply }))

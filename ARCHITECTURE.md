@@ -27,7 +27,8 @@ crates/
     src/state.rs           what it keeps: who and where the bot is, its groups, its health
     src/names.rs           key <-> name cache
     src/region_restart.rs  region restart notices (from Aurora)
-    src/objects.rs         where objects and the bot stand, from the object updates (from Aurora)
+    src/objects.rs         where objects and the bot stand, from the object updates; their owners
+                           and names, from ObjectProperties, asked at Area Search's pace (from Aurora)
     src/transfer.rs        protected asset downloads (TransferRequest) and notecard text (from Aurora)
     src/mutes.rs           the mute list: its download by xfer and its file (from Aurora)
     src/parcels.rs         a parcel's record (ParcelProperties) and its update (from Aurora)

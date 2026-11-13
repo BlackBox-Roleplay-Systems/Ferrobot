@@ -6,9 +6,12 @@
 //!
 //! Deliberate differences: ClickObject answers "ok", or fails when it cannot see the object
 //! (SecondBot prints a C# pair, "[0, ]" when it found nothing); GetObjectsInParcel lists each root
-//! object's ID, LocalID, OwnerID and Position (SecondBot serialises LibreMetaverse's whole
-//! Primitive), by the parcel's x and y only (SecondBot also compares the height with the parcel's,
-//! which is 0, so finds nothing).
+//! object's ID, LocalID, OwnerID, Position and Properties (SecondBot serialises LibreMetaverse's
+//! whole Primitive), by the parcel's x and y only (SecondBot also compares the height with the
+//! parcel's, which is 0, so finds nothing). GetObjectsInParcel and ListSculptys first ask the
+//! region for the objects' owners and names (SecondBot never does: its OwnerID is nil unless the
+//! object has a sound, its Properties null, and ListSculptys names a prim without name values
+//! "?"), waiting at most a few seconds.
 
 use super::inventory::{AsyncReply, async_reply};
 use super::reply::{Answer, basic, cs_single, failure, json};
@@ -16,7 +19,19 @@ use super::{Ctx, cs_bool, key, owned};
 use ferro_client::inventory::InvItem;
 use glam::Vec3;
 use serde::Serialize;
+use std::time::Duration;
 use uuid::Uuid;
+
+/// How long a listing waits for the objects' properties; an object whose properties have not
+/// come by then is listed without them.
+const PROPERTIES_WAIT: Duration = Duration::from_secs(5);
+
+/// Ask for the properties of these root objects, and wait for them a while.
+async fn learn(ctx: &Ctx, keys: Vec<Uuid>) {
+    if let Err(e) = ctx.client.learn_objects(keys, PROPERTIES_WAIT).await {
+        log::debug!("object properties: {e}");
+    }
+}
 
 /// Where to rez: by the bot, at a place, or at the parcel's centre.
 enum At {
@@ -262,6 +277,27 @@ struct ObjectEntry {
     #[serde(rename = "OwnerID")]
     owner_id: String,
     position: Vector3,
+    /// LibreMetaverse's Primitive.ObjectProperties, the fields the region's answer carries; null
+    /// while unknown, as in SecondBot.
+    properties: Option<PropertiesEntry>,
+}
+
+/// LibreMetaverse's ObjectProperties: its names, the part a bot learns.
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct PropertiesEntry {
+    #[serde(rename = "ObjectID")]
+    object_id: String,
+    #[serde(rename = "CreatorID")]
+    creator_id: String,
+    #[serde(rename = "OwnerID")]
+    owner_id: String,
+    #[serde(rename = "GroupID")]
+    group_id: String,
+    #[serde(rename = "LastOwnerID")]
+    last_owner_id: String,
+    name: String,
+    description: String,
 }
 
 pub async fn objects_in_parcel(ctx: &Ctx) -> Answer {
@@ -270,13 +306,25 @@ pub async fn objects_in_parcel(ctx: &Ctx) -> Answer {
         Ok(p) => p,
         Err(a) => return a,
     };
+    let on_parcel = |r: &ferro_client::objects::Root| {
+        let at = r.position;
+        at.x > p.aabb_min.x && at.x < p.aabb_max.x && at.y > p.aabb_min.y && at.y < p.aabb_max.y
+    };
     let roots = ctx.client.root_objects().await.unwrap_or_default();
-    let mut inside: Vec<ObjectEntry> = roots
+    let unnamed: Vec<Uuid> = roots
         .iter()
-        .filter(|r| {
-            let at = r.position;
-            at.x > p.aabb_min.x && at.x < p.aabb_max.x && at.y > p.aabb_min.y && at.y < p.aabb_max.y
-        })
+        .filter(|r| r.props.is_none() && on_parcel(r))
+        .map(|r| r.full_id)
+        .collect();
+    let roots = if unnamed.is_empty() {
+        roots
+    } else {
+        learn(ctx, unnamed).await;
+        ctx.client.root_objects().await.unwrap_or(roots)
+    };
+    let mut inside: Vec<ObjectEntry> = roots
+        .into_iter()
+        .filter(on_parcel)
         .map(|r| ObjectEntry {
             id: r.full_id.to_string(),
             local_id: r.local_id,
@@ -286,6 +334,15 @@ pub async fn objects_in_parcel(ctx: &Ctx) -> Answer {
                 y: cs_single(r.position.y),
                 z: cs_single(r.position.z),
             },
+            properties: r.props.map(|p| PropertiesEntry {
+                object_id: r.full_id.to_string(),
+                creator_id: p.creator.to_string(),
+                owner_id: p.owner.to_string(),
+                group_id: p.group.to_string(),
+                last_owner_id: p.last_owner.to_string(),
+                name: p.name,
+                description: p.description,
+            }),
         })
         .collect();
     if inside.is_empty() {
@@ -324,6 +381,9 @@ pub async fn list_sculptys(ctx: &Ctx) -> Answer {
     if found.is_empty() {
         return failure(C, "No objects found", &[]);
     }
+    // the keys listed are roots or prims on their own: their owners and names
+    learn(ctx, found.iter().map(|s| s.key).collect()).await;
+    found = ctx.client.sculpts().await.unwrap_or(found);
     found.sort_by_key(|s| s.key);
     let list: Vec<SculptyInfo> = found
         .into_iter()

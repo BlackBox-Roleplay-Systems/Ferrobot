@@ -20,8 +20,8 @@ pub mod inventory;
 
 pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GROUP};
 pub use region::{
-    MAPPABLE_FRIEND, OBJECT, OBJECT_CHILD, OBJECT_LOCAL_ID, OBJECT_POSITION, SEAT_POSITION,
-    map_tile,
+    MAPPABLE_FRIEND, OBJECT, OBJECT_CHILD, OBJECT_CREATOR, OBJECT_LOCAL_ID, OBJECT_NAME,
+    OBJECT_OWNER, OBJECT_POSITION, SEAT_POSITION, map_tile,
 };
 mod http;
 mod login;
@@ -374,6 +374,7 @@ pub enum Seen {
     },
     /// Something done to an object, in words: "rez <item> at x,y,z bypass 1",
     /// "derez <local ids> to <destination> in <folder>", "grab <local id>", "degrab …",
+    /// "select <local ids>", "deselect <local ids>",
     /// "contents <local id> <item>", "script <local id> <item> running <bool>".
     Object {
         what: String,

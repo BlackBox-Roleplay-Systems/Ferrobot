@@ -4,10 +4,22 @@
 //! LLViewerObjectList::processCompressedObjectUpdate, originally LGPL 2.1). A bot draws nothing:
 //! it keeps only the place of the region's root objects and of the avatars, so that it knows
 //! where it and the others are, also when seated on something.
+//!
+//! An update names an object's owner only when it carries a sound, and never its name: those
+//! come from ObjectProperties, which the region sends for the objects the bot selects, and
+//! ObjectPropertiesFamily (LLSelectMgr::processObjectProperties and
+//! processObjectPropertiesFamily). They are asked for as Aurora's Area Search does
+//! (aurora-viewer/src/app/area_search.rs, after FSAreaSearch::requestObjectProperties): the root
+//! objects selected then at once deselected, in packets of 254, at most three packets unanswered,
+//! a round every half second, and asked again only after 30 s without an answer.
 
-use ferro_msg::msgs::{improved_terse_object_update, object_update};
+use ferro_msg::field_str;
+use ferro_msg::msgs::{
+    ObjectProperties, ObjectPropertiesFamily, improved_terse_object_update, object_update,
+};
 use glam::{Quat, Vec3};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// What an update says about where an object is.
@@ -294,6 +306,128 @@ struct Place {
     rotation: Quat,
 }
 
+/// What the region tells of an object when asked: who owns it, and its name.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Props {
+    /// Nil from ObjectPropertiesFamily, which does not carry it.
+    pub creator: Uuid,
+    /// The group, for an object deeded to a group.
+    pub owner: Uuid,
+    pub group: Uuid,
+    pub last_owner: Uuid,
+    pub name: String,
+    pub description: String,
+}
+
+/// The objects an ObjectProperties tells of (the ones the bot selected).
+pub fn from_properties(m: &ObjectProperties) -> Vec<(Uuid, Props)> {
+    m.object_data
+        .iter()
+        .map(|b| {
+            (
+                b.object_id,
+                Props {
+                    creator: b.creator_id,
+                    owner: b.owner_id,
+                    group: b.group_id,
+                    last_owner: b.last_owner_id,
+                    name: field_str(&b.name),
+                    description: field_str(&b.description),
+                },
+            )
+        })
+        .collect()
+}
+
+/// The object an ObjectPropertiesFamily tells of (RequestObjectPropertiesFamily's answer).
+pub fn from_family(m: &ObjectPropertiesFamily) -> (Uuid, Props) {
+    let b = &m.object_data;
+    (
+        b.object_id,
+        Props {
+            creator: Uuid::nil(),
+            owner: b.owner_id,
+            group: b.group_id,
+            last_owner: b.last_owner_id,
+            name: field_str(&b.name),
+            description: field_str(&b.description),
+        },
+    )
+}
+
+/// ObjectSelect packets of at most this many objects (Aurora's MAX_PER_PACKET and Area Search's
+/// PACKET).
+pub const SELECT_PACKET: usize = 254;
+/// At most this many objects asked about and not answered (Area Search's IN_FLIGHT).
+const SELECT_IN_FLIGHT: usize = SELECT_PACKET * 3;
+/// An object asked about and not answered for this long may be asked again (Area Search's
+/// TIMEOUT).
+const SELECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Between two rounds of requests (Area Search's snapshot every 500 ms).
+const SELECT_SPACING: Duration = Duration::from_millis(500);
+
+/// The objects whose properties the bot wants, and the pace at which it asks for them.
+#[derive(Debug, Default)]
+pub struct PropertyAsks {
+    /// Waiting their turn, by local id.
+    queue: VecDeque<u32>,
+    queued: HashSet<u32>,
+    /// Asked, and when.
+    sent: HashMap<u32, Instant>,
+    last_round: Option<Instant>,
+}
+
+impl PropertyAsks {
+    /// Ask about this object, unless it is already waiting (one asked and still unanswered is
+    /// skipped at its turn).
+    pub fn want(&mut self, local_id: u32) {
+        if self.queued.insert(local_id) {
+            self.queue.push_back(local_id);
+        }
+    }
+
+    pub fn answered(&mut self, local_id: u32) {
+        self.sent.remove(&local_id);
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// The objects to select now, at most one packet, or nothing when the last round was too
+    /// recent or too many are unanswered. `wanted` says whether one still needs asking (it may
+    /// have been answered or killed since).
+    pub fn round(&mut self, now: Instant, wanted: impl Fn(u32) -> bool) -> Vec<u32> {
+        if self.queue.is_empty()
+            || self
+                .last_round
+                .is_some_and(|t| now.saturating_duration_since(t) < SELECT_SPACING)
+        {
+            return Vec::new();
+        }
+        self.sent
+            .retain(|id, at| now.saturating_duration_since(*at) < SELECT_TIMEOUT && wanted(*id));
+        let room = SELECT_IN_FLIGHT
+            .saturating_sub(self.sent.len())
+            .min(SELECT_PACKET);
+        let mut out = Vec::new();
+        while out.len() < room {
+            let Some(id) = self.queue.pop_front() else {
+                break;
+            };
+            self.queued.remove(&id);
+            if wanted(id) && !self.sent.contains_key(&id) {
+                self.sent.insert(id, now);
+                out.push(id);
+            }
+        }
+        if !out.is_empty() {
+            self.last_round = Some(now);
+        }
+        out
+    }
+}
+
 /// Any object the region told of: its key, what it is linked to or sits on, its owner.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Known {
@@ -326,12 +460,14 @@ pub struct Worn {
 }
 
 /// A root object and where it stands (GetObjectsInParcel).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Root {
     pub full_id: Uuid,
     pub local_id: u32,
+    /// Its properties' owner once known, else its updates' (nil unless it has a sound).
     pub owner: Uuid,
     pub position: Vec3,
+    pub props: Option<Props>,
 }
 
 /// The places the bot keeps: the region's root objects and the avatars; and every object by its
@@ -349,6 +485,8 @@ pub struct Places {
     sculpts: HashSet<u32>,
     /// Their first name values, when they have one.
     labels: HashMap<u32, String>,
+    /// What ObjectProperties and ObjectPropertiesFamily told of them.
+    props: HashMap<u32, Props>,
 }
 
 impl Places {
@@ -366,6 +504,16 @@ impl Places {
                 && old.full_id != full_id
             {
                 self.by_key.remove(&old.full_id);
+                self.props.remove(&p.local_id);
+            }
+            // an update that names another owner than the properties: it changed hands
+            if let Some(owner) = p.owner.filter(|o| !o.is_nil())
+                && self
+                    .props
+                    .get(&p.local_id)
+                    .is_some_and(|props| props.owner != owner)
+            {
+                self.props.remove(&p.local_id);
             }
             self.known.insert(
                 p.local_id,
@@ -425,6 +573,41 @@ impl Places {
         }
         self.sculpts.remove(&local_id);
         self.labels.remove(&local_id);
+        self.props.remove(&local_id);
+    }
+
+    /// An object's properties, from the region; its local id when the object is known.
+    pub fn set_props(&mut self, key: Uuid, props: Props) -> Option<u32> {
+        let local_id = *self.by_key.get(&key)?;
+        self.props.insert(local_id, props);
+        Some(local_id)
+    }
+
+    /// A root object (not an avatar, nor anything attached or linked) whose properties the bot
+    /// does not know yet: its local id.
+    pub fn unnamed_root(&self, key: Uuid) -> Option<u32> {
+        let id = *self.by_key.get(&key)?;
+        self.lacks_props(id).then_some(id)
+    }
+
+    /// Whether this object is a known root without properties yet.
+    pub fn lacks_props(&self, local_id: u32) -> bool {
+        self.known.get(&local_id).is_some_and(|k| k.parent == 0)
+            && !self.avatars.contains(&local_id)
+            && !self.props.contains_key(&local_id)
+    }
+
+    /// The best known owner: the properties', else the updates'.
+    fn owner_of(&self, k: &Known) -> Uuid {
+        self.props.get(&k.local_id).map_or(k.owner, |p| p.owner)
+    }
+
+    /// The first name value, else the properties' name.
+    fn name_of(&self, local_id: u32) -> Option<String> {
+        self.labels
+            .get(&local_id)
+            .cloned()
+            .or_else(|| self.props.get(&local_id).map(|p| p.name.clone()))
     }
 
     pub fn clear(&mut self) {
@@ -435,10 +618,12 @@ impl Places {
         self.own = None;
         self.sculpts.clear();
         self.labels.clear();
+        self.props.clear();
     }
 
     /// The sculpted prims (SecondBot's ListSculptys): each by itself, or by its linkset's root
-    /// when the root is known (its key, owner, name and place).
+    /// when the root is known (its key, owner, name and place). The name is the first name value,
+    /// as SecondBot's, else the properties' name; the owner the properties', else the updates'.
     pub fn sculpts(&self) -> Vec<Sculpt> {
         self.sculpts
             .iter()
@@ -446,8 +631,8 @@ impl Places {
                 let k = self.known.get(id)?;
                 let own = Sculpt {
                     linked: false,
-                    name: self.labels.get(id).cloned(),
-                    owner: k.owner,
+                    name: self.name_of(*id),
+                    owner: self.owner_of(k),
                     key: k.full_id,
                     position: self.objects.get(id).map_or(k.position, |o| o.position),
                 };
@@ -460,8 +645,8 @@ impl Places {
                 Some(Sculpt {
                     linked: true,
                     // SecondBot keeps the prim's own name when the root has none
-                    name: self.labels.get(&k.parent).cloned().or(own.name),
-                    owner: root.owner,
+                    name: self.name_of(k.parent).or(own.name),
+                    owner: self.owner_of(root),
                     key: root.full_id,
                     position: self
                         .objects
@@ -502,11 +687,12 @@ impl Places {
             .filter(|(id, _)| !self.avatars.contains(id))
             .filter_map(|(id, o)| {
                 let k = self.known.get(id)?;
-                (o.parent == 0).then_some(Root {
+                (o.parent == 0).then(|| Root {
                     full_id: k.full_id,
                     local_id: *id,
-                    owner: k.owner,
+                    owner: self.owner_of(k),
                     position: o.position,
+                    props: self.props.get(id).cloned(),
                 })
             })
             .collect()
@@ -826,5 +1012,159 @@ mod tests {
         );
         assert_eq!(first_name_value(""), None);
         assert_eq!(first_name_value("Odd"), None);
+    }
+
+    fn props(owner: u128, name: &str) -> Props {
+        Props {
+            owner: Uuid::from_u128(owner),
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn properties_name_and_own_the_roots() {
+        let mut places = Places::default();
+        let (lamp, owner) = (Uuid::from_u128(3), Uuid::from_u128(0x0e));
+        places.update(&full(3, lamp, 0, false, Vec3::new(5.0, 6.0, 7.0)), AGENT);
+        places.update(&full(4, Uuid::from_u128(4), 3, false, Vec3::ONE), AGENT);
+        places.update(&full(7, AGENT, 0, true, Vec3::ONE), AGENT);
+        // only the root, not its child nor an avatar, is asked about
+        assert_eq!(places.unnamed_root(lamp), Some(3));
+        assert_eq!(places.unnamed_root(Uuid::from_u128(4)), None);
+        assert_eq!(places.unnamed_root(AGENT), None);
+        assert_eq!(places.roots()[0].owner, Uuid::nil());
+
+        let m = ObjectProperties {
+            object_data: vec![ferro_msg::msgs::object_properties::ObjectData {
+                object_id: lamp,
+                creator_id: Uuid::from_u128(0xc),
+                owner_id: owner,
+                name: b"Lamp\0".to_vec(),
+                description: b"A lamp\0".to_vec(),
+                ..Default::default()
+            }],
+        };
+        let [(key, p)] = &from_properties(&m)[..] else {
+            panic!("one object");
+        };
+        assert_eq!(
+            (p.name.as_str(), p.description.as_str()),
+            ("Lamp", "A lamp")
+        );
+        assert_eq!(places.set_props(*key, p.clone()), Some(3));
+        assert_eq!(places.unnamed_root(lamp), None);
+        let root = &places.roots()[0];
+        assert_eq!(root.owner, owner);
+        assert_eq!(
+            root.props.as_ref().map(|p| p.creator),
+            Some(Uuid::from_u128(0xc))
+        );
+        // an object never seen is not kept
+        assert_eq!(places.set_props(Uuid::from_u128(99), props(1, "x")), None);
+
+        // an update naming the same owner keeps them, another owner drops them
+        let mut same = full(3, lamp, 0, false, Vec3::ZERO);
+        same.owner = Some(owner);
+        places.update(&same, AGENT);
+        assert!(places.roots()[0].props.is_some());
+        let mut sold = same.clone();
+        sold.owner = Some(Uuid::from_u128(0x0f));
+        places.update(&sold, AGENT);
+        assert_eq!(places.roots()[0].props, None);
+        assert_eq!(places.roots()[0].owner, Uuid::from_u128(0x0f));
+
+        // a local id given to another object forgets them, and so does a kill
+        places.set_props(lamp, props(0x0e, "Lamp"));
+        places.update(&full(3, Uuid::from_u128(5), 0, false, Vec3::ZERO), AGENT);
+        assert_eq!(places.roots()[0].props, None);
+        places.set_props(Uuid::from_u128(5), props(0x0e, "Box"));
+        places.kill(3);
+        assert!(!places.props.contains_key(&3));
+    }
+
+    #[test]
+    fn a_family_answer() {
+        let mut m = ObjectPropertiesFamily::default();
+        m.object_data.object_id = Uuid::from_u128(3);
+        m.object_data.owner_id = Uuid::from_u128(0x0e);
+        m.object_data.group_id = Uuid::from_u128(0x6);
+        m.object_data.name = b"Sign\0".to_vec();
+        let (key, p) = from_family(&m);
+        assert_eq!(key, Uuid::from_u128(3));
+        assert_eq!(p.creator, Uuid::nil());
+        assert_eq!(
+            (p.owner, p.group),
+            (Uuid::from_u128(0x0e), Uuid::from_u128(0x6))
+        );
+        assert_eq!(p.name, "Sign");
+    }
+
+    #[test]
+    fn sculpties_take_their_roots_properties() {
+        let mut places = Places::default();
+        places.update(&full(3, Uuid::from_u128(3), 0, false, Vec3::ONE), AGENT);
+        let b = object_update::ObjectData {
+            id: 4,
+            full_id: Uuid::from_u128(4),
+            parent_id: 3,
+            p_code: 9,
+            object_data: vec![0; 60],
+            extra_params: sculpt_params(1),
+            ..Default::default()
+        };
+        places.update(&from_full(&b).expect("a sculpted child"), AGENT);
+        assert_eq!(places.sculpts()[0].name, None);
+        places.set_props(Uuid::from_u128(3), props(0x0e, "Bench"));
+        let s = &places.sculpts()[0];
+        assert_eq!(
+            (s.name.as_deref(), s.owner),
+            (Some("Bench"), Uuid::from_u128(0x0e))
+        );
+    }
+
+    #[test]
+    fn asks_are_paced() {
+        let mut asks = PropertyAsks::default();
+        let t0 = Instant::now();
+        for id in 0..1000 {
+            asks.want(id);
+        }
+        // asked twice, queued once
+        asks.want(0);
+        let first = asks.round(t0, |_| true);
+        assert_eq!(first.len(), SELECT_PACKET);
+        assert_eq!(first[0], 0);
+        // too soon for another round
+        assert!(
+            asks.round(t0 + Duration::from_millis(100), |_| true)
+                .is_empty()
+        );
+        let mut t = t0;
+        let mut sent = first.len();
+        for _ in 0..5 {
+            t += SELECT_SPACING;
+            sent += asks.round(t, |_| true).len();
+        }
+        // no more than three packets unanswered
+        assert_eq!(sent, SELECT_IN_FLIGHT);
+        // answers make room
+        for id in 0..10 {
+            asks.answered(id);
+        }
+        t += SELECT_SPACING;
+        assert_eq!(asks.round(t, |_| true).len(), 10);
+        // objects answered or gone meanwhile are skipped, and free their place
+        t += SELECT_SPACING;
+        let next = asks.round(t, |id| id % 2 == 0);
+        assert!(!next.is_empty() && next.iter().all(|id| id % 2 == 0));
+        // an object asked and never answered is asked again after the timeout
+        let mut asks = PropertyAsks::default();
+        asks.want(7);
+        assert_eq!(asks.round(t0, |_| true), vec![7]);
+        asks.want(7);
+        assert!(asks.round(t0 + SELECT_SPACING, |_| true).is_empty());
+        asks.want(7);
+        assert_eq!(asks.round(t0 + SELECT_TIMEOUT, |_| true), vec![7]);
     }
 }

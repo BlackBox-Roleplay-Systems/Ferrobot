@@ -253,6 +253,10 @@ struct Session<'a> {
     mute_xfer: Option<crate::mutes::XferDownload>,
     /// Where the region's root objects and the bot's avatar stand (the object updates).
     places: crate::objects::Places,
+    /// Root objects whose properties are to be asked for, and the pace of the asking.
+    property_asks: crate::objects::PropertyAsks,
+    /// Those who wait for properties: the objects still unanswered.
+    property_waits: Vec<(HashSet<u32>, oneshot::Sender<()>)>,
     /// Protected assets being downloaded (TransferRequest).
     transfers: crate::transfer::Transfers,
 }
@@ -841,6 +845,9 @@ impl Session<'_> {
         self.region_name.clear();
         self.caps.clear();
         self.places.clear();
+        self.property_asks.clear();
+        // the objects asked about stayed behind: their waits end
+        self.settle_property_waits();
         self.transfers.clear();
         {
             let mut st = self.shared.state_mut();
@@ -1114,7 +1121,9 @@ impl Session<'_> {
             self.last_update = now;
             self.send_agent_update();
         }
+        self.ask_properties(now);
         // callers that gave up waiting
+        self.property_waits.retain(|(_, reply)| !reply.is_closed());
         self.name_waits.retain(|(_, reply)| !reply.is_closed());
         self.picker_waits.retain(|_, reply| !reply.is_closed());
         self.groups.retain_open();
@@ -1256,6 +1265,12 @@ impl Session<'_> {
                 .filter_map(crate::objects::from_terse)
                 .collect();
             self.on_places(&placed);
+        } else if id == ObjectProperties::ID {
+            let m: ObjectProperties = pkt.decode()?;
+            self.on_properties(crate::objects::from_properties(&m));
+        } else if id == ObjectPropertiesFamily::ID {
+            let m: ObjectPropertiesFamily = pkt.decode()?;
+            self.on_properties(vec![crate::objects::from_family(&m)]);
         } else if id == TransferInfo::ID || id == TransferPacket::ID || id == TransferAbort::ID {
             self.on_transfer(pkt)?;
         } else if id == KillObject::ID {
@@ -1263,6 +1278,7 @@ impl Session<'_> {
             for o in &m.object_data {
                 self.places.kill(o.id);
             }
+            self.settle_property_waits();
             let avatars = self.places.avatar_positions();
             self.shared.state_mut().avatars = avatars;
         } else if id == AvatarPropertiesReply::ID {
@@ -1929,6 +1945,8 @@ async fn run(
         profile_waits: Default::default(),
         parcel_waits: Default::default(),
         places: Default::default(),
+        property_asks: Default::default(),
+        property_waits: Vec::new(),
         transfers: Default::default(),
         appearance_asked: false,
         created: HashMap::new(),

@@ -817,7 +817,7 @@ mod api {
         assert_eq!(
             sculpts,
             serde_json::json!([{
-                "name": "?",
+                "name": ferro_testgrid::OBJECT_NAME,
                 "isLinked": "True",
                 "owner": who,
                 "uuid": ferro_testgrid::OBJECT.to_string(),
@@ -2811,17 +2811,46 @@ mod api {
             "Unable to see object"
         );
 
-        // the objects on the parcel: the linkset's root
+        // the objects on the parcel: the linkset's root, its owner and name asked of the region
+        // (selected, then deselected at once), as its updates do not name them
         let listed: Value =
             serde_json::from_str(&api.reply("GetObjectsInParcel", &[]).await).expect("json");
+        let owner = ferro_testgrid::OBJECT_OWNER.to_string();
+        let creator = ferro_testgrid::OBJECT_CREATOR.to_string();
+        let expected = serde_json::json!([{
+            "ID": object.to_string(),
+            "LocalID": local,
+            "OwnerID": owner,
+            "Position": {"X": 100, "Y": 120, "Z": 22},
+            "Properties": {
+                "ObjectID": object.to_string(),
+                "CreatorID": creator,
+                "OwnerID": owner,
+                "GroupID": uuid::Uuid::nil().to_string(),
+                "LastOwnerID": creator,
+                "Name": ferro_testgrid::OBJECT_NAME,
+                "Description": "Two prims",
+            },
+        }]);
+        assert_eq!(listed, expected);
+        assert!(grid.wait_for(WAIT, did(format!("deselect {local}"))).await);
+        // known now: not asked again
+        let again: Value =
+            serde_json::from_str(&api.reply("GetObjectsInParcel", &[]).await).expect("json");
+        assert_eq!(again, expected);
         assert_eq!(
-            listed,
-            serde_json::json!([{
-                "ID": object.to_string(),
-                "LocalID": local,
-                "OwnerID": uuid_from(0x5eed_0001).to_string(),
-                "Position": {"X": 100, "Y": 120, "Z": 22},
-            }])
+            grid.count(|s| matches!(s, Seen::Object { what } if what.starts_with("select"))),
+            1
+        );
+        assert_eq!(
+            grid.seen()
+                .iter()
+                .filter_map(|s| match s {
+                    Seen::Object { what } if what.contains("select") => Some(what.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [format!("select {local}"), format!("deselect {local}")]
         );
 
         // items into it: a script by RezScript, anything else into its contents

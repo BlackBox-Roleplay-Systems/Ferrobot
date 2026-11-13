@@ -120,7 +120,8 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `InventoryContentsCatched` (the whole tree, fetched when asked: Ferrobot keeps no cache),
 `InventoryPreloadCount`, `InventoryPreloadDone` (always "Ready": Ferrobot fetches on demand),
 `SetInventoryUpdate` (a target hears of each item of a type that comes into the inventory);
-`SetPermFlag` (SecondBot's answer, no effect, as SecondBot's); `ListSculptys`;
+`SetPermFlag` (SecondBot's answer, no effect, as SecondBot's); `ListSculptys` (owners and names
+asked of the region);
 `FetchNextNotecard` (StreamAdmin's next notecard, sent); notecards: `NotecardAdd`,
 `NotecardClear`, `NotecardSend`, `NotecardDirectSend`, `NotecardRead` (the text to a reply target); `Teleport`, `TeleportSLURL`,
 `SendTeleportLure`, `RequestTeleport`, `Key2Name`, `GetDisplayName`, `Nearme`, `Friendslist`,
@@ -143,7 +144,8 @@ manager): `EstateKickUser`, `EstateTeleportHomeUser`, `AddEstateManager`, `Remov
 avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileImage`,
 `SetProfileAbout`, `SetProfileImage`; objects: `RezObject`, `RezObjectOnPos`, `RezObjectParcelCenter`,
 `AsyncRezObject`, `AsyncRezObjectOnPos`, `AsyncRezObjectParcelCenter`, `ClickObject`, `UnRezObject`,
-`GetObjectsInParcel`, `TransferInventoryToObject`, `AsyncTransferInventoryToObject`; what it wears:
+`GetObjectsInParcel` (with each object's owner and name, asked of the region),
+`TransferInventoryToObject`, `AsyncTransferInventoryToObject`; what it wears:
 `Attach`, `Detach`, `SwapOutfit`, `SwapOutfitByPath`, `Outfit`; movement: `Fly`,
 `SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
 `RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
