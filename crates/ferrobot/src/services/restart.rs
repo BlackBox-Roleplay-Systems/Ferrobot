@@ -3,10 +3,10 @@
 //! loop). Second Life gives a few minutes' notice; the teleport goes at once.
 
 use ferro_client::{Client, Event};
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
-pub async fn run(client: Client) {
-    let mut events = client.subscribe();
+pub async fn run(client: Client, mut events: Receiver<Event>) {
     loop {
         match events.recv().await {
             Ok(Event::RegionRestart { seconds, .. }) => {

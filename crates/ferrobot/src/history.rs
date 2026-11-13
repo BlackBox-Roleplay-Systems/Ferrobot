@@ -10,6 +10,7 @@ use ferro_client::events::{chat_type, dialog};
 use ferro_client::{Client, Event};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
@@ -158,8 +159,7 @@ fn notice_group(bucket: &[u8], id: Uuid) -> Uuid {
 }
 
 /// Fill the history from the client's events (DataStoreService's ChatFromSim and ImEvent).
-pub async fn run(client: Client, history: Arc<History>) {
-    let mut events = client.subscribe();
+pub async fn run(client: Client, mut events: Receiver<Event>, history: Arc<History>) {
     loop {
         match events.recv().await {
             Ok(Event::Chat(c)) => {

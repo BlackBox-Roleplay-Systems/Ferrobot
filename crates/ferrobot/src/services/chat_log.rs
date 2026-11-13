@@ -2,10 +2,10 @@
 
 use ferro_client::events::{chat_type, dialog};
 use ferro_client::{Client, Event};
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
-pub async fn run(client: Client) {
-    let mut events = client.subscribe();
+pub async fn run(client: Client, mut events: Receiver<Event>) {
     loop {
         match events.recv().await {
             Ok(Event::Chat(c)) => {

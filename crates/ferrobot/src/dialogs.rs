@@ -13,6 +13,7 @@ use ferro_client::{Client, Event, ScriptDialog};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
@@ -170,9 +171,13 @@ fn form_encode(s: &str) -> String {
 }
 
 /// Keep each dialog and relay it.
-pub async fn run(client: Client, dialogs: Arc<Dialogs>, secret: Option<String>) {
+pub async fn run(
+    client: Client,
+    mut events: Receiver<Event>,
+    dialogs: Arc<Dialogs>,
+    secret: Option<String>,
+) {
     let http = reqwest::Client::new();
-    let mut events = client.subscribe();
     loop {
         match events.recv().await {
             Ok(Event::ScriptDialog(d)) => {

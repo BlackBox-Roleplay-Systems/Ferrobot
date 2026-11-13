@@ -11,6 +11,7 @@ use glam::Vec3;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
 const CHECK_EVERY: Duration = Duration::from_secs(5);
@@ -88,8 +89,7 @@ async fn go(client: &Client, place: &Place, why: &str) -> bool {
     }
 }
 
-pub async fn run(client: Client, s: Settings, hb: Arc<Homebound>) {
-    let mut events = client.subscribe();
+pub async fn run(client: Client, mut events: Receiver<Event>, s: Settings, hb: Arc<Homebound>) {
     let mut check = tokio::time::interval(CHECK_EVERY);
     let mut away_since: Option<Instant> = None;
     let mut last_teleport: Option<Instant> = None;

@@ -16,6 +16,7 @@ use crate::masters::Masters;
 use ferro_client::events::{chat_type, dialog};
 use ferro_client::{Event, InstantMessage};
 use std::sync::Arc;
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
@@ -220,9 +221,8 @@ async fn on_im(ctx: Ctx, masters: Arc<Masters>, settings: Arc<Settings>, im: Ins
     }
 }
 
-pub async fn run(ctx: Ctx, masters: Arc<Masters>, settings: Settings) {
+pub async fn run(ctx: Ctx, mut events: Receiver<Event>, masters: Arc<Masters>, settings: Settings) {
     let settings = Arc::new(settings);
-    let mut events = ctx.client.subscribe();
     loop {
         match events.recv().await {
             Ok(Event::InstantMessage(im))

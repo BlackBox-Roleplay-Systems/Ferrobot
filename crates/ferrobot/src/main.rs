@@ -59,12 +59,15 @@ async fn main() -> std::process::ExitCode {
         }
     };
     let (client, mut network) = Client::new(http.clone());
-    tokio::spawn(services::chat_log::run(client.clone()));
+    // Each service's subscription is made here, before its task runs and before the login: a
+    // task that subscribed when it first ran could miss the first events after the login.
+    tokio::spawn(services::chat_log::run(client.clone(), client.subscribe()));
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
     let homebound = std::sync::Arc::new(services::homebound::Homebound::default());
     tokio::spawn(services::interactions::run(
         client.clone(),
+        client.subscribe(),
         masters.clone(),
         cfg.interactions,
         homebound.clone(),
@@ -74,25 +77,32 @@ async fn main() -> std::process::ExitCode {
             log::info!("homebound to {}", settings.home.region);
             tokio::spawn(services::homebound::run(
                 client.clone(),
+                client.subscribe(),
                 settings,
                 homebound.clone(),
             ));
         }
         // without homebound, a restart sends the bot to its Second Life home
         None => {
-            tokio::spawn(services::restart::run(client.clone()));
+            tokio::spawn(services::restart::run(client.clone(), client.subscribe()));
         }
     }
     let history = std::sync::Arc::new(history::History::default());
-    tokio::spawn(history::run(client.clone(), history.clone()));
+    tokio::spawn(history::run(
+        client.clone(),
+        client.subscribe(),
+        history.clone(),
+    ));
     tokio::spawn(services::relays::run(
         client.clone(),
+        client.subscribe(),
         cfg.relays.clone(),
         cfg.shared_secret.clone(),
     ));
     let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));
     tokio::spawn(dialogs::run(
         client.clone(),
+        client.subscribe(),
         dialogs.clone(),
         cfg.shared_secret.clone(),
     ));
@@ -107,6 +117,7 @@ async fn main() -> std::process::ExitCode {
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(
             ctx.clone(),
+            client.subscribe(),
             masters.clone(),
             services::im_commands::Settings {
                 secret: cfg.shared_secret.clone(),

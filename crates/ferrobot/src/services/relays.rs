@@ -15,6 +15,7 @@ use crate::api::signing::sign_with;
 use ferro_client::events::{chat_type, dialog};
 use ferro_client::{Client, Event};
 use serde::Serialize;
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
@@ -223,14 +224,18 @@ async fn display_name(client: &Client, id: Uuid) -> String {
     }
 }
 
-pub async fn run(client: Client, relays: Vec<Relay>, secret: Option<String>) {
+pub async fn run(
+    client: Client,
+    mut events: Receiver<Event>,
+    relays: Vec<Relay>,
+    secret: Option<String>,
+) {
     if relays.is_empty() {
         return;
     }
     log::info!("{} relays", relays.len());
     let http = reqwest::Client::new();
     let secret = secret.unwrap_or_default();
-    let mut events = client.subscribe();
     loop {
         let heard = match events.recv().await {
             Ok(Event::Chat(c)) => {

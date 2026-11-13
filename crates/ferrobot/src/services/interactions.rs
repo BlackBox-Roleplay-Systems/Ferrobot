@@ -18,6 +18,7 @@ use crate::services::homebound::Homebound;
 use ferro_client::events::dialog;
 use ferro_client::{Client, Event, InstantMessage};
 use std::sync::Arc;
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,8 +179,13 @@ async fn on_offer(
     }
 }
 
-pub async fn run(client: Client, masters: Arc<Masters>, rules: Rules, homebound: Arc<Homebound>) {
-    let mut events = client.subscribe();
+pub async fn run(
+    client: Client,
+    mut events: Receiver<Event>,
+    masters: Arc<Masters>,
+    rules: Rules,
+    homebound: Arc<Homebound>,
+) {
     loop {
         match events.recv().await {
             Ok(Event::InstantMessage(im)) => {
