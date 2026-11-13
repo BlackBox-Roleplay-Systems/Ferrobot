@@ -8,7 +8,7 @@
 # service is http://ferrobot:80.
 services:
   ferrobot:
-    image: ghcr.io/kanikabreed/ferrobot:latest
+    image: ghcr.io/blackbox-roleplay-systems/ferrobot:latest
     restart: unless-stopped
     env_file: ferrobot.env
     stop_grace_period: 20s   # time to log out of Second Life
