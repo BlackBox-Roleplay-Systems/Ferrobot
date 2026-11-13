@@ -49,6 +49,12 @@ All settings come from environment variables.
 | `FERRO_DISCORD_HIDE_NAMES` | `false` | Lines sent to Second Life without the Discord user's name |
 | `FERRO_DISCORD_CLEAR_ON_CONNECT` | `true` | The bot's channels emptied when it connects (`commands` kept) |
 | `FERRO_DISCORD_INTERACTION`, `…_NAME`, `…_URL`, `…_CHANNEL` | `false`, `Go` | A message starting with the word, in that channel, posted to the address (signed) |
+| `FERRO_RABBIT` | `false` | RabbitMQ: the bot on an AMQP broker (see "RabbitMQ" below) |
+| `FERRO_RABBIT_HOST`, `FERRO_RABBIT_PORT` | `127.0.0.1`, `5672` | The broker (`5671` by default with TLS) |
+| `FERRO_RABBIT_USERNAME`, `FERRO_RABBIT_PASSWORD` | `guest`, `guest` | Its account (the password is a secret, never logged) |
+| `FERRO_RABBIT_VHOST` | `/` | Its virtual host |
+| `FERRO_RABBIT_TLS` | `false` | amqps: TLS, the certificate checked as for HTTPS |
+| `FERRO_RABBIT_NOTECARD_QUEUE`, `…_COMMAND_QUEUE`, `…_IM_QUEUE`, `…_GROUP_IM_QUEUE` | `notecards`, `commands`, `ims`, `groupims` | The queues the bot reads (signed messages only) |
 | `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
@@ -68,7 +74,9 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `discord_Enabled`, `discord_ServerID`, `discord_ClientToken`, `discord_AllowDiscordCommands`,
 `discord_hideChatterName`, `discord_ClearChatOnConnect`, `discord_InteractionEnabled`,
 `discord_InteractionCommandName`, `discord_InteractionHttpTarget`,
-`discord_InteractionChannelNumber`, and the relays:
+`discord_InteractionChannelNumber`, `rabbit_Enabled`, `rabbit_HostIP`, `rabbit_HostPort`,
+`rabbit_HostUsername`, `rabbit_HostPassword`, `rabbit_NotecardQueue`, `rabbit_CommandQueue`,
+`rabbit_ImQueue`, `rabbit_GroupImQueue`, and the relays:
 `relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
 `relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
 `relay_<n>_target_option`, `relay_<n>_RelayConfig`.
@@ -100,8 +108,8 @@ What the bot hears, sent on (SecondBot's RelayService). Sources: `localchat` (fi
 `object`, `system`, `ownersay`, or a key), `avatar` (IMs; filter: the sender's key), `object`
 (objects' IMs; filter: the owner's key), `group` (group chat; filter: the group's name or key).
 Targets: `localchat` (a channel), `avatar` (a key), `group` (a key), `http` (SecondBot's signed
-POST to `<url>/Relay/Service`), `webhook` (a JSON `{"content": …}` POST, as a Discord webhook
-takes it). Relayed lines are marked `{Relay}` and never relayed again. The `FERRO_*` name
+POST to `<url>/Relay/Service`), `rabbit` (a RabbitMQ queue, by name; RabbitMQ on), `webhook` (a
+JSON `{"content": …}` POST, as a Discord webhook takes it). Relayed lines are marked `{Relay}` and never relayed again. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
 
 ### Grants
@@ -115,6 +123,31 @@ name), `teleport`, `inventory`, `animation` (that avatar's objects may animate t
 more), and `command`: the avatar's IMs run as commands without a signature, as a master's do,
 except `SetPermFlag`, `AcceptNext` and `AddToAllowAnimations`, so that a grant cannot grow or pass
 itself on (its objects still sign). SecondBot's SetPermFlag answers the same and does nothing.
+
+### RabbitMQ
+
+The bot on an AMQP 0-9-1 broker (RabbitMQ), as SecondBot's RabbitService. It publishes there:
+`SendMessageToQ` and the relays' `rabbit` target, each message to a queue by its name (declared
+first, durable, as SecondBot does). It reads SecondBot's four queues, JSON messages with
+SecondBot's field names:
+
+| Queue | Message | What the bot does |
+|---|---|---|
+| `notecards` | `{"Name", "Subject", "Content", "UUID"}` | Makes the notecard and gives it to that avatar |
+| `commands` | `{"CommandName", "CommandArgs": […]}` | Runs the command (no answer is sent) |
+| `ims` | `{"UUID", "Message"}` | The `IM` command (an avatar's key or name) |
+| `groupims` | `{"UUID", "Message"}` | The `Groupchat` command (a group's key) |
+
+Unlike SecondBot, **every message read must be signed** with the shared secret, as a command by
+IM: a `Signing` field = sha1(name + arguments joined with `~#~` + secret), where the name and
+arguments are the command's for `commands`, `IM` with UUID and Message for `ims`, `Groupchat`
+with UUID and Message for `groupims`, `Notecard` with Name, Subject, Content and UUID for
+`notecards`. With `FERRO_ENFORCE_TIME_WINDOW` on, a `Unixtime` field goes in the signature after
+the arguments and the message must be recent. Unsigned messages are dropped (and logged); without
+a shared secret the queues are not read at all. Each message is taken once, never run twice.
+
+The broker may be down: the bot logs in and works as ever, publishing fails at once ("Connection
+is not open"), and it connects again, waiting longer each time (up to a minute).
 
 ### SecondBot's HTTP API
 
@@ -178,7 +211,8 @@ it leaves the region), `FollowStop` (`AutoPilotStop` stops a walk and a follow t
 `Discord_MembersList`, `Discord_MessageChannel`, `Discord_MuteMember`, `Discord_Role_GetSettings`,
 `Discord_Role_UpdatePerms`, `Discord_RoleCreate`, `Discord_RoleList`, `Discord_RoleRemove`,
 `Discord_TextChannels_List`, `Discord_VoiceJoin`, `Discord_VoiceLeave`; its dialog commands:
-`DialogResponce`, `DialogRelayChatTarget`, `DialogRelayAvatarTarget`, `DialogRelayHttpTarget`.
+`DialogResponce`, `DialogRelayChatTarget`, `DialogRelayAvatarTarget`, `DialogRelayHttpTarget`;
+RabbitMQ: `SendMessageToQ`.
 
 An empty argument cannot be sent in the form: `args` is split on `~#~` with the empty parts left
 out, before the signature is checked, as SecondBot does (so `a~#~` is the one argument `a`, and a
