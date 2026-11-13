@@ -6101,6 +6101,31 @@ async fn rlv_objects_drive_the_bot() {
     say("@getstatusall=36");
     said(&grid, &bot, 36, "/fly").await;
 
+    // the hat worn again from its folder, then that folder taken off from the hat itself
+    say("@attach:hats=force");
+    let hat_on = format!("attach {} pt 0", inv::HAT);
+    wait_for(
+        &grid,
+        &bot,
+        "the hat worn again",
+        |s| matches!(s, Seen::Object { what } if *what == hat_on),
+    )
+    .await;
+    say("@getattach:chest=37");
+    said(&grid, &bot, 37, "1").await;
+    say("@detachallthis=force");
+    assert!(
+        grid.wait_until(WAIT, |seen| {
+            seen.iter()
+                .filter(|s| matches!(s, Seen::Object { what } if *what == hat_off))
+                .count()
+                == 2
+        })
+        .await,
+        "{}",
+        bot.log()
+    );
+
     // teleports: a region by name, then global coordinates
     say("@tpto:Second Region/10/20/30=force");
     let second = grid.region_handle(ferro_testgrid::SECOND_REGION);

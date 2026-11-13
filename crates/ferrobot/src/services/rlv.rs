@@ -310,16 +310,22 @@ async fn act(ctx: &Ctx, rules: &Rules, a: Action) -> Result<(), ClientError> {
             let Some(w) = worn.iter().find(|w| w.object == object) else {
                 return Ok(());
             };
-            let Some(item) = client.inventory_item(w.item).await? else {
+            // its folder in #RLV, as the viewer: SecondBot takes any folder, the root of the
+            // inventory too, and all under it
+            let Some(tree) = Tree::shared(client).await? else {
                 return Ok(());
             };
-            let tree = Tree::fetch(client, item.parent, "").await?;
-            take_off(
-                client,
-                rules,
-                tree.items(0, true, false).iter().map(|i| i.id),
-            )
-            .await
+            match tree.folder_of(w.item) {
+                Some(n) => {
+                    take_off(
+                        client,
+                        rules,
+                        tree.items(n, true, false).iter().map(|i| i.id),
+                    )
+                    .await
+                }
+                None => Ok(()),
+            }
         }
         Action::RemOutfit { layer } => {
             let Some(t) = rlv::layer(&layer) else {

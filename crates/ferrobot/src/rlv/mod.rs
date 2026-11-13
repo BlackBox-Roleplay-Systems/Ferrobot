@@ -22,6 +22,8 @@
 //! - @findfolder and @findfolders find folders whose name holds every word, as the viewer
 //!   (Aurora's RLVa), and answer their paths (SecondBot compares the words with whole folder names
 //!   and answers a bare name);
+//! - @detachallthis takes off what came from the asking attachment's folder only when that
+//!   folder is in #RLV, as the viewer (SecondBot's takes any folder and all under it);
 //! - the restrictions of an object gone from the region are dropped every 2 minutes, as
 //!   SecondBot's cleanup timer meant to (it is never started there).
 
@@ -259,7 +261,8 @@ pub enum Action {
     Detach { what: String },
     /// @detachall:<folder>=force: the items of a folder and its subfolders.
     DetachAll { folder: String },
-    /// @detachallthis=force: the items of the folder the asking attachment came from.
+    /// @detachallthis=force: the items of the folder in #RLV the asking attachment came from,
+    /// and of its subfolders.
     DetachThis { object: Uuid },
     /// @remoutfit:<layer>=force.
     RemOutfit { layer: String },
