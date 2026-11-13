@@ -433,8 +433,33 @@ baking: the bot says so and goes on.
   the bot (SecondBot runs `Logoff` for a missing step); no default "exitplease"; the answer's Key
   is true when a step ran (SecondBot's is always false); the caller's reply target gets the
   summary
-- 🔧 SecondBot's EventsService (group members, guests, sim and parcel changes, alerts, status,
-  money) and TriggerOnEventService (commands run on events)
+- 🟡 SecondBot's EventsService (services/events.rs, event_output.rs; its EventsService.cs and
+  EventsConfig.cs, its settings under their names and FERRO_EVENTS_*): GroupMembership (a group's
+  members compared every 120 s), GuestTracking (the region's avatars every 30 s while the bot is on
+  the parcel named), ChangedSim, ChangedParcel, AlertMessage, StatusMessage, MoneyEvent, as its
+  OnEvent JSON and hash, to a channel, an avatar and a signed POST to `<address>/Event/Service`;
+  the inventory updates now send through the same code. The client reports every AlertMessage
+  and AgentAlertMessage with its notification's name (LibreMetaverse's AlertMessage) and every
+  MoneyBalanceReply with its transaction (Aurora's MoneyTransaction), and finds the parcel at a
+  place (`Client::parcel_at`). Tested on the test grid (alerts, payments, members joining and
+  leaving added to it). Deliberate differences: `lastsim` is the region left (SecondBot's lags one
+  change behind), the parcel is followed with ChangeParcel off, StatusMessage tells Ferrobot's
+  state ("In world: …", "Disconnected: …") rather than SecondBot's list of services
+- 🟡 SecondBot's TriggerOnEventService (on_event.rs, services/on_event.rs; its
+  TriggerOnEventService.cs and OnEventConfig.cs, onevent_* and FERRO_ON_EVENT_*): AvatarIm,
+  SimAlert, BalanceUpdate, GroupMemberJoin/Leave, ChangeSim, GuestJoins/Leaves, Clock; Monitor,
+  Where conditions and their operators, the values, lockouts, WaitSecsToStart, DebugMe; the
+  actions run through the commands' dispatcher under the rate limit; tested on the test grid.
+  Deliberate differences: an event's values fill only the arguments they stand in (SecondBot
+  replaces in the whole action before reading it: an IM's `~#~` or `#|#` added arguments or a
+  reply target) and go in one pass; the command's name never takes a value; IS_UUID, IS_EVEN and
+  DIVISIBLE work (SecondBot's list misspells or omits them); a condition without an operator
+  leaves its event out (SecondBot drops the condition); an AvatarIm Monitor that is a key watches
+  that avatar (SecondBot refuses keys and watches everyone); botx/boty/botz are the bot's (the
+  avatar's in SecondBot); GuestLeaves places the avatar where it was last seen (SecondBot's never
+  matches); the clock is UTC
+- ⬜ Events and commands on events: to check on the grid (human); events_HideStatusOutput and
+  onevent_HideStatusOutput are not read (Ferrobot has no status page)
 
 ## Phase 8 - Running it for real
 

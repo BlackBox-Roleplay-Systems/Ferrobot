@@ -33,6 +33,20 @@ All settings come from environment variables.
 | `FERRO_ACCEPT_FRIENDS`, `FERRO_FRIEND_LEVEL` | `true`, `Owner` | Friendship offers (`Friends` does not apply) |
 | `FERRO_INTERACTION_EVENTS` | `false` | Each offer told as SecondBot's interaction JSON (accepted or not, why), and the items that come in |
 | `FERRO_INTERACTION_EVENTS_TARGET` | (none) | Where those events go, as a command's reply target: a channel, an avatar (key or name), an http(s) address (a form POST of `reply`, `command=interactions`) |
+| `FERRO_EVENTS` | `false` | SecondBot's events service (see "Events" below) |
+| `FERRO_EVENTS_CHANNEL`, `FERRO_EVENTS_AVATAR`, `FERRO_EVENTS_HTTP` | (none) | Where the events go: a channel (0 or more), an avatar's key, an http(s) address (a signed POST to `<address>/Event/Service`) |
+| `FERRO_EVENTS_SECRET` | SecondBot's | What signs each event's `Hash` (a secret, never logged). Set your own |
+| `FERRO_EVENTS_GROUP` | (none) | The group whose members joining and leaving are told |
+| `FERRO_EVENTS_GROUP_JOINS`, `FERRO_EVENTS_GROUP_LEAVES` | `true` | Each of them |
+| `FERRO_EVENTS_GUEST_SIM`, `FERRO_EVENTS_GUEST_PARCEL` | (none) | Guests are told while the bot stands on this parcel of this region (their names) |
+| `FERRO_EVENTS_GUEST_ENTERS`, `FERRO_EVENTS_GUEST_LEAVES` | `true` | Each of them |
+| `FERRO_EVENTS_CHANGE_SIM`, `FERRO_EVENTS_CHANGE_PARCEL`, `FERRO_EVENTS_ALERTS`, `FERRO_EVENTS_STATUS`, `FERRO_EVENTS_MONEY` | `true` | The other events, each on or off |
+| `FERRO_EVENTS_GROUP_CHECK`, `FERRO_EVENTS_GUEST_CHECK` | `120`, `30` | Seconds between two looks at the group's members, at the guests (SecondBot's pace) |
+| `FERRO_ON_EVENT` | `false` | Commands run on events (see "Commands on events" below) |
+| `FERRO_ON_EVENT_<n>_SOURCE`, `…_MONITOR`, `…_WHERE_<m>`, `…_ACTION_<m>`, `…_ENABLED` | (none), `true` | Event `n` (1, 2…): its source, what it watches, its conditions and actions (1, 2…) |
+| `FERRO_ON_EVENT_WAIT` | `10` | Seconds after each login before events run |
+| `FERRO_ON_EVENT_DEBUG` | `false` | Each step of the events in the log (the IMs' text too) |
+| `FERRO_ON_EVENT_GUEST_CHECK`, `FERRO_ON_EVENT_GROUP_CHECK` | `10`, `900` | Seconds between two looks at the region's avatars, at each group's members (one group a minute at most) |
 | `FERRO_DIALOG_CHANNEL`, `FERRO_DIALOG_AVATAR`, `FERRO_DIALOG_HTTP` | (none) | Where script dialogs are relayed: a channel, an avatar's key, an address |
 | `FERRO_DIALOG_OWNER` | (none) | Only the dialogs of this avatar's objects |
 | `FERRO_HOME_SIM` | (none) | Homebound: the bot's home sim, `Region Name/x/y/z`; it goes back there |
@@ -96,7 +110,16 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `chatgpt_LocalchatReply`, `chatgpt_LocalchatRateLimiter`, `chatgpt_AllowImReplys`,
 `chatgpt_ImReplyFriendsOnly`, `chatgpt_ImReplyRateLimiter`, `chatgpt_AllowGroupReplys`,
 `chatgpt_GroupReplyForGroup`, `chatgpt_GroupReplyRateLimiter`, `chatgpt_FakeTypeDelay`,
-`chatgpt_ShowDebug`, and the relays:
+`chatgpt_ShowDebug`, the events: `events_Enabled`, `events_OutputChannel`, `events_OutputIMuuid`,
+`events_OutputHttpURL`, `events_OutputSecret`, `events_GroupMemberEventsGroupUUID`,
+`events_GroupMemberJoins`, `events_GroupMemberLeaves`, `events_GuestTrackingSimname`,
+`events_GuestTrackingParcelname`, `events_GuestEntersArea`, `events_GuestLeavesArea`,
+`events_ChangeSim`, `events_ChangeParcel`, `events_SimAlertMessage`, `events_StatusMessage`,
+`events_MoneyEvent`; the commands on events: `onevent_Enabled`, `onevent_WaitSecsToStart`,
+`onevent_DebugMe`, `onevent_Count`, and for each `onevent_Event<n>Enabled`,
+`onevent_Event<n>Source`, `onevent_Event<n>Monitor`, `onevent_Event<n>WhereCount`,
+`onevent_Event<n>Where<m>`, `onevent_Event<n>ActionCount`, `onevent_Event<n>Action<m>`; and the
+relays:
 `relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
 `relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
 `relay_<n>_target_option`, `relay_<n>_RelayConfig`; and the custom commands: `customcommands_count`,
@@ -149,6 +172,70 @@ OpenRouter, `http://host:11434` for a local Ollama) and `FERRO_CHATGPT_MODEL` to
 the model. Each question costs a request: keep the cooldowns, and think twice before answering
 local chat in a busy place. There is no voice (no audio library in the container) and no Redis
 store (`chatgpt_UseRedis` is ignored).
+
+### Events
+
+What happens around the bot, as SecondBot's events service tells it: a JSON object
+`{"EventName": …, "Data": {…}, "Hash": …, "Unixtime": …, "BotUUID": …}` said on
+`FERRO_EVENTS_CHANNEL`, sent by IM to `FERRO_EVENTS_AVATAR` and posted to `FERRO_EVENTS_HTTP` +
+`/Event/Service` (form fields `token`, `unixtime`, `method=Dialog`, `action=Relay`, `botname`,
+`event`; `token` = sha1(unixtime + `EventService` + the bot's key + event + the shared secret)).
+`Hash` = sha1(BotUUID + EventName + each value of Data in order + Unixtime +
+`FERRO_EVENTS_SECRET`). The events and their Data:
+
+- `GroupMembership`: `uuid`, `name`, `action` (`join`, `leave`), for `FERRO_EVENTS_GROUP`;
+- `GuestTracking`: `uuid`, `name`, `action` (`enter`, `exit`), the avatars of the region while the
+  bot stands on the parcel named;
+- `ChangedSim`: `lastsim`, `newsim`; `ChangedParcel`: `oldparcel`, `newparcel` (the first parcel
+  after the start comes with an empty `oldparcel`);
+- `AlertMessage`: `Message`, `NotificationId` (null without one);
+- `StatusMessage`: `Message`, Ferrobot's state: `In world: <bot> in <region>`,
+  `Disconnected: <why>` (SecondBot lists its services instead);
+- `MoneyEvent`: `fromuuid`, `touuid`, `amount`, `balance`, `fromname`, `toname`,
+  `transactionid`, for every balance the grid sends (a payment, and the balance at each login).
+
+### Commands on events
+
+Commands the bot runs by itself when something happens, as SecondBot's TriggerOnEventService.
+Each event has a source, what it watches (`MONITOR`), conditions (`WHERE_1`, `WHERE_2`…, all must
+hold) and actions (`ACTION_1`, `ACTION_2`…, in order):
+
+| Source | Monitor | Its own values |
+|---|---|---|
+| `AvatarIm` | `Any`, or an avatar's key | `message`, `avatarname`, `avataruuid` |
+| `SimAlert` | | `alertmessage` |
+| `BalanceUpdate` | | `funds` |
+| `GroupMemberJoin`, `GroupMemberLeave` | a group's key (one the bot is in) | `groupuuid`, `groupname`, `avataruuid` |
+| `ChangeSim` | | `oldsimname`, `newsimname` |
+| `GuestJoins`, `GuestLeaves` | `Region Name=#=Parcel Name` (the bot and the avatar there) | `avataruuid` |
+| `Clock` (every minute) | | |
+
+Every event also has `eventype`, `avatarname`, `avatarparcel`, `avatarx`, `avatary`, `avatarz`,
+`avatardistance`, `botsim`, `botparcel`, `botx`, `boty`, `botz`, `clockhour`, `clockmin` and
+`dayofweek` (0 is Sunday; the clock is UTC). A value is written `[name]`. A condition is
+`left{OP}right` with `IS`, `NOT`, `CONTAINS`, `MISSING`, `LESSTHAN`, `MORETHAN`, `IN_GROUP`,
+`NOT_IN_GROUP` (an avatar's key, a group's key), `IS_UUID`, `IS_EVEN`, `DIVISIBLE` and `LOCKOUT`
+(`[avataruuid]{LOCKOUT}false`). An action is a command in the text form of commands by IM
+(`Say|||0~#~Hello [avatarname]`, `IM|||[avataruuid]~#~Welcome#|#reply target`) or as JSON, or
+`lockout=[avataruuid]+5` (that key locked out 5 minutes). For example, greeting newcomers:
+
+```
+FERRO_ON_EVENT=true
+FERRO_ON_EVENT_1_SOURCE=GuestJoins
+FERRO_ON_EVENT_1_MONITOR=My Region=#=My Shop
+FERRO_ON_EVENT_1_WHERE_1=[avataruuid]{LOCKOUT}false
+FERRO_ON_EVENT_1_ACTION_1=IM|||[avataruuid]~#~Welcome to the shop, [avatarname]!
+FERRO_ON_EVENT_1_ACTION_2=lockout=[avataruuid]+60
+```
+
+The actions come from the settings only, and run as commands under the rate limit. The values
+come from the grid (an IM's text, a name): they only ever fill the arguments they stand in, so a
+message holding `~#~` or `#|#` cannot add an argument or a reply target, and the command's name
+never takes one. SecondBot puts them into the whole action's text before reading it. Other
+differences: `IS_UUID`, `IS_EVEN` and `DIVISIBLE` work and a condition without an operator
+leaves its event out (SecondBot drops the condition); an `AvatarIm` monitor that is an avatar's
+key watches that avatar only; `botx`, `boty`, `botz` are the bot's place; a guest who leaves
+is placed where it was last seen, so `GuestLeaves` runs (SecondBot's never does).
 
 ### Grants
 
