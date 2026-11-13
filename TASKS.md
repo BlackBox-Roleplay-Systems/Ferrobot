@@ -479,6 +479,7 @@ baking: the bot says so and goes on.
 - ⬜ RLV: the restrictions the bot keeps but does not obey (sendchat, tplure, fly…; SecondBot
   obeys only detach), accepttp (SecondBot's AutoAcceptTP is never called), `@clear=<part>`,
   getpath by point or layer, rlv_HideStatusOutput (no status page)
+- 🔧 E-mail (SecondBot's SmtpService and SendEmail; e-mail as a reply target)
 
 ## Phase 8 - Running it for real
 
