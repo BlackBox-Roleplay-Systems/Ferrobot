@@ -261,8 +261,14 @@ baking: the bot says so and goes on.
   capability as the viewer does. Tried on NGC as a resident: GetEstateCovenant read the estate,
   EstateAccess refused (401) as it should for one who does not manage it; the changes need an
   estate manager (human)
-- ⬜ SetEstateTerrainRaw (a terrain upload by xfer), QueryLandSaleData, the region's parcel list
-  (GetListOfParcels, UpdateListOfParcels, GetParcelListSnapshots, GetSimParcelLayers)
+- 🟡 The region's parcels, as LibreMetaverse's RequestAllSimParcels (the parcel of a 4 m cell no
+  parcel known covers yet, then the cells its bitmap covers, until the map is whole; given up after
+  three cells unanswered in a row): SecondBot's UpdateListOfParcels, GetListOfParcels,
+  GetParcelListSnapshots, GetSimParcelLayers; ParcelName, GetCurrentRegionType (RegionHandshake's
+  ProductName); QueryLandSaleData (DirLandQuery, StartLandSearch's flags); tested on the test grid.
+  Deliberate differences: GetSimParcelLayers colours a parcel by its id (SecondBot at random) and
+  escapes its name; QueryLandSaleData checks the area (SecondBot checks the price twice)
+- ⬜ SetEstateTerrainRaw (a terrain upload by xfer)
 - 🟡 Objects (every object the region tells of kept by key, crates/client/src/objects.rs; RezObject
   as LLToolDragAndDrop::dropObject and Aurora's inventory/rez.rs, with the item's CRC; a click as
   LLToolGrab's; DeRezObject; UpdateTaskInventory and RezScript as dropInventory): SecondBot's

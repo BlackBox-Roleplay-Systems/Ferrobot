@@ -36,6 +36,8 @@ pub struct State {
     pub mute_list: Option<Vec<crate::mutes::Mute>>,
     /// The parcel the bot stands on (ParcelProperties).
     pub parcel: Option<crate::parcels::ParcelInfo>,
+    /// Every parcel of the region, once asked for (UpdateListOfParcels).
+    pub region_parcels: Option<crate::parcels::RegionParcels>,
     /// The animations the region says the bot plays (AvatarAnimation).
     pub animations: Vec<Uuid>,
     /// Marked away (SetAway).
@@ -62,6 +64,8 @@ pub struct Region {
     pub id: Uuid,
     /// The bot manages this region's estate (RegionHandshake's IsEstateManager).
     pub estate_manager: bool,
+    /// What the grid sells it as (RegionHandshake's ProductName): "Estate / Full Region"…
+    pub product: String,
 }
 
 /// Where "home" is (the login reply's `home`).

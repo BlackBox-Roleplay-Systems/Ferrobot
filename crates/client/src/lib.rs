@@ -619,6 +619,88 @@ impl Client {
         }
     }
 
+    /// Every parcel of the region, as LibreMetaverse's RequestAllSimParcels learns them: the
+    /// parcel of a 4 m cell no parcel known covers yet, asked, then the cells its bitmap covers
+    /// marked, until the whole map is known. Kept in the state (`region_parcels`).
+    pub async fn region_parcels(&self) -> Result<parcels::RegionParcels, ClientError> {
+        let size = parcels::MAP_SIZE;
+        let mut out = parcels::RegionParcels {
+            parcels: Vec::new(),
+            map: vec![0; size * size],
+        };
+        // a region that stops answering: what is known so far, not 4096 waits
+        let mut silent = 0;
+        'cells: for y in 0..size {
+            for x in 0..size {
+                if out.map[y * size + x] != 0 {
+                    continue;
+                }
+                let answer = self
+                    .ask_within(Duration::from_secs(2), |reply| {
+                        Request::Parcel(network::ParcelRequest::Cell { x, y, reply })
+                    })
+                    .await;
+                let p = match answer {
+                    Ok(p) => {
+                        silent = 0;
+                        p
+                    }
+                    // no answer for this cell: the next ones may still come
+                    Err(ClientError::Timeout) => {
+                        silent += 1;
+                        if silent >= 3 {
+                            log::warn!("parcels: the region stopped answering");
+                            break 'cells;
+                        }
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+                let mut marked = false;
+                for cy in 0..size {
+                    for cx in 0..size {
+                        if parcels::covers(&p.bitmap, cx, cy) {
+                            out.map[cy * size + cx] = p.local_id;
+                            marked = true;
+                        }
+                    }
+                }
+                if !marked {
+                    // a parcel without its bitmap: at least the cell asked is known
+                    out.map[y * size + x] = p.local_id;
+                }
+                if !out.parcels.iter().any(|q| q.local_id == p.local_id) {
+                    out.parcels.push(p);
+                }
+            }
+        }
+        self.shared.state_mut().region_parcels = Some(out.clone());
+        Ok(out)
+    }
+
+    /// Land for sale (DirLandQuery): LibreMetaverse's StartLandSearch, its flags and kind.
+    pub async fn land_search(
+        &self,
+        flags: u32,
+        kind: u32,
+        price: i32,
+        area: i32,
+        start: i32,
+        wait: Duration,
+    ) -> Result<Vec<parcels::LandForSale>, ClientError> {
+        self.ask_within(wait, |reply| {
+            Request::Parcel(network::ParcelRequest::LandSearch {
+                flags,
+                kind,
+                price,
+                area,
+                start,
+                reply,
+            })
+        })
+        .await
+    }
+
     /// A parcel's dwell, its traffic.
     pub async fn parcel_dwell(&self, local_id: i32) -> Result<f32, ClientError> {
         self.ask(|reply| Request::Parcel(network::ParcelRequest::Dwell { local_id, reply }))

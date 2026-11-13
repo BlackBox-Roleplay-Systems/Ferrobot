@@ -760,3 +760,266 @@ pub async fn reclaim(ctx: &Ctx) -> Answer {
         Err(a) => a,
     }
 }
+
+/// ParcelName: the name of the parcel the bot stands on.
+pub async fn parcel_name(ctx: &Ctx) -> Answer {
+    const C: &str = "ParcelName";
+    if !ctx.client.state().online {
+        return failure(C, "Error not in a sim", &[]);
+    }
+    match ctx.client.parcel(PARCEL_WAIT).await {
+        Ok(Some(p)) => basic(C, &p.name, &[]),
+        _ => failure(C, "Error parcel not found", &[]),
+    }
+}
+
+/// GetCurrentRegionType: what the grid sells the region as (RegionHandshake's ProductName).
+pub fn region_type(ctx: &Ctx) -> Answer {
+    const C: &str = "GetCurrentRegionType";
+    let st = ctx.client.state();
+    match st.region.as_ref().filter(|_| st.online) {
+        Some(r) => basic(C, &r.product, &[]),
+        None => failure(C, "Error not in a sim", &[]),
+    }
+}
+
+/// UpdateListOfParcels: every parcel of the region asked for (RequestAllSimParcels).
+pub async fn update_list(ctx: &Ctx) -> Answer {
+    const C: &str = "UpdateListOfParcels";
+    match ctx.client.region_parcels().await {
+        Ok(_) => basic(C, "ok", &[]),
+        Err(e) => failure(C, &e.to_string(), &[]),
+    }
+}
+
+/// LibreMetaverse's Vector3.ToString: "<x, y, z>".
+fn vector_text(v: glam::Vec3) -> String {
+    format!("<{}, {}, {}>", cs_float(v.x), cs_float(v.y), cs_float(v.z))
+}
+
+/// SecondBot's ParcelPacketData, its fields in their order.
+#[derive(Serialize)]
+struct ParcelPacketData {
+    area: i32,
+    groupindex: usize,
+    name: String,
+    maxprims: i32,
+    currentprims: i32,
+    startbox: String,
+    endbox: String,
+}
+
+#[derive(Serialize)]
+struct ParcelPacketReply {
+    groupuuids: Vec<String>,
+    parcels: Vec<ParcelPacketData>,
+}
+
+/// GetListOfParcels: what UpdateListOfParcels learnt, the groups by index.
+pub fn list(ctx: &Ctx) -> Answer {
+    const C: &str = "GetListOfParcels";
+    let known = ctx
+        .client
+        .state()
+        .region_parcels
+        .clone()
+        .unwrap_or_default();
+    let mut reply = ParcelPacketReply {
+        groupuuids: Vec::new(),
+        parcels: Vec::new(),
+    };
+    for p in &known.parcels {
+        let group = p.group_id.to_string();
+        let groupindex = match reply.groupuuids.iter().position(|g| *g == group) {
+            Some(i) => i,
+            None => {
+                reply.groupuuids.push(group);
+                reply.groupuuids.len() - 1
+            }
+        };
+        reply.parcels.push(ParcelPacketData {
+            area: p.area,
+            groupindex,
+            name: p.name.clone(),
+            maxprims: p.max_prims,
+            currentprims: p.total_prims,
+            startbox: vector_text(p.aabb_min),
+            endbox: vector_text(p.aabb_max),
+        });
+    }
+    basic(C, &super::reply::json(&reply), &[])
+}
+
+/// GetParcelListSnapshots: `{name: snapshot}` of the parcels learnt (the first of a name).
+pub fn snapshots(ctx: &Ctx) -> Answer {
+    const C: &str = "GetParcelListSnapshots";
+    let known = ctx
+        .client
+        .state()
+        .region_parcels
+        .clone()
+        .unwrap_or_default();
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for p in &known.parcels {
+        if !pairs.iter().any(|(n, _)| *n == p.name) {
+            pairs.push((p.name.clone(), p.snapshot_id.to_string()));
+        }
+    }
+    let borrowed: Vec<(&str, String)> =
+        pairs.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    basic(C, &json_pairs(&borrowed), &[])
+}
+
+/// A parcel's colour on the map: SecondBot's rgb(r, g, 125), r and g from its id rather than at
+/// random, so that the same parcel keeps its colour.
+fn colour(local_id: i32) -> String {
+    let h = (local_id as u32).wrapping_mul(2_654_435_761);
+    format!("rgb({},{},125)", h >> 24, (h >> 16) & 0xff)
+}
+
+/// XML's characters escaped, for a parcel's name in an attribute.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// GetSimParcelLayers: the parcel map as SVG, a 4 m wide rectangle per run of a parcel in each
+/// column, as SecondBot draws it.
+pub fn layers(ctx: &Ctx) -> Answer {
+    const C: &str = "GetSimParcelLayers";
+    let known = ctx
+        .client
+        .state()
+        .region_parcels
+        .clone()
+        .unwrap_or_default();
+    let size = ferro_client::parcels::MAP_SIZE;
+    let side = size * 4;
+    let mut svg =
+        format!(r#"<svg width="{side}" height="{side}" xmlns="http://www.w3.org/2000/svg">"#);
+    if known.map.len() == size * size {
+        for x in 0..size {
+            let mut y = 0;
+            while y < size {
+                let id = known.map[y * size + x];
+                let start = y;
+                while y < size && known.map[y * size + x] == id {
+                    y += 1;
+                }
+                let name = known
+                    .parcels
+                    .iter()
+                    .find(|p| p.local_id == id)
+                    .map_or_else(|| "?".to_owned(), |p| xml_escape(&p.name));
+                svg.push_str(&format!(
+                    r#"<rect data-parcel="{name}" width="4" height="{}" x="{}" y="{}" fill="{}" />"#,
+                    (y - start) * 4,
+                    x * 4,
+                    start * 4,
+                    colour(id)
+                ));
+            }
+        }
+    }
+    svg.push_str("</svg>");
+    basic(C, &svg, &[])
+}
+
+/// LibreMetaverse's SearchTypeFlags, by name as C#'s Enum.TryParse reads them (or a number).
+fn search_type(s: &str) -> Option<u32> {
+    match s.trim() {
+        "Any" => Some(u32::MAX),
+        "Auction" => Some(1 << 1),
+        "Mainland" => Some(1 << 3),
+        "Estate" => Some(1 << 4),
+        n => n.parse::<i32>().ok().map(|v| v as u32),
+    }
+}
+
+/// DirFindFlags of StartLandSearch: sorted ascending by price per metre, limited by price and
+/// area.
+const LAND_SEARCH_FLAGS: u32 = (1 << 15) | (1 << 17) | (1 << 20) | (1 << 21);
+
+/// LibreMetaverse's DirectoryParcel, as SecondBot serialises each one.
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct DirectoryParcel {
+    #[serde(rename = "ID")]
+    id: String,
+    name: String,
+    actual_area: i32,
+    sale_price: i32,
+    auction: bool,
+    for_sale: bool,
+    dwell: i32,
+}
+
+/// QueryLandSaleData: land for sale, a page of 100; each parcel as its own JSON text in the list,
+/// as SecondBot answers.
+pub async fn land_sale(
+    ctx: &Ctx,
+    region: &str,
+    price: &str,
+    area: &str,
+    page: &str,
+    timeout: &str,
+) -> Answer {
+    const C: &str = "QueryLandSaleData";
+    let Some(kind) = search_type(region) else {
+        return failure(C, "Invaild filterRegion", &[]);
+    };
+    let Ok(price_n) = price.trim().parse::<i32>() else {
+        return failure(C, "Invaild filterPrice", &[]);
+    };
+    if price_n < 0 {
+        return failure(C, "filterPrice must be >= 0", &[]);
+    }
+    let Ok(area_n) = area.trim().parse::<i32>() else {
+        return failure(C, "Invaild filterArea", &[]);
+    };
+    if area_n < 0 {
+        return failure(C, "filterArea must be >= 0", &[]);
+    }
+    let Ok(page_n) = page.trim().parse::<i32>() else {
+        return failure(C, "Invaild pageNum", &[]);
+    };
+    if page_n < 0 {
+        return failure(C, "GetpageNum must be >= 0", &[]);
+    }
+    let Ok(ms) = timeout.trim().parse::<u64>() else {
+        return failure(C, "Invaild timeout", &[]);
+    };
+    if !(2000..=7000).contains(&ms) {
+        return failure(C, "timeout must be >= 2000 and <= 7000", &[]);
+    }
+    let wait = Duration::from_millis(ms);
+    let found = match ctx
+        .client
+        .land_search(LAND_SEARCH_FLAGS, kind, price_n, area_n, page_n, wait)
+        .await
+    {
+        Ok(f) => f,
+        Err(_) => return failure(C, "Timed out while doing land search", &[]),
+    };
+    let texts: Vec<String> = found
+        .iter()
+        .map(|p| {
+            super::reply::json(&DirectoryParcel {
+                id: p.id.to_string(),
+                name: p.name.clone(),
+                actual_area: p.area,
+                sale_price: p.price,
+                auction: p.auction,
+                for_sale: p.for_sale,
+                dwell: 0,
+            })
+        })
+        .collect();
+    basic(
+        C,
+        &super::reply::json(&texts),
+        &owned(&[region, price, area, page, timeout]),
+    )
+}

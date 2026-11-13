@@ -2751,6 +2751,117 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// The region's parcels, its type, and the land sale search.
+    #[tokio::test]
+    async fn region_parcel_commands() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+
+        assert_eq!(api.reply("ParcelName", &[]).await, "Plaza");
+        assert_eq!(
+            api.reply("GetCurrentRegionType", &[]).await,
+            "Estate / Full Region"
+        );
+        assert_eq!(
+            api.reply("GetListOfParcels", &[]).await,
+            r#"{"groupuuids":[],"parcels":[]}"#,
+            "nothing before UpdateListOfParcels"
+        );
+
+        // two parcels: one request each, the bitmaps cover the rest
+        assert_eq!(api.reply("UpdateListOfParcels", &[]).await, "ok");
+        assert_eq!(
+            grid.count(
+                |s| matches!(s, Seen::ParcelPropertiesRequest { sequence } if *sequence > 0)
+            ),
+            2
+        );
+        let list: Value =
+            serde_json::from_str(&api.reply("GetListOfParcels", &[]).await).expect("json");
+        assert_eq!(
+            list,
+            serde_json::json!({
+                "groupuuids": [ferro_testgrid::TEST_GROUP.to_string(), uuid::Uuid::nil().to_string()],
+                "parcels": [
+                    {"area": 49152, "groupindex": 0, "name": "Outskirts", "maxprims": 11250,
+                     "currentprims": 40, "startbox": "<0, 0, 0>", "endbox": "<256, 256, 0>"},
+                    {"area": 16384, "groupindex": 1, "name": "Plaza", "maxprims": 3750,
+                     "currentprims": 12, "startbox": "<64, 64, 0>", "endbox": "<192, 192, 0>"},
+                ]
+            })
+        );
+        assert_eq!(
+            api.reply("GetParcelListSnapshots", &[]).await,
+            format!(
+                r#"{{"Outskirts":"{}","Plaza":"{}"}}"#,
+                uuid_from(0x5a95_0008),
+                uuid::Uuid::nil()
+            )
+        );
+        let svg = api.reply("GetSimParcelLayers", &[]).await;
+        assert!(
+            svg.starts_with(r#"<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">"#)
+        );
+        assert!(svg.ends_with("</svg>"));
+        // a column per 4 m: one run outside the Plaza, three across it
+        assert_eq!(svg.matches("<rect ").count(), 16 + 32 * 3 + 16);
+        assert!(svg.contains(r#"data-parcel="Plaza" width="4" height="128" x="64" y="64""#));
+        assert!(svg.contains(r#"data-parcel="Outskirts" width="4" height="256" x="0" y="0""#));
+
+        // land for sale: each parcel as its own JSON text
+        let found: Vec<String> = serde_json::from_str(
+            &api.reply(
+                "QueryLandSaleData",
+                &["Mainland", "5000", "100", "0", "3000"],
+            )
+            .await,
+        )
+        .expect("a list");
+        let first: Value = serde_json::from_str(&found[0]).expect("json");
+        assert_eq!(
+            first,
+            serde_json::json!({"ID": uuid_from(0x1a4d_0001).to_string(), "Name": "Beach Lot",
+                "ActualArea": 512, "SalePrice": 1200, "Auction": false, "ForSale": true, "Dwell": 0})
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::LandQuery {
+                    flags: (1 << 15) | (1 << 17) | (1 << 20) | (1 << 21),
+                    kind: 1 << 3,
+                    price: 5000,
+                    area: 100,
+                    start: 0
+                })
+            .await
+        );
+        assert_eq!(
+            api.failure(
+                "QueryLandSaleData",
+                &["Nowhere", "5000", "100", "0", "3000"]
+            )
+            .await
+            .0,
+            "Invaild filterRegion"
+        );
+        assert_eq!(
+            api.failure("QueryLandSaleData", &["Any", "5000", "-1", "0", "3000"])
+                .await
+                .0,
+            "filterArea must be >= 0"
+        );
+        assert_eq!(
+            api.failure("QueryLandSaleData", &["Any", "5000", "100", "0", "100"])
+                .await
+                .0,
+            "timeout must be >= 2000 and <= 7000"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

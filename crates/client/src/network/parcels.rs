@@ -76,6 +76,21 @@ const CELL: f32 = 4.0;
 pub(crate) enum ParcelRequest {
     /// The parcel the bot stands on, asked again.
     Properties { reply: oneshot::Sender<ParcelInfo> },
+    /// The parcel of a 4 m cell of the region (x, y in cells), by its own sequence id.
+    Cell {
+        x: usize,
+        y: usize,
+        reply: oneshot::Sender<ParcelInfo>,
+    },
+    /// DirLandQuery: land for sale.
+    LandSearch {
+        flags: u32,
+        kind: u32,
+        price: i32,
+        area: i32,
+        start: i32,
+        reply: oneshot::Sender<Vec<parcels::LandForSale>>,
+    },
     /// A parcel's dwell (traffic).
     Dwell {
         local_id: i32,
@@ -120,6 +135,11 @@ struct AccessWait {
 #[derive(Debug, Default)]
 pub(super) struct ParcelWaits {
     properties: Vec<oneshot::Sender<ParcelInfo>>,
+    /// Parcels asked by cell, by sequence id.
+    cells: Vec<(i32, oneshot::Sender<ParcelInfo>)>,
+    next_sequence: i32,
+    /// Land searches, by query id.
+    land: Vec<(Uuid, oneshot::Sender<Vec<parcels::LandForSale>>)>,
     dwell: Vec<(i32, oneshot::Sender<f32>)>,
     access: Vec<AccessWait>,
     owners: Vec<(i32, oneshot::Sender<Vec<ObjectOwner>>)>,
@@ -128,6 +148,8 @@ pub(super) struct ParcelWaits {
 impl ParcelWaits {
     pub fn retain_open(&mut self) {
         self.properties.retain(|r| !r.is_closed());
+        self.cells.retain(|(_, r)| !r.is_closed());
+        self.land.retain(|(_, r)| !r.is_closed());
         self.dwell.retain(|(_, r)| !r.is_closed());
         self.owners.retain(|(_, r)| !r.is_closed());
         // an access list is complete once its replies stop; an empty one may not come at all
@@ -165,6 +187,44 @@ impl Session<'_> {
                 m.parcel_data.snap_selection = false;
                 self.send(&m, true);
                 self.parcel_waits.properties.push(reply);
+            }
+            ParcelRequest::Cell { x, y, reply } => {
+                // sequence ids of their own, above the agent's parcel's 0 (RequestAllSimParcels)
+                self.parcel_waits.next_sequence =
+                    self.parcel_waits.next_sequence.max(0) % 1_000_000 + 1;
+                let sequence = self.parcel_waits.next_sequence;
+                let mut m = ParcelPropertiesRequest::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.parcel_data.sequence_id = sequence;
+                m.parcel_data.west = x as f32 * CELL;
+                m.parcel_data.south = y as f32 * CELL;
+                m.parcel_data.east = (x + 1) as f32 * CELL;
+                m.parcel_data.north = (y + 1) as f32 * CELL;
+                m.parcel_data.snap_selection = false;
+                self.send(&m, true);
+                self.parcel_waits.cells.push((sequence, reply));
+            }
+            ParcelRequest::LandSearch {
+                flags,
+                kind,
+                price,
+                area,
+                start,
+                reply,
+            } => {
+                let query = Uuid::new_v4();
+                let mut m = DirLandQuery::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.query_data.query_id = query;
+                m.query_data.query_flags = flags;
+                m.query_data.search_type = kind;
+                m.query_data.price = price;
+                m.query_data.area = area;
+                m.query_data.query_start = start;
+                self.send(&m, true);
+                self.parcel_waits.land.push((query, reply));
             }
             ParcelRequest::Dwell { local_id, reply } => {
                 let mut m = ParcelDwellRequest::default();
@@ -269,6 +329,15 @@ impl Session<'_> {
     pub(super) fn on_parcel_properties(&mut self, body: &Llsd) {
         let p = parcels::parse_parcel_properties(body);
         if p.sequence_id != AGENT_PARCEL {
+            let found = self
+                .parcel_waits
+                .cells
+                .iter()
+                .position(|(s, _)| *s == p.sequence_id);
+            if let Some(i) = found {
+                let (_, w) = self.parcel_waits.cells.remove(i);
+                let _ = w.send(p);
+            }
             return;
         }
         for w in self.parcel_waits.properties.drain(..) {
@@ -437,5 +506,32 @@ impl Session<'_> {
                 self.send(&m, true);
             }
         }
+    }
+
+    /// DirLandReply: the search's answer, by its query id.
+    pub(super) fn on_land_reply(&mut self, m: &DirLandReply) {
+        let Some(i) = self
+            .parcel_waits
+            .land
+            .iter()
+            .position(|(q, _)| *q == m.query_data.query_id)
+        else {
+            return;
+        };
+        let (_, w) = self.parcel_waits.land.remove(i);
+        let found = m
+            .query_replies
+            .iter()
+            .filter(|r| !r.parcel_id.is_nil())
+            .map(|r| parcels::LandForSale {
+                id: r.parcel_id,
+                name: ferro_msg::field_str(&r.name),
+                area: r.actual_area,
+                price: r.sale_price,
+                auction: r.auction,
+                for_sale: r.for_sale,
+            })
+            .collect();
+        let _ = w.send(found);
     }
 }

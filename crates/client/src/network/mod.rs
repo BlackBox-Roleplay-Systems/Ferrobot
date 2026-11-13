@@ -135,6 +135,7 @@ impl Network {
             st.sitting_on = None;
             st.avatars.clear();
             st.parcel = None;
+            st.region_parcels = None;
             st.mute_list = None;
             st.away = false;
             st.inventory_root = login.inventory_root;
@@ -212,6 +213,7 @@ struct Session<'a> {
     region_id: Uuid,
     /// The bot manages the region's estate (RegionHandshake).
     estate_manager: bool,
+    region_product: String,
     /// The invoice of the last estate `getinfo`.
     estate_invoice: Uuid,
     estate_waits: estate::EstateWaits,
@@ -738,6 +740,7 @@ impl Session<'_> {
                 handle: region_handle,
                 id: self.region_id,
                 estate_manager: self.estate_manager,
+                product: self.region_product.clone(),
             });
         }
         self.shared.emit(Event::Arrived {
@@ -813,6 +816,7 @@ impl Session<'_> {
             st.sitting_on = None;
             st.avatars.clear();
             st.parcel = None;
+            st.region_parcels = None;
         }
         self.send_use_circuit_code();
         self.start_caps(seed);
@@ -1147,6 +1151,7 @@ impl Session<'_> {
             self.region_name = field_str(&m.region_info.sim_name);
             self.region_id = m.region_info2.region_id;
             self.estate_manager = m.region_info.is_estate_manager;
+            self.region_product = field_str(&m.region_info3.product_name);
             log::info!("region handshake: {}", self.region_name);
             let mut reply = RegionHandshakeReply::default();
             reply.agent_data.agent_id = self.login.agent_id;
@@ -1271,6 +1276,9 @@ impl Session<'_> {
                 })
                 .collect();
             self.on_object_owners(owners);
+        } else if id == DirLandReply::ID {
+            let m: DirLandReply = pkt.decode()?;
+            self.on_land_reply(&m);
         } else if id == ParcelDwellReply::ID {
             let m: ParcelDwellReply = pkt.decode()?;
             self.on_dwell_reply(&m);
@@ -1873,6 +1881,7 @@ async fn run(
         mute_xfer: None,
         region_id: Uuid::nil(),
         estate_manager: false,
+        region_product: String::new(),
         estate_invoice: Uuid::new_v4(),
         estate_waits: Default::default(),
         profile_waits: Default::default(),

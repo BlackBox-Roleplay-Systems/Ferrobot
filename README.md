@@ -120,7 +120,9 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GetSimTexture`, `GetMuteList`, `SetAway`, `AsyncSendItem`, `AsyncSendItemByPath`,
 `AsyncInventoryContents`, `Balance`, `PayAvatar`, `PayObject`; the parcel the bot stands on:
 `GetCurrentParcelId`, `GetCurrentParcelUUID`, `GetCurrentParcelSize`, `GetParcelDesc`,
-`GetParcelFlags`, `GetParcelPrimCounts`, `GetParcelSaleDetails`, `GetParcelTraffic`,
+`GetParcelFlags`, `GetParcelPrimCounts`, `GetParcelSaleDetails`, `GetParcelTraffic`, `ParcelName`,
+`GetCurrentRegionType`; the region's parcels: `UpdateListOfParcels`, `GetListOfParcels`,
+`GetParcelListSnapshots`, `GetSimParcelLayers` (an SVG map); `QueryLandSaleData` (land for sale);
 `SetParcelName`, `SetParcelDesc`, `SetParcelLandingZone`, `SetParcelMusic`, `SetParcelSale`,
 `CancelParcelSale`, `SetParcelSnapshot`, `SetParcelAudioControls`, `SetParcelFlag`,
 `ParcelSetMedia`, `ParcelEject`, `ParcelFreeze`, `ParcelBan`, `ParcelUnBan`, `GetParcelBanlist`,
