@@ -463,3 +463,22 @@ async fn group_invitations_from_masters_only_and_never_with_a_fee() {
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
+
+#[tokio::test]
+async fn group_chat_is_logged() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[]);
+    arrived(&grid, &bot, 1).await;
+    // the group list first
+    bot.wait_log("in 2 groups").await;
+    let some = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    grid.group_chat(&some, ferro_testgrid::TEST_GROUP, "anyone there?");
+    bot.wait_log("[group Test Group] Some Resident: anyone there?")
+        .await;
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}

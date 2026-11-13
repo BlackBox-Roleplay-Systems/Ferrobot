@@ -26,6 +26,7 @@ pub async fn handle(
         ("eq", "POST") => event_queue(shared, n, region).await,
         ("displaynames", "GET") => display_names(shared, n, query),
         ("groupmemberdata", "POST") => member_data(shared, body),
+        ("chatsessionrequest", "POST") => chat_session_request(shared, body),
         _ => Response::status(404),
     }
 }
@@ -51,6 +52,16 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         m.insert(
             "GetDisplayNames".into(),
             format!("http://{}/cap/{n}/{region}/displaynames", shared.http_addr).into(),
+        );
+    }
+    if caps.iter().any(|c| c == "ChatSessionRequest") {
+        m.insert(
+            "ChatSessionRequest".into(),
+            format!(
+                "http://{}/cap/{n}/{region}/chatsessionrequest",
+                shared.http_addr
+            )
+            .into(),
         );
     }
     if shared.cfg.member_data_cap && caps.iter().any(|c| c == "GroupMemberData") {
@@ -183,6 +194,19 @@ fn member_data(shared: &Arc<Shared>, body: &[u8]) -> Response {
         Some(g) => llsd_reply(&crate::groups::member_data(&g, shared.agent_id)),
         None => Response::status(403),
     }
+}
+
+/// ChatSessionRequest: "accept invitation" joins the bot to a group chat.
+fn chat_session_request(shared: &Arc<Shared>, body: &[u8]) -> Response {
+    let Ok(v) = from_xml(body) else {
+        return Response::status(400);
+    };
+    let group = v["session-id"].as_uuid();
+    if v["method"].as_str() == "accept invitation" {
+        shared.saw(Seen::GroupChatAccept { group });
+        shared.state().group_chats.insert(group);
+    }
+    llsd_reply(&Llsd::Map(Map::new()))
 }
 
 fn llsd_reply(v: &Llsd) -> Response {

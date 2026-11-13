@@ -226,6 +226,20 @@ pub enum Seen {
         group: Uuid,
         accept: bool,
     },
+    GroupChatStart {
+        group: Uuid,
+    },
+    /// ChatSessionRequest "accept invitation".
+    GroupChatAccept {
+        group: Uuid,
+    },
+    GroupChatSend {
+        group: Uuid,
+        message: String,
+    },
+    GroupChatLeave {
+        group: Uuid,
+    },
     TeleportLureRequest {
         session: u32,
         lure: Uuid,
@@ -279,6 +293,8 @@ struct State {
     groups: Vec<GridGroup>,
     /// Group invitations sent to the bot: transaction to group.
     group_invites: HashMap<Uuid, Uuid>,
+    /// The group chats the bot is in.
+    group_chats: HashSet<Uuid>,
 }
 
 /// A region as the others see it.
@@ -367,6 +383,11 @@ enum RegionCommand {
         transaction: Uuid,
         fee: i32,
     },
+    GroupChat {
+        from: Resident,
+        group: Uuid,
+        text: String,
+    },
 }
 
 /// A running fake grid. Dropping it stops it.
@@ -419,6 +440,7 @@ impl TestGrid {
                 fail_teleport: None,
                 groups,
                 group_invites: HashMap::new(),
+                group_chats: HashSet::new(),
             }),
             eq_wake: Notify::new(),
         });
@@ -536,6 +558,52 @@ impl TestGrid {
             fee,
         });
         transaction
+    }
+
+    /// A resident says something in a group's chat. The bot's first line of a chat it is not in
+    /// comes as a ChatterBoxInvitation on the event queue, the others as IM_SESSION_SEND.
+    pub fn group_chat(&self, from: &Resident, group: Uuid, text: &str) {
+        let joined = self.shared.state().group_chats.contains(&group);
+        if joined {
+            self.command(RegionCommand::GroupChat {
+                from: from.clone(),
+                group,
+                text: text.into(),
+            });
+            return;
+        }
+        let name = self
+            .shared
+            .state()
+            .groups
+            .iter()
+            .find(|g| g.id == group)
+            .map(|g| g.name.clone())
+            .unwrap_or_default();
+        let from_name = format!("{} {}", from.first, from.last);
+        let mut bucket = name.clone().into_bytes();
+        bucket.push(0);
+        let mut data = ferro_llsd::Map::new();
+        data.insert("binary_bucket".into(), Llsd::Binary(bucket));
+        let mut params = ferro_llsd::Map::new();
+        params.insert("from_id".into(), from.id.into());
+        params.insert("from_name".into(), from_name.clone().into());
+        params.insert("to_id".into(), self.shared.agent_id.into());
+        params.insert("id".into(), group.into());
+        params.insert("message".into(), text.into());
+        params.insert("type".into(), 17.into());
+        params.insert("from_group".into(), true.into());
+        params.insert("offline".into(), 0.into());
+        params.insert("timestamp".into(), 0.into());
+        params.insert("data".into(), Llsd::Map(data));
+        let mut im = ferro_llsd::Map::new();
+        im.insert("message_params".into(), Llsd::Map(params));
+        let mut body = ferro_llsd::Map::new();
+        body.insert("session_id".into(), group.into());
+        body.insert("session_name".into(), name.into());
+        body.insert("from_name".into(), from_name.into());
+        body.insert("instantmessage".into(), Llsd::Map(im));
+        self.queue_event("ChatterBoxInvitation", Llsd::Map(body));
     }
 
     /// The members of a group as they are now (the bot included when it is in it).

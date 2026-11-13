@@ -452,6 +452,38 @@ impl Region {
         } else if id == ImprovedInstantMessage::ID {
             if let Ok(m) = pkt.decode::<ImprovedInstantMessage>() {
                 let b = &m.message_block;
+                let group = b.to_agent_id;
+                match b.dialog {
+                    // IM_SESSION_GROUP_START: ChatterBoxSessionStartReply on the event queue
+                    15 => {
+                        self.shared.saw(Seen::GroupChatStart { group });
+                        let member = group_of(&self.shared, group).is_some();
+                        if member {
+                            self.shared.state().group_chats.insert(group);
+                        }
+                        let mut body = Map::new();
+                        body.insert("temp_session_id".into(), group.into());
+                        body.insert("session_id".into(), group.into());
+                        body.insert("success".into(), member.into());
+                        if !member {
+                            body.insert(
+                                "error".into(),
+                                "You are not a member of that group.".into(),
+                            );
+                        }
+                        self.shared
+                            .queue_event(n, "ChatterBoxSessionStartReply", Llsd::Map(body));
+                    }
+                    17 => self.shared.saw(Seen::GroupChatSend {
+                        group,
+                        message: field_str(&b.message),
+                    }),
+                    18 => {
+                        self.shared.state().group_chats.remove(&group);
+                        self.shared.saw(Seen::GroupChatLeave { group });
+                    }
+                    _ => {}
+                }
                 // send_join_group_response: an IM to the group
                 if matches!(b.dialog, 35 | 36) {
                     let accept = b.dialog == 35;
@@ -684,6 +716,18 @@ impl Region {
                 let mut bucket = fee.to_be_bytes().to_vec();
                 bucket.extend_from_slice(Uuid::nil().as_bytes());
                 b.binary_bucket = bucket;
+                self.send(to, &m, true);
+            }
+            RegionCommand::GroupChat { from, group, text } => {
+                let mut m = ImprovedInstantMessage::default();
+                m.agent_data.agent_id = from.id;
+                let b = &mut m.message_block;
+                b.from_group = true;
+                b.to_agent_id = self.shared.agent_id;
+                b.dialog = 17; // IM_SESSION_SEND
+                b.id = group;
+                b.from_agent_name = str_field(&format!("{} {}", from.first, from.last));
+                b.message = str_field(&text);
                 self.send(to, &m, true);
             }
             RegionCommand::Kick { reason } => {

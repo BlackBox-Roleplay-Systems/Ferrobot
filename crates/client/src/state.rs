@@ -17,6 +17,8 @@ pub struct State {
     pub home: Option<Home>,
     pub active_group: Option<ActiveGroup>,
     pub groups: Vec<Group>,
+    /// The group chats the bot is in (their session id is the group's).
+    pub group_chats: Vec<Uuid>,
     /// Logins that reached the region since the start.
     pub logins: u32,
     pub online_since: Option<SystemTime>,

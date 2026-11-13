@@ -1,4 +1,4 @@
-//! Logs the local chat and the IMs the bot receives.
+//! Logs the local chat, the IMs and the group chat the bot receives.
 
 use ferro_client::events::{chat_type, dialog};
 use ferro_client::{Client, Event};
@@ -17,6 +17,21 @@ pub async fn run(client: Client) {
                     log::info!("[chat] {}: {}", c.from_name, c.message);
                 }
             }
+            Ok(Event::GroupChat {
+                group,
+                from_name,
+                message,
+                ..
+            }) => {
+                let name = client
+                    .state()
+                    .groups
+                    .iter()
+                    .find(|g| g.id == group)
+                    .map_or_else(|| group.to_string(), |g| g.name.clone());
+                log::info!("[group {name}] {from_name}: {message}");
+            }
+            Ok(Event::InstantMessage(im)) if im.dialog == dialog::SESSION_SEND => {}
             Ok(Event::InstantMessage(im)) => {
                 if im.dialog == dialog::NOTHING_SPECIAL {
                     log::info!("[im] {}: {}", im.from_name, im.message);

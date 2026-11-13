@@ -4,10 +4,12 @@
 //! matched to who waits by the request id the replies repeat. As Aurora's session_groups.rs.
 
 use super::Session;
+use crate::events::{Event, dialog};
 use crate::groups::{
     self, GroupMember, GroupRole, GroupTitle, RoleChange, eject_messages, invite_messages,
     role_change_messages,
 };
+use ferro_llsd::{Llsd, llsd_map};
 use ferro_msg::msgs::*;
 use ferro_msg::{IncomingPacket, Msg};
 use std::collections::{HashMap, VecDeque};
@@ -57,6 +59,22 @@ pub(crate) enum GroupRequest {
         changes: Vec<RoleChange>,
         reply: oneshot::Sender<()>,
     },
+    /// Join a group's chat (IM_SESSION_GROUP_START), answered by ChatterBoxSessionStartReply.
+    ChatJoin {
+        group: Uuid,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// A line in a group's chat (IM_SESSION_SEND).
+    ChatSend {
+        group: Uuid,
+        text: String,
+        reply: oneshot::Sender<()>,
+    },
+    /// Leave a group's chat (IM_SESSION_LEAVE).
+    ChatLeave {
+        group: Uuid,
+        reply: oneshot::Sender<()>,
+    },
     /// Answer a group invitation (send_join_group_response): an IM to the group.
     AnswerInvite {
         group: Uuid,
@@ -76,6 +94,8 @@ pub(super) struct GroupWaits {
     titles: HashMap<Uuid, oneshot::Sender<Vec<GroupTitle>>>,
     /// EjectGroupMemberReply names the group only: answered in order.
     ejects: HashMap<Uuid, VecDeque<oneshot::Sender<bool>>>,
+    /// Group chats being joined, by group.
+    chat_joins: HashMap<Uuid, Vec<oneshot::Sender<Result<(), String>>>>,
 }
 
 struct Gathering<T> {
@@ -153,6 +173,10 @@ impl GroupWaits {
             q.retain(|tx| !tx.is_closed());
         }
         self.ejects.retain(|_, q| !q.is_empty());
+        for v in self.chat_joins.values_mut() {
+            v.retain(|tx| !tx.is_closed());
+        }
+        self.chat_joins.retain(|_, v| !v.is_empty());
     }
 }
 
@@ -236,6 +260,30 @@ impl Session<'_> {
                 for m in role_change_messages(agent, session, group, &changes) {
                     self.send(&m, true);
                 }
+                let _ = reply.send(());
+            }
+            GroupRequest::ChatJoin { group, reply } => {
+                if self.shared.state().group_chats.contains(&group) {
+                    let _ = reply.send(Ok(()));
+                    return;
+                }
+                let waiting = self.groups.chat_joins.entry(group).or_default();
+                let first = waiting.is_empty();
+                waiting.push(reply);
+                if first {
+                    // LLIMModel::sendStartSession: the session id is the group's
+                    self.send_im(group, dialog::SESSION_GROUP_START, group, "", Vec::new());
+                }
+            }
+            GroupRequest::ChatSend { group, text, reply } => {
+                for part in split_message(&text) {
+                    self.send_im(group, dialog::SESSION_SEND, group, part, Vec::new());
+                }
+                let _ = reply.send(());
+            }
+            GroupRequest::ChatLeave { group, reply } => {
+                self.send_im(group, dialog::SESSION_LEAVE, group, "", Vec::new());
+                self.shared.state_mut().group_chats.retain(|g| *g != group);
                 let _ = reply.send(());
             }
             GroupRequest::AnswerInvite {
@@ -369,5 +417,125 @@ impl Session<'_> {
             return Ok(false);
         }
         Ok(true)
+    }
+
+    fn joined_chat(&mut self, group: Uuid) {
+        let mut st = self.shared.state_mut();
+        if !st.group_chats.contains(&group) {
+            st.group_chats.push(group);
+        }
+    }
+
+    fn in_group(&self, id: Uuid) -> bool {
+        self.shared.state().groups.iter().any(|g| g.id == id)
+    }
+
+    /// ChatterBoxSessionStartReply: the group chat the bot asked to join is open, or refused.
+    pub(super) fn on_session_start_reply(&mut self, body: &Llsd) {
+        let group = body["session_id"].as_uuid();
+        let group = if group.is_nil() {
+            body["temp_session_id"].as_uuid()
+        } else {
+            group
+        };
+        let answer = if body["success"].as_bool() {
+            self.joined_chat(group);
+            log::info!("in the chat of group {group}");
+            Ok(())
+        } else {
+            let why = body["error"].as_str().to_owned();
+            log::warn!("group chat {group} refused: {why}");
+            Err(if why.is_empty() {
+                "the grid refused the group chat".to_owned()
+            } else {
+                why
+            })
+        };
+        for tx in self.groups.chat_joins.remove(&group).unwrap_or_default() {
+            let _ = tx.send(answer.clone());
+        }
+    }
+
+    /// ChatterBoxInvitation: someone spoke first in a group chat. The bot joins it ("accept
+    /// invitation" to ChatSessionRequest, chatterBoxInvitationCoro) and hears the line. Other
+    /// sessions (ad-hoc conferences) are left alone.
+    pub(super) fn on_session_invitation(&mut self, body: &Llsd) {
+        let p = &body["instantmessage"]["message_params"];
+        let group = p["id"].as_uuid();
+        if group.is_nil() || !self.in_group(group) {
+            log::debug!("chat session invitation for {group} ignored: not a group of the bot");
+            return;
+        }
+        if !self.shared.state().group_chats.contains(&group) {
+            match self.caps.get("ChatSessionRequest").cloned() {
+                Some(url) => {
+                    let http = self.http.clone();
+                    tokio::spawn(async move {
+                        let body =
+                            llsd_map! { "method" => "accept invitation", "session-id" => group };
+                        if let Err(e) = crate::caps::post_llsd(&http, &url, &body).await {
+                            log::warn!("joining the chat of group {group}: {e}");
+                        }
+                    });
+                    self.joined_chat(group);
+                }
+                None => {
+                    log::warn!("no ChatSessionRequest capability: group chat {group} not joined")
+                }
+            }
+        }
+        self.shared.emit(Event::GroupChat {
+            group,
+            from_id: p["from_id"].as_uuid(),
+            from_name: p["from_name"].as_str().to_owned(),
+            message: p["message"].as_str().to_owned(),
+        });
+    }
+
+    /// IM_SESSION_SEND in a group's session: a line of its chat.
+    pub(super) fn on_session_message(&mut self, im: &crate::InstantMessage) {
+        if im.dialog != dialog::SESSION_SEND || !self.in_group(im.id) {
+            return;
+        }
+        self.joined_chat(im.id);
+        self.shared.emit(Event::GroupChat {
+            group: im.id,
+            from_id: im.from_agent_id,
+            from_name: im.from_name.clone(),
+            message: im.message.clone(),
+        });
+    }
+}
+
+/// MAX_MSG_BUF_SIZE (1024, with its terminating zero): longer texts go in parts, cut between
+/// characters.
+fn split_message(text: &str) -> Vec<&str> {
+    const MAX: usize = 1023;
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while rest.len() > MAX {
+        let mut cut = MAX;
+        while !rest.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        parts.push(&rest[..cut]);
+        rest = &rest[cut..];
+    }
+    parts.push(rest);
+    parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_message;
+
+    #[test]
+    fn long_messages_go_in_parts_between_characters() {
+        assert_eq!(split_message("hello"), vec!["hello"]);
+        let long = "é".repeat(600); // 1200 bytes
+        let parts = split_message(&long);
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|p| p.len() <= 1023));
+        assert_eq!(parts.concat(), long);
     }
 }

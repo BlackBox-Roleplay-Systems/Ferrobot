@@ -23,6 +23,13 @@ pub enum Event {
     RegionRestartCancelled,
     /// The groups the bot is in changed (AgentGroupDataUpdate, AgentDropGroup).
     GroupsChanged,
+    /// A line of a group's chat (ChatterBoxInvitation, then IM_SESSION_SEND).
+    GroupChat {
+        group: uuid::Uuid,
+        from_id: uuid::Uuid,
+        from_name: String,
+        message: String,
+    },
     /// A teleport failed; the bot stays where it is (TeleportFailed).
     TeleportFailed { reason: String },
     /// The session ended; a new login comes next, or not, as the caller decides.
@@ -61,7 +68,9 @@ pub mod dialog {
     pub const GROUP_NOTICE: u8 = 32;
     pub const FRIENDSHIP_OFFERED: u8 = 38;
     pub const LURE_USER: u8 = 22;
+    pub const SESSION_GROUP_START: u8 = 15;
     pub const SESSION_SEND: u8 = 17;
+    pub const SESSION_LEAVE: u8 = 18;
     pub const TYPING_START: u8 = 41;
     pub const TYPING_STOP: u8 = 42;
 }

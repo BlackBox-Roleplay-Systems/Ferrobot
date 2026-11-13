@@ -115,6 +115,8 @@ impl Network {
             st.name = format!("{} {}", login.first_name, login.last_name);
             st.region = None;
             st.home = login.home.or(st.home);
+            // chat sessions end with the login
+            st.group_chats.clear();
         }
         self.shared
             .names()
@@ -606,7 +608,7 @@ impl Session<'_> {
         } else if id == ImprovedInstantMessage::ID {
             let m: ImprovedInstantMessage = pkt.decode()?;
             let b = m.message_block;
-            self.shared.emit(Event::InstantMessage(InstantMessage {
+            let im = InstantMessage {
                 from_agent_id: m.agent_data.agent_id,
                 from_name: field_str(&b.from_agent_name),
                 to_agent_id: b.to_agent_id,
@@ -619,7 +621,9 @@ impl Session<'_> {
                 region_id: b.region_id,
                 position: b.position,
                 binary_bucket: b.binary_bucket,
-            }));
+            };
+            self.on_session_message(&im);
+            self.shared.emit(Event::InstantMessage(im));
         } else if id == AlertMessage::ID {
             let m: AlertMessage = pkt.decode()?;
             // OpenSim pads its messages with spaces and newlines
@@ -806,6 +810,8 @@ impl Session<'_> {
                     seed,
                 );
             }
+            "ChatterBoxSessionStartReply" => self.on_session_start_reply(&e.body),
+            "ChatterBoxInvitation" => self.on_session_invitation(&e.body),
             "TeleportFailed" => {
                 self.teleport_failed(e.body["Info"][0]["Reason"].as_str().to_owned());
             }

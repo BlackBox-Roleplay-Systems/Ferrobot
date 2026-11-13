@@ -85,7 +85,10 @@ region).
 - 🟡 Group invitations accepted from masters (services/group_invites.rs, SecondBot's
   BotGroupInviteOffer at level "Owner"), others left unanswered; deliberate difference: never one
   with a membership fee
-- ⬜ Group chat sessions
+- 🟡 Group chat sessions (`group_chat_join`, `group_chat_send`, `group_chat_leave`;
+  `Event::GroupChat`): IM_SESSION_GROUP_START and ChatterBoxSessionStartReply, IM_SESSION_SEND,
+  ChatterBoxInvitation accepted through ChatSessionRequest, as Aurora and the viewer's LLIMMgr;
+  logged by the chat log
 
 ## Phase 4 - SecondBot's HTTP API
 

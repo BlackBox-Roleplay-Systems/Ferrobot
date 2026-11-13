@@ -662,4 +662,81 @@ mod groups {
         }
         assert!(matches!(r.logout().await, End::LoggedOut));
     }
+
+    #[tokio::test]
+    async fn group_chat_both_ways() {
+        let r = ready(GridConfig::default()).await;
+        let mut events = r.client.subscribe();
+        // the bot speaks: the session starts, then the line goes
+        r.client
+            .group_chat_send(TEST_GROUP, "hello group")
+            .await
+            .expect("send");
+        assert!(
+            r.grid
+                .wait_for(WAIT, |s| *s
+                    == Seen::GroupChatSend {
+                        group: TEST_GROUP,
+                        message: "hello group".into()
+                    })
+                .await
+        );
+        assert_eq!(
+            r.grid
+                .count(|s| *s == Seen::GroupChatStart { group: TEST_GROUP }),
+            1
+        );
+        assert!(r.client.state().group_chats.contains(&TEST_GROUP));
+        assert_eq!(
+            r.client.group_chat_send(THIRD_GROUP, "no").await,
+            Err(ClientError::UnknownGroup)
+        );
+
+        // someone else speaks first in another group: an invitation the bot accepts
+        let second = ferro_testgrid::SECOND_GROUP;
+        let next_line = |events: &mut tokio::sync::broadcast::Receiver<Event>| {
+            let mut events = events.resubscribe();
+            async move {
+                tokio::time::timeout(WAIT, async {
+                    loop {
+                        if let Ok(Event::GroupChat {
+                            group,
+                            from_name,
+                            message,
+                            ..
+                        }) = events.recv().await
+                        {
+                            return (group, from_name, message);
+                        }
+                    }
+                })
+                .await
+                .expect("a group chat line")
+            }
+        };
+        let first = next_line(&mut events);
+        r.grid.group_chat(&some_resident(), second, "first line");
+        assert_eq!(
+            first.await,
+            (second, "Some Resident".into(), "first line".into())
+        );
+        assert!(
+            r.grid
+                .wait_for(WAIT, |s| *s == Seen::GroupChatAccept { group: second })
+                .await
+        );
+        // the next lines come as session messages
+        let next = next_line(&mut events);
+        r.grid.group_chat(&some_resident(), second, "second line");
+        assert_eq!(next.await.2, "second line");
+
+        r.client.group_chat_leave(TEST_GROUP).await.expect("leave");
+        assert!(
+            r.grid
+                .wait_for(WAIT, |s| *s == Seen::GroupChatLeave { group: TEST_GROUP })
+                .await
+        );
+        assert!(!r.client.state().group_chats.contains(&TEST_GROUP));
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
 }

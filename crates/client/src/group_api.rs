@@ -218,4 +218,37 @@ impl Client {
         })
         .await
     }
+
+    /// Join a group's chat (IM_SESSION_GROUP_START); done at once when the bot is in it.
+    pub async fn group_chat_join(&self, group: Uuid) -> Result<(), ClientError> {
+        self.check_group(group)?;
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::ChatJoin {
+            group,
+            reply,
+        })
+        .await?
+        .map_err(ClientError::Refused)
+    }
+
+    /// Say something in a group's chat, joining it first when needed (SecondBot's GroupChat).
+    pub async fn group_chat_send(&self, group: Uuid, text: &str) -> Result<(), ClientError> {
+        self.group_chat_join(group).await?;
+        let text = text.to_owned();
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::ChatSend {
+            group,
+            text,
+            reply,
+        })
+        .await
+    }
+
+    /// Leave a group's chat (IM_SESSION_LEAVE): its lines stop until it is joined again.
+    pub async fn group_chat_leave(&self, group: Uuid) -> Result<(), ClientError> {
+        self.check_group(group)?;
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::ChatLeave {
+            group,
+            reply,
+        })
+        .await
+    }
 }
