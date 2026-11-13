@@ -1295,6 +1295,12 @@ mod api {
         bot.wait_log("outfit baked (version 7)").await;
         assert_eq!(api.reply("RebakeAppearance", &[]).await, "ok");
 
+        assert_eq!(
+            api.failure("Discord_RoleList", &["800"]).await.0,
+            "Discord client not ready",
+            "Discord is off"
+        );
+
         assert_eq!(api.reply("Logoff", &[]).await, "ok");
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
         bot.wait_log("logged out").await;
@@ -2562,6 +2568,189 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's Discord commands, on the stand-in Discord's server.
+    #[tokio::test]
+    async fn discord_commands() {
+        use ferro_testgrid::discord::{MASTER, MODERATOR, StandIn, VISITOR};
+        let grid = grid().await;
+        let discord = StandIn::start().await.expect("the stand-in Discord");
+        let host = discord.host();
+        let port = free_port().to_string();
+        let mut bot = Bot::start(
+            &grid,
+            &[
+                ("FERRO_HTTP_PORT", port.as_str()),
+                ("commands_SharedSecret", SECRET),
+                ("discord_Enabled", "true"),
+                ("discord_ServerID", "800"),
+                ("discord_ClientToken", "a-test-token"),
+                ("FERRO_DISCORD_STAND_IN", host.as_str()),
+            ],
+        );
+        let api = Api {
+            url: format!("http://127.0.0.1:{port}/api/Run"),
+            http: reqwest::Client::new(),
+        };
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("discord: channels ready").await;
+        let (m, v) = (MASTER.to_string(), VISITOR.to_string());
+        let moderator = MODERATOR.to_string();
+
+        // roles
+        let roles: Value =
+            serde_json::from_str(&api.reply("Discord_RoleList", &["800"]).await).expect("json");
+        assert_eq!(roles[&moderator], "Moderator");
+        assert_eq!(
+            api.reply("Discord_GetMemberRoles", &["800", &m]).await,
+            format!(r#"["{moderator}"]"#)
+        );
+        assert_eq!(
+            api.reply("Discord_AddRole", &["800", &moderator, &v]).await,
+            "True"
+        );
+        assert!(
+            discord
+                .state()
+                .members
+                .iter()
+                .any(|x| x.id == VISITOR && x.roles == vec![MODERATOR])
+        );
+        let made = api.reply("Discord_RoleCreate", &["800", "Buyers"]).await;
+        let new_role = made
+            .strip_prefix("[ok, ")
+            .and_then(|r| r.strip_suffix(']'))
+            .expect("[ok, id]")
+            .to_owned();
+        assert!(
+            discord
+                .state()
+                .roles
+                .iter()
+                .any(|r| r.name == "Buyers" && r.color == 0x99_2D_22)
+        );
+        assert_eq!(
+            api.reply(
+                "Discord_Role_UpdatePerms",
+                &["800", &new_role, "Speak=True,SendMessages=False"]
+            )
+            .await,
+            "True"
+        );
+        assert!(
+            discord
+                .state()
+                .roles
+                .iter()
+                .any(|r| r.name == "Buyers" && r.permissions == 1 << 21)
+        );
+        let settings = api
+            .reply("Discord_Role_GetSettings", &["800", &moderator])
+            .await;
+        assert!(
+            settings.starts_with(
+                r#"{"Config|Color":"0,255,0","Config|Name":"Moderator","Info|AssignedCount":"2","Perm|AttachFiles":"False""#
+            ),
+            "{settings}"
+        );
+        assert!(settings.contains(r#""Perm|ManageMessages":"True""#));
+        assert_eq!(
+            api.reply("Discord_RoleRemove", &["800", &new_role]).await,
+            "True"
+        );
+        assert_eq!(
+            api.reply("Discord_RoleRemove", &["800", &new_role]).await,
+            "False"
+        );
+
+        // channels, messages, members
+        let channels: Value =
+            serde_json::from_str(&api.reply("Discord_TextChannels_List", &["800"]).await)
+                .expect("json");
+        let general = discord
+            .channel("general", None)
+            .expect("general")
+            .id
+            .to_string();
+        assert_eq!(channels[&general], "general");
+        assert!(
+            channels
+                .as_object()
+                .expect("map")
+                .values()
+                .any(|n| n == "localchat")
+        );
+        assert_eq!(
+            api.reply(
+                "Discord_MessageChannel",
+                &["800", &general, "true", "hello everyone"]
+            )
+            .await,
+            "True"
+        );
+        assert!(
+            discord
+                .state()
+                .messages
+                .iter()
+                .any(|x| x.content == "hello everyone" && x.tts)
+        );
+        assert_eq!(
+            api.reply("Discord_MessageChannel", &["800", "12345", "false", "lost"])
+                .await,
+            "False"
+        );
+        assert_eq!(
+            api.reply("Discord_MembersList", &["800"]).await,
+            format!(r#"{{"{m}":"The Boss|boss","{v}":"visitor"}}"#)
+        );
+        assert_eq!(
+            api.reply("Discord_Dm_Member", &["800", &v, "a word"]).await,
+            "True"
+        );
+        assert!(
+            discord
+                .state()
+                .messages
+                .iter()
+                .any(|x| x.content == "a word")
+        );
+        assert_eq!(
+            api.reply("Discord_MuteMember", &["800", &v, "true"]).await,
+            "True"
+        );
+        assert!(
+            discord
+                .state()
+                .members
+                .iter()
+                .any(|x| x.id == VISITOR && x.mute)
+        );
+        discord.say(general.parse().expect("id"), VISITOR, "spam");
+        discord.say(general.parse().expect("id"), VISITOR, "more spam");
+        assert_eq!(
+            api.reply("Discord_BulkClear_Messages", &["800", &v]).await,
+            "[True, 2]"
+        );
+        assert_eq!(
+            api.reply("Discord_BanMember", &["800", &v, "spam"]).await,
+            "True"
+        );
+        assert!(discord.state().bans.iter().any(|(u, _)| *u == VISITOR));
+
+        // no voice in the container
+        assert_eq!(
+            api.failure("Discord_VoiceJoin", &["General"]).await.0,
+            "Voice service is not enabled"
+        );
+        assert_eq!(
+            api.failure("Discord_VoiceLeave", &[]).await.0,
+            "Not in a Discord voice channel"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {
@@ -3318,6 +3507,216 @@ async fn relays_carry_what_the_bot_hears() {
         .expect("the hook task");
     let v: serde_json::Value = serde_json::from_str(&body).expect("json");
     assert_eq!(v["content"], "**Other Avatar**: ping");
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+/// Discord both ways: the bot's channels on the server, what it hears in Second Life posted
+/// there, and what a Discord master writes there sent back (a visitor is refused).
+#[tokio::test]
+async fn discord_both_ways() {
+    use ferro_testgrid::discord::{MASTER, StandIn, VISITOR};
+    let grid = grid().await;
+    let discord = StandIn::start().await.expect("the stand-in Discord");
+    let host = discord.host();
+    let master = MASTER.to_string();
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("FERRO_DISCORD", "true"),
+            ("FERRO_DISCORD_SERVER", "800"),
+            ("FERRO_DISCORD_TOKEN", "a-test-token"),
+            ("FERRO_DISCORD_STAND_IN", host.as_str()),
+            ("FERRO_DISCORD_MASTERS", master.as_str()),
+            ("FERRO_DISCORD_COMMANDS", "true"),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    bot.wait_log("discord: channels ready").await;
+    assert!(
+        !bot.log().contains("a-test-token"),
+        "the token is never logged"
+    );
+
+    // the bot's channels, its state, a channel per group, its activity
+    let status = discord.channel("status", Some("bot")).expect("status");
+    let localchat = discord
+        .channel("localchat", Some("bot"))
+        .expect("localchat");
+    let commands = discord.channel("commands", Some("bot")).expect("commands");
+    assert!(
+        discord
+            .wait(WAIT, |d| d
+                .posts(status.id)
+                .iter()
+                .any(|p| p.content == "In world: Test Bot in Test Region"))
+            .await
+    );
+    assert!(
+        discord
+            .wait(WAIT, |d| d.channel("test-group", Some("group")).is_some())
+            .await
+    );
+    let group_channel = discord
+        .channel("test-group", Some("group"))
+        .expect("a group's channel");
+    assert!(
+        group_channel
+            .topic
+            .starts_with(&format!("group={}|||", ferro_testgrid::TEST_GROUP))
+    );
+    assert!(
+        discord
+            .wait(WAIT, |d| d
+                .state()
+                .presences
+                .iter()
+                .any(|p| p == "Test Region"))
+            .await
+    );
+
+    // Second Life to Discord: local chat, an IM, a group's chat
+    let some = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    grid.say("Some Resident", "hello from the region");
+    assert!(
+        discord
+            .wait(WAIT, |d| d.posts(localchat.id).iter().any(
+                |p| p.content == ":person_bald:Some Resident: hello from the region"
+            ))
+            .await
+    );
+    grid.im_from(&some, "hello bot");
+    assert!(
+        discord
+            .wait(WAIT, |d| d.channel("someresident", Some("im")).is_some())
+            .await
+    );
+    let im_channel = discord
+        .channel("someresident", Some("im"))
+        .expect("the avatar's channel");
+    assert_eq!(
+        im_channel.topic,
+        format!("avatar={}||| !close !offertp !clear", some.id)
+    );
+    assert!(
+        discord
+            .wait(WAIT, |d| d
+                .posts(im_channel.id)
+                .iter()
+                .any(|p| p.content == "Some Resident:hello bot"))
+            .await
+    );
+    grid.group_chat(&some, ferro_testgrid::TEST_GROUP, "hi group");
+    assert!(
+        discord
+            .wait(WAIT, |d| d
+                .posts(group_channel.id)
+                .iter()
+                .any(|p| p.content == "Some Resident: hi group"))
+            .await
+    );
+
+    // Discord to Second Life, from the master
+    let said = discord.say(localchat.id, MASTER, "hello from Discord");
+    assert!(
+        grid.wait_for(WAIT, |s| matches!(s, Seen::Chat { message, channel: 0, .. }
+            if message == "hello from Discord"))
+            .await
+    );
+    assert!(
+        discord
+            .wait(WAIT, |d| d.state().deleted_messages.contains(&said))
+            .await
+    );
+    let replied = discord.say(im_channel.id, MASTER, "hello back");
+    assert!(
+        grid.wait_for(WAIT, |s| *s
+            == Seen::Im {
+                to: some.id,
+                message: "boss: hello back".into()
+            })
+        .await
+    );
+    assert!(
+        discord
+            .wait(WAIT, |d| d
+                .state()
+                .reactions
+                .contains(&(replied, "✅".into())))
+            .await
+    );
+    discord.say(im_channel.id, MASTER, "!offertp");
+    assert!(
+        grid.wait_for(WAIT, |s| *s == Seen::StartLure { target: some.id })
+            .await
+    );
+    discord.say(group_channel.id, MASTER, "hello group");
+    assert!(
+        grid.wait_for(WAIT, |s| *s
+            == Seen::GroupChatSend {
+                group: ferro_testgrid::TEST_GROUP,
+                message: "boss: hello group".into()
+            })
+        .await
+    );
+    let invite = discord.say(group_channel.id, MASTER, "!invite Other Avatar");
+    assert!(
+        grid.wait_for(WAIT, |s| matches!(s, Seen::GroupInvite { invitee, .. }
+            if *invitee == uuid_from(0x5eed_0002)))
+            .await
+    );
+    assert!(
+        discord
+            .wait(WAIT, |d| d
+                .state()
+                .reactions
+                .contains(&(invite, "✅".into())))
+            .await
+    );
+
+    // the commands channel: the answer as a reply
+    let asked = discord.say(commands.id, MASTER, "Hello");
+    assert!(
+        discord
+            .wait(WAIT, |d| d.state().messages.iter().any(|m| m.reply_to
+                == Some(asked)
+                && m.content.contains(r#""reply":"world""#)))
+            .await
+    );
+
+    // a visitor: refused everywhere, nothing reaches Second Life
+    let chats = grid.count(|s| matches!(s, Seen::Chat { channel: 0, .. }));
+    let refused = discord.say(localchat.id, VISITOR, "let me in");
+    let refused_command = discord.say(commands.id, VISITOR, "Logoff");
+    assert!(
+        discord
+            .wait(WAIT, |d| {
+                let st = d.state();
+                st.reactions.contains(&(refused, "❌".into()))
+                    && st.reactions.contains(&(refused_command, "❌".into()))
+            })
+            .await
+    );
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::Chat { channel: 0, .. })),
+        chats
+    );
+
+    // !close: the avatar's channel goes
+    discord.say(im_channel.id, MASTER, "!close");
+    assert!(
+        discord
+            .wait(WAIT, |d| d
+                .state()
+                .deleted_channels
+                .contains(&im_channel.id))
+            .await
+    );
+
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }

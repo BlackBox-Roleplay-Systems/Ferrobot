@@ -12,6 +12,10 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "toki
 glam = "0.34.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+# Discord (SecondBot's Discord service): the gateway, the REST API with its rate limits, the models (ISC)
+twilight-gateway = { version = "0.18.0", default-features = false, features = ["rustls-platform-verifier"] }
+twilight-http = { version = "0.18.0", default-features = false, features = ["rustls-platform-verifier"] }
+twilight-model = "0.18.0"
 # the commands' signatures are SHA-1, as SecondBot's (MIT / Apache-2.0)
 sha1 = "0.11.0"
 uuid = "1.27.0"

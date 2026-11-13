@@ -38,6 +38,13 @@ All settings come from environment variables.
 | `FERRO_HOME_SIT` | (none) | At home, sit on this object (its key); a Stand command stops it until the next login |
 | `FERRO_RATE_LIMIT` | `60` | Commands that change things in world (invites, ejects, chat…) per minute, bursts of 20; they wait their turn, up to a minute. `0`: no limit |
 | `FERRO_RELAY_1`, `FERRO_RELAY_2`… | (none) | Relays, in SecondBot's short form: `sType::localchat{}sFilter::avatar{}tType::webhook{}tConfig::https://…` |
+| `FERRO_DISCORD` | `false` | Discord: the bot on a Discord server (see "Discord" below) |
+| `FERRO_DISCORD_SERVER`, `FERRO_DISCORD_TOKEN` | (none) | The Discord server's ID, the Discord bot's token (a secret, never logged) |
+| `FERRO_DISCORD_MASTERS` | (none) | The Discord user IDs (comma-separated) whose words and commands the bot takes |
+| `FERRO_DISCORD_COMMANDS` | `false` | The `commands` channel: a master's message there runs a command |
+| `FERRO_DISCORD_HIDE_NAMES` | `false` | Lines sent to Second Life without the Discord user's name |
+| `FERRO_DISCORD_CLEAR_ON_CONNECT` | `true` | The bot's channels emptied when it connects (`commands` kept) |
+| `FERRO_DISCORD_INTERACTION`, `…_NAME`, `…_URL`, `…_CHANNEL` | `false`, `Go` | A message starting with the word, in that channel, posted to the address (signed) |
 | `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
@@ -52,10 +59,35 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`, `dialogrelay_RelayChannel`,
 `dialogrelay_RelayAvatar`, `dialogrelay_RelayHttpurl`, `dialogrelay_RelayObjectOwnerOnly`,
 `homebound_Enabled`, `homebound_HomeSimSlUrl`, `homebound_BackupSimSLUrl`,
-`homebound_ReturnToHomeSimAfterMins`, `homebound_AtHomeSeekLocation`, `homebound_AtHomeAutoSitUuid`, and the relays:
+`homebound_ReturnToHomeSimAfterMins`, `homebound_AtHomeSeekLocation`, `homebound_AtHomeAutoSitUuid`,
+`discord_Enabled`, `discord_ServerID`, `discord_ClientToken`, `discord_AllowDiscordCommands`,
+`discord_hideChatterName`, `discord_ClearChatOnConnect`, `discord_InteractionEnabled`,
+`discord_InteractionCommandName`, `discord_InteractionHttpTarget`,
+`discord_InteractionChannelNumber`, and the relays:
 `relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
 `relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
 `relay_<n>_target_option`, `relay_<n>_RelayConfig`.
+
+### Discord
+
+The bot on a Discord server, as SecondBot's Discord service: a `bot` category with `status`
+(its state), `localchat` and `commands`; an `im` category with a channel per avatar who IMs it
+(`!close`, `!offertp`, `!clear`); a `group` category with a channel per group
+(`!notice Title@@@Message[@@@item]`, `!eject`, `!invite`, `!ban`, `!clear`). What the bot hears
+in Second Life is posted there; what a **Discord master** (`FERRO_DISCORD_MASTERS`) writes there
+goes back to Second Life. Anyone else is answered ❌ and nothing reaches the bot.
+
+1. In the Discord Developer Portal, make an application with a bot; turn on its **Message
+   Content** intent (and **Server Members** for `Discord_MembersList`). Its token is
+   `FERRO_DISCORD_TOKEN`.
+2. Invite it to your server with these permissions: View Channels, Send Messages, Manage
+   Channels, Manage Messages, Read Message History, Add Reactions (and, for the commands: Manage
+   Roles, Ban Members, Mute Members).
+3. Set `FERRO_DISCORD=true`, `FERRO_DISCORD_SERVER` (the server's ID: Developer Mode, right-click
+   the server, Copy ID) and your own user ID in `FERRO_DISCORD_MASTERS`.
+
+There is no Discord voice (`Discord_VoiceJoin` fails): it needs audio libraries the container
+does not carry.
 
 ### Relays
 
@@ -109,7 +141,11 @@ avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileI
 (in world, region, logins, uptime, commands run and failed); SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,
 `haveunreadims`, `getimchat`, `Groupchat`, `GroupchatHistory`, `GroupchatListAllUnreadGroups`,
-`GroupchatGroupHasUnread`, `GroupchatAnyUnread`, `GroupchatClearAll`; its dialog commands:
+`GroupchatGroupHasUnread`, `GroupchatAnyUnread`, `GroupchatClearAll`; Discord: `Discord_AddRole`,
+`Discord_BanMember`, `Discord_GetMemberRoles`, `Discord_BulkClear_Messages`, `Discord_Dm_Member`,
+`Discord_MembersList`, `Discord_MessageChannel`, `Discord_MuteMember`, `Discord_Role_GetSettings`,
+`Discord_Role_UpdatePerms`, `Discord_RoleCreate`, `Discord_RoleList`, `Discord_RoleRemove`,
+`Discord_TextChannels_List`, `Discord_VoiceJoin`, `Discord_VoiceLeave`; its dialog commands:
 `DialogResponce`, `DialogRelayChatTarget`, `DialogRelayAvatarTarget`, `DialogRelayHttpTarget`.
 
 ### Behind a Cloudflare Tunnel

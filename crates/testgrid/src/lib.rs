@@ -13,6 +13,7 @@
 //! closed circuit. Each feature that talks to a region adds what it needs here (ROADMAP phase 1).
 
 mod caps;
+pub mod discord;
 mod groups;
 pub mod inventory;
 

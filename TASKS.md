@@ -147,7 +147,21 @@ baking: the bot says so and goes on.
 - 🟡 Relays (services/relays.rs, SecondBot's RelayService): local chat, avatar and object IMs,
   group chat, to local chat, an avatar, a group, HTTP (signed) or a webhook (Discord's format);
   SecondBot's relay settings and the short form; tested on the test grid
-- ⬜ Relays: SecondBot's Discord bot (two ways) and RabbitMQ targets
+- 🟡 Discord (crates/ferrobot/src/discord/, SecondBot's DiscordService, on twilight's gateway and
+  REST client): the `bot`, `im` and `group` categories and their channels, made when missing;
+  local chat, object IMs, an avatar's IMs and a group's chat posted there, the bot's state in
+  `status` and its region as its activity; back from Discord masters: local chat, IMs (`!close`,
+  `!offertp`, `!clear`), group chat (`!notice`, `!eject`, `!invite`, `!ban`, `!clear`), the
+  `commands` channel (the signed text form, as by IM), the interaction (a signed post to an
+  address); SecondBot's Discord_* commands. Tested against a stand-in Discord on localhost
+  (crates/testgrid/src/discord.rs). Deliberate differences: only Discord masters
+  (FERRO_DISCORD_MASTERS) speak through the bot or command it (SecondBot takes anyone on the
+  server), the `commands` channel follows FERRO_DISCORD_COMMANDS (SecondBot never reads its
+  AllowDiscordCommands), the lists answer as JSON (SecondBot prints C# type names), the inverted id
+  checks of four commands fixed, no voice (no audio library in the container)
+- ⬜ Discord: to try on a real server (human)
+- ⬜ Test grid: a login sometimes takes 5 s (seen in any test, Discord or not)
+- ⬜ Relays: RabbitMQ targets
 - 🟡 Homebound (services/homebound.rs, SecondBot's HomeboundService): home sim after
   FERRO_HOME_AFTER minutes away, backup sim when home fails, evacuation on a restart, the spot at
   home, paused by a master's teleport until the next login; regions by name (MapNameRequest, as
