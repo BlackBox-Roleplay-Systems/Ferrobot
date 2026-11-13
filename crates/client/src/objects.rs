@@ -457,6 +457,8 @@ pub struct Worn {
     pub point: u8,
     pub item: Uuid,
     pub local_id: u32,
+    /// The attachment's own key (an RLV restriction names it).
+    pub object: Uuid,
 }
 
 /// A root object and where it stands (GetObjectsInParcel).
@@ -675,6 +677,7 @@ impl Places {
                     point: attachment_point(k.state),
                     item: k.attach_item?,
                     local_id: k.local_id,
+                    object: k.full_id,
                 })
             })
             .collect()
@@ -871,7 +874,8 @@ mod tests {
             vec![Worn {
                 point: 1,
                 item,
-                local_id: 20
+                local_id: 20,
+                object: Uuid::from_u128(20),
             }]
         );
         assert_eq!(attachment_point(0x10), 1);

@@ -13,9 +13,9 @@ use uuid::Uuid;
 /// LLFolderType::FT_CURRENT_OUTFIT
 const CURRENT_OUTFIT: i32 = 46;
 /// LLAssetType: clothing, an object, a body part, a link.
-const CLOTHING: i32 = 5;
-const OBJECT: i32 = 6;
-const BODYPART: i32 = 13;
+pub const CLOTHING: i32 = 5;
+pub const OBJECT: i32 = 6;
+pub const BODYPART: i32 = 13;
 const LINK: i32 = 24;
 /// Attachments asked for one at a time (Aurora's attach_queue: bursts fail on a busy region).
 const ATTACH_SPACING: Duration = Duration::from_millis(250);
@@ -23,7 +23,7 @@ const ATTACH_SPACING: Duration = Duration::from_millis(250);
 const BEFORE_BAKE: Duration = Duration::from_secs(2);
 
 /// A wearable's type, in the low byte of its item flags (LLWearableType).
-fn wearable_type(i: &InvItem) -> u32 {
+pub fn wearable_type(i: &InvItem) -> u32 {
     i.flags & 0xff
 }
 
@@ -134,8 +134,12 @@ impl Client {
             self.link(cof, &item).await?;
         }
         let item = Box::new(item);
-        self.object_ask(|reply| ObjectRequest::Attach { item, reply })
-            .await
+        self.object_ask(|reply| ObjectRequest::Attach {
+            item,
+            add: true,
+            reply,
+        })
+        .await
     }
 
     /// Take off what was worn from an item, and its links in the Current Outfit Folder.
@@ -201,9 +205,116 @@ impl Client {
             .filter(|e| e.item.asset_type == OBJECT && !wearing.contains(&e.item.id))
         {
             let item = Box::new(e.item.clone());
-            self.object_ask(|reply| ObjectRequest::Attach { item, reply })
-                .await?;
+            self.object_ask(|reply| ObjectRequest::Attach {
+                item,
+                add: true,
+                reply,
+            })
+            .await?;
             tokio::time::sleep(ATTACH_SPACING).await;
+        }
+        tokio::time::sleep(BEFORE_BAKE).await;
+        self.rebake().await.map(|_| ())
+    }
+
+    /// What the Current Outfit Folder holds, links followed: the wearables and objects worn.
+    pub async fn outfit_items(&self) -> Result<Vec<InvItem>, ClientError> {
+        let cof = self.current_outfit_folder().await?;
+        Ok(self
+            .wearables_in(cof)
+            .await?
+            .into_iter()
+            .map(|e| e.item)
+            .collect())
+    }
+
+    /// Put items on, as LibreMetaverse's AddToOutfit does for SecondBot's CurrentOutfitFolder:
+    /// with `replace`, a wearable takes the place of those of its type and an object the place of
+    /// what is worn at its point; without, they are added to what is worn (a body part always
+    /// replaces its type: an avatar has one of each). Then, for wearables, the region bakes the
+    /// avatar again.
+    pub async fn add_to_outfit(
+        &self,
+        items: Vec<InvItem>,
+        replace: bool,
+    ) -> Result<(), ClientError> {
+        let items: Vec<InvItem> = items
+            .into_iter()
+            .filter(|i| matches!(i.asset_type, CLOTHING | OBJECT | BODYPART))
+            .collect();
+        if items.is_empty() {
+            return Ok(());
+        }
+        let cof = self.current_outfit_folder().await?;
+        let current = self.wearables_in(cof).await?;
+        let replaced = |e: &Entry| {
+            e.item.asset_type != OBJECT
+                && items.iter().any(|i| {
+                    i.asset_type != OBJECT
+                        && (e.item.id == i.id
+                            || ((replace || i.asset_type == BODYPART)
+                                && wearable_type(&e.item) == wearable_type(i)))
+                })
+        };
+        let gone: Vec<&Entry> = current.iter().filter(|e| replaced(e)).collect();
+        self.remove_items(gone.iter().filter_map(|e| e.link).collect())
+            .await?;
+        let kept: HashSet<Uuid> = current
+            .iter()
+            .filter(|e| !replaced(e))
+            .map(|e| e.item.id)
+            .collect();
+        for i in items.iter().filter(|i| !kept.contains(&i.id)) {
+            self.link(cof, i).await?;
+        }
+        let wearing: HashSet<Uuid> = self.worn().await?.iter().map(|w| w.item).collect();
+        for i in items
+            .iter()
+            .filter(|i| i.asset_type == OBJECT && !wearing.contains(&i.id))
+        {
+            let item = Box::new(i.clone());
+            self.object_ask(|reply| ObjectRequest::Attach {
+                item,
+                add: !replace,
+                reply,
+            })
+            .await?;
+            tokio::time::sleep(ATTACH_SPACING).await;
+        }
+        if items.iter().all(|i| i.asset_type == OBJECT) {
+            return Ok(());
+        }
+        tokio::time::sleep(BEFORE_BAKE).await;
+        self.rebake().await.map(|_| ())
+    }
+
+    /// Take items off (their real keys), as LibreMetaverse's RemoveFromOutfit does for
+    /// SecondBot's CurrentOutfitFolder: the objects detached, their links and the clothing's
+    /// gone from the Current Outfit Folder. Body parts stay: an avatar cannot go without. Then,
+    /// for clothing, the region bakes the avatar again.
+    pub async fn remove_from_outfit(&self, items: &[Uuid]) -> Result<(), ClientError> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        for w in self.worn().await? {
+            if items.contains(&w.item) {
+                let item = w.item;
+                self.object_ask(|reply| ObjectRequest::Detach { item, reply })
+                    .await?;
+            }
+        }
+        let cof = self.current_outfit_folder().await?;
+        let gone: Vec<Entry> = self
+            .wearables_in(cof)
+            .await?
+            .into_iter()
+            .filter(|e| items.contains(&e.item.id) && e.item.asset_type != BODYPART)
+            .collect();
+        let clothing = gone.iter().any(|e| e.item.asset_type == CLOTHING);
+        self.remove_items(gone.iter().filter_map(|e| e.link).collect())
+            .await?;
+        if !clothing {
+            return Ok(());
         }
         tokio::time::sleep(BEFORE_BAKE).await;
         self.rebake().await.map(|_| ())

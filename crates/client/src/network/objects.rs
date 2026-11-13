@@ -57,9 +57,11 @@ pub(crate) enum ObjectRequest {
     Worn {
         reply: oneshot::Sender<Vec<Worn>>,
     },
-    /// Wear an object from the inventory, added to what is worn (RezSingleAttachmentFromInv).
+    /// Wear an object from the inventory (RezSingleAttachmentFromInv): added to what is worn
+    /// (`add`), else in the place of what is worn at its point.
     Attach {
         item: Box<InvItem>,
+        add: bool,
         reply: oneshot::Sender<()>,
     },
     /// Take off what was worn from this item (DetachAttachmentIntoInv).
@@ -142,16 +144,17 @@ impl Session<'_> {
             ObjectRequest::Worn { reply } => {
                 let _ = reply.send(self.places.worn());
             }
-            ObjectRequest::Attach { item, reply } => {
+            ObjectRequest::Attach { item, add, reply } => {
                 // point 0: where the object was last worn; 0x80 adds it to what is worn
-                // (ATTACHMENT_ADD, LLAppearanceMgr::rezAttachment)
+                // (ATTACHMENT_ADD, LLAppearanceMgr::rezAttachment), without it replaces what is
+                // worn there
                 let mut m = RezSingleAttachmentFromInv::default();
                 m.agent_data.agent_id = agent;
                 m.agent_data.session_id = session;
                 let d = &mut m.object_data;
                 d.item_id = item.id;
                 d.owner_id = item.owner;
-                d.attachment_pt = 0x80;
+                d.attachment_pt = if add { 0x80 } else { 0 };
                 d.item_flags = item.flags;
                 d.group_mask = item.group_mask;
                 d.everyone_mask = item.everyone_mask;
