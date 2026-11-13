@@ -41,6 +41,37 @@ pub enum Event {
     /// Items came into the bot's inventory: an offer accepted, a copy made
     /// (BulkUpdateInventory, LLInventoryModel::processBulkUpdateInventory).
     InventoryAdded(Vec<AddedItem>),
+    /// Every AlertMessage and AgentAlertMessage as it comes, restart notices included
+    /// (LibreMetaverse's AgentManager.AlertMessage): what SecondBot's events tell. `Alert` and
+    /// `RegionRestart` are the same messages, read.
+    AlertMessage {
+        message: String,
+        /// The first AlertInfo's name (a notification such as "RegionRestartMinutes"), when the
+        /// message has one; never for AgentAlertMessage.
+        notification_id: Option<String>,
+    },
+    /// Every MoneyBalanceReply: a balance asked for, or a transaction (process_money_balance_reply,
+    /// Aurora's MoneyTransaction and Balance).
+    Money(MoneyBalance),
+}
+
+/// A MoneyBalanceReply: the balance, and the transaction it answers when there is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoneyBalance {
+    pub transaction_id: Uuid,
+    pub success: bool,
+    /// L$ after the transaction.
+    pub balance: i32,
+    pub description: String,
+    /// TransactionInfo: its type (lltransactiontype.h; 0 is a plain balance update), who paid,
+    /// who was paid, how much, and the item or message.
+    pub transaction_type: i32,
+    pub source_id: Uuid,
+    pub source_is_group: bool,
+    pub dest_id: Uuid,
+    pub dest_is_group: bool,
+    pub amount: i32,
+    pub item_description: String,
 }
 
 /// An item that came into the inventory.
