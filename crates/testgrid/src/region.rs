@@ -311,10 +311,9 @@ impl Region {
         self.shared.queue_event(n, "ParcelProperties", body);
         // the hat, worn on the skull
         self.attachment(to, crate::inventory::HAT, 2);
-        // a linkset of two prims on the parcel, owned by a resident
-        let owner = Uuid::from_u128(0x5eed_0001);
-        let mut root = object_block(OBJECT_LOCAL_ID, OBJECT, 0, LL_PCODE_VOLUME, OBJECT_POSITION);
-        root.owner_id = owner;
+        // a linkset of two prims on the parcel, owned by a resident whom the updates do not name
+        // (the region names the owner only of an object with a sound): ObjectProperties does
+        let root = object_block(OBJECT_LOCAL_ID, OBJECT, 0, LL_PCODE_VOLUME, OBJECT_POSITION);
         let mut child = object_block(
             OBJECT_LOCAL_ID + 1,
             OBJECT_CHILD,
@@ -322,7 +321,6 @@ impl Region {
             LL_PCODE_VOLUME,
             Vec3::Z,
         );
-        child.owner_id = owner;
         // the child is sculpted (PARAMS_SCULPT: its texture, LL_SCULPT_TYPE_SPHERE)
         let mut sculpt = vec![1u8];
         sculpt.extend(0x30u16.to_le_bytes());
@@ -975,6 +973,25 @@ impl Region {
                         m.agent_block.destination,
                         m.agent_block.destination_id
                     ),
+                });
+            }
+        } else if id == ObjectSelect::ID {
+            if let Ok(m) = pkt.decode::<ObjectSelect>() {
+                let ids: Vec<u32> = m.object_data.iter().map(|o| o.object_local_id).collect();
+                self.shared.saw(Seen::Object {
+                    what: format!("select {}", local_ids(&ids)),
+                });
+                // the objects it knows, in one ObjectProperties (LLSelectMgr's answer)
+                let object_data: Vec<_> = ids.iter().filter_map(|id| properties(*id)).collect();
+                if !object_data.is_empty() {
+                    self.send(from, &ObjectProperties { object_data }, true);
+                }
+            }
+        } else if id == ObjectDeselect::ID {
+            if let Ok(m) = pkt.decode::<ObjectDeselect>() {
+                let ids: Vec<u32> = m.object_data.iter().map(|o| o.object_local_id).collect();
+                self.shared.saw(Seen::Object {
+                    what: format!("deselect {}", local_ids(&ids)),
                 });
             }
         } else if id == ObjectGrab::ID {
@@ -1986,6 +2003,35 @@ pub const OBJECT: Uuid = Uuid::from_u128(0x0b1e_c701);
 pub const OBJECT_CHILD: Uuid = Uuid::from_u128(0x0b1e_c702);
 pub const OBJECT_LOCAL_ID: u32 = 0x0b0c;
 pub const OBJECT_POSITION: Vec3 = Vec3::new(100.0, 120.0, 22.0);
+
+/// The linkset's owner, its name and its creator, as its ObjectProperties tell them.
+pub const OBJECT_OWNER: Uuid = Uuid::from_u128(0x5eed_0001);
+pub const OBJECT_NAME: &str = "Garden Bench";
+pub const OBJECT_CREATOR: Uuid = Uuid::from_u128(0xc4ea_7041);
+
+/// Local ids in words: "1,2,3".
+fn local_ids(ids: &[u32]) -> String {
+    ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",")
+}
+
+/// The ObjectProperties of an object of the region's, by its local id: the linkset's root and
+/// the seat.
+fn properties(local_id: u32) -> Option<object_properties::ObjectData> {
+    let (object_id, name, description) = match local_id {
+        OBJECT_LOCAL_ID => (OBJECT, OBJECT_NAME, "Two prims"),
+        SEAT_LOCAL_ID => (SEAT, "Seat", ""),
+        _ => return None,
+    };
+    Some(object_properties::ObjectData {
+        object_id,
+        creator_id: OBJECT_CREATOR,
+        owner_id: OBJECT_OWNER,
+        last_owner_id: OBJECT_CREATOR,
+        name: str_field(name),
+        description: str_field(description),
+        ..Default::default()
+    })
+}
 
 /// The bot's avatar's local id in the region.
 const AVATAR_LOCAL_ID: u32 = 0xa0a0;

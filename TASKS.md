@@ -291,8 +291,16 @@ baking: the bot says so and goes on.
   root object by the parcel's x and y (SecondBot serialises LibreMetaverse's whole Primitive and
   also compares the height with the parcel's 0, so finds nothing). Tried on NGC: GetObjectsInParcel
   listed the region's objects
-- ⬜ Objects' owners and names (ObjectPropertiesFamily): an object update names its owner only
-  for an object with a sound, so GetObjectsInParcel's OwnerID is often nil
+- 🟡 Objects' owners and names (crates/client/src/objects.rs): an object update names its owner
+  only for an object with a sound, so the root objects a listing needs are selected then at once
+  deselected, and their ObjectProperties kept (ObjectPropertiesFamily too), at the pace of Aurora's
+  Area Search (app/area_search.rs, after FSAreaSearch: 254 per packet, three packets unanswered,
+  a round every 500 ms, asked again after 30 s); a listing waits up to 5 s for them.
+  GetObjectsInParcel's OwnerID is the properties' owner and its Properties (null while unknown)
+  carries ObjectID, CreatorID, OwnerID, GroupID, LastOwnerID, Name and Description; ListSculptys
+  takes the root's owner and name from them too; tested on the test grid. Deliberate differences:
+  SecondBot never asks (its OwnerID is nil without a sound, its Properties null, its ListSculptys
+  name "?" without name values)
 - 🟡 What the bot wears, through the Current Outfit Folder (crates/client/src/outfit.rs, as
   LibreMetaverse's AppearanceManager and CurrentOutfitFolder: LinkInventoryItem and
   RemoveInventoryItem for its links, RezSingleAttachmentFromInv to add an object,
