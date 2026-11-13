@@ -1,6 +1,7 @@
 //! The session's side of groups: the requests of LLGroupMgr (GroupMemberData and its
 //! GroupMembersRequest fallback, GroupRoleDataRequest, GroupRoleMembersRequest, GroupTitlesRequest,
-//! sendGroupMemberInvites, sendGroupMemberEjects, sendGroupRoleMemberChanges) and their replies,
+//! sendGroupMemberInvites, sendGroupMemberEjects, sendGroupRoleMemberChanges,
+//! sendCreateGroupRequest) and their replies,
 //! matched to who waits by the request id the replies repeat. As Aurora's session_groups.rs.
 
 use super::Session;
@@ -111,6 +112,11 @@ pub(crate) enum GroupRequest {
         ids: Vec<Uuid>,
         reply: oneshot::Sender<Result<Vec<Uuid>, String>>,
     },
+    /// CreateGroupRequest, answered by CreateGroupReply.
+    Create {
+        group: Box<groups::NewGroup>,
+        reply: oneshot::Sender<groups::GroupCreated>,
+    },
     /// Ask again for the group list (AgentDataUpdateRequest).
     Reload { reply: oneshot::Sender<()> },
     /// Answer a group invitation (send_join_group_response): an IM to the group.
@@ -137,6 +143,8 @@ pub(super) struct GroupWaits {
     leaves: HashMap<Uuid, Vec<oneshot::Sender<bool>>>,
     /// Group chats being joined, by group.
     chat_joins: HashMap<Uuid, Vec<oneshot::Sender<Result<(), String>>>>,
+    /// CreateGroupReply names no request: answered in order.
+    creates: VecDeque<oneshot::Sender<groups::GroupCreated>>,
 }
 
 struct Gathering<T> {
@@ -224,6 +232,7 @@ impl GroupWaits {
             v.retain(|tx| !tx.is_closed());
         }
         self.chat_joins.retain(|_, v| !v.is_empty());
+        self.creates.retain(|tx| !tx.is_closed());
     }
 }
 
@@ -384,6 +393,11 @@ impl Session<'_> {
                 ids,
                 reply,
             } => self.group_bans(group, action, ids, reply),
+            GroupRequest::Create { group, reply } => {
+                log::info!("creating the group \"{}\"", group.name.trim());
+                self.send(&groups::create_message(agent, session, &group), true);
+                self.groups.creates.push_back(reply);
+            }
             GroupRequest::Reload { reply } => {
                 let mut r = AgentDataUpdateRequest::default();
                 r.agent_data.agent_id = agent;
@@ -555,6 +569,19 @@ impl Session<'_> {
                 let g = m.group_data.group_id;
                 for tx in self.groups.leaves.remove(&g).unwrap_or_default() {
                     let _ = tx.send(m.group_data.success);
+                }
+            }
+        } else if id == CreateGroupReply::ID {
+            let m: CreateGroupReply = pkt.decode()?;
+            if m.agent_data.agent_id == me {
+                let created = groups::created_reply(&m);
+                log::info!(
+                    "group creation: success {}, {:?}",
+                    created.success,
+                    created.message
+                );
+                if let Some(tx) = self.groups.creates.pop_front() {
+                    let _ = tx.send(created);
                 }
             }
         } else if id == EjectGroupMemberReply::ID {

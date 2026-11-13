@@ -14,6 +14,8 @@ use uuid::Uuid;
 pub const MEMBERS_MAX_AGE: Duration = Duration::from_secs(60);
 /// A big group's member list comes over many packets when the region has no GroupMemberData.
 const MEMBERS_TIMEOUT: Duration = Duration::from_secs(30);
+/// SecondBot's GroupCreate waits this long for CreateGroupReply.
+const CREATE_TIMEOUT: Duration = Duration::from_secs(15);
 
 impl Client {
     fn check_group(&self, group: Uuid) -> Result<(), ClientError> {
@@ -349,6 +351,24 @@ impl Client {
         })
         .await?
         .map_err(ClientError::Refused)
+    }
+
+    /// Create a group, the bot its founder (CreateGroupRequest; the grid takes the fee). Waits
+    /// as SecondBot's GroupCreate does, 15 s; once created, the group list is asked for again.
+    pub async fn create_group(
+        &self,
+        group: crate::groups::NewGroup,
+    ) -> Result<crate::groups::GroupCreated, ClientError> {
+        let group = Box::new(group);
+        let created = self
+            .group_ask(CREATE_TIMEOUT, |reply| GroupRequest::Create { group, reply })
+            .await?;
+        if created.success
+            && let Err(e) = self.reload_groups().await
+        {
+            log::debug!("the group list after a creation: {e}");
+        }
+        Ok(created)
     }
 
     /// Ask the grid for the group list again (SecondBot's ForceLoadGroups).
