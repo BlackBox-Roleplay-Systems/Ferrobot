@@ -5925,3 +5925,225 @@ async fn ai_replies_through_a_chat_completions_api() {
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     assert!(!bot.log().contains(KEY), "the key in the log");
 }
+
+/// Waits for the bot to say `text` on `channel`.
+async fn said(grid: &TestGrid, bot: &Bot, channel: i32, text: &str) {
+    let what = format!("\"{text}\" on channel {channel}");
+    wait_for(grid, bot, &what, |s| {
+        matches!(s, Seen::Chat { message, channel: c, chat_type: 1 } if *c == channel && message == text)
+    })
+    .await;
+}
+
+/// RLV: the bot's own attachment and a master's object drive it with "@" commands said to their
+/// owner; a stranger's object does not. Restrictions, queries, the shared folder #RLV, an
+/// attachment that keeps itself on, sitting, turning, teleports; homebound off (SecondBot's).
+#[tokio::test]
+async fn rlv_objects_drive_the_bot() {
+    use ferro_testgrid::inventory as inv;
+    let grid = grid().await;
+    grid.share_folders();
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("rlv_Enabled", "True"),
+            ("FERRO_MASTERS", "Some Resident"),
+            ("FERRO_HOME_SIM", "Second Region/128/128/25"),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    bot.wait_log("homebound off: RLV is on").await;
+    let me = grid.agent_id();
+    let hat = ferro_testgrid::attachment_key(inv::HAT);
+    let say = |text: &str| grid.owner_say(hat, "Hat", me, text);
+
+    // restrictions kept, queries answered on their channels
+    say("@version=11,versionnew=12,versionnum=13,detach=n,sendchat=n,getstatus=14");
+    said(&grid, &bot, 11, "RestrainedLife viewer v1.23 (Ferrobot)").await;
+    said(&grid, &bot, 12, "RestrainedLove viewer v1.23 (Ferrobot)").await;
+    said(&grid, &bot, 13, "1230100").await;
+    said(&grid, &bot, 14, "/detach/sendchat").await;
+    say("@getsitid=15,getattach:head=16,getoutfit:shirt=17,getoutfit:socks=18,getgroup=19");
+    said(&grid, &bot, 15, &uuid::Uuid::nil().to_string()).await;
+    said(&grid, &bot, 16, "1").await;
+    said(&grid, &bot, 17, "1").await;
+    said(&grid, &bot, 18, "0").await;
+    said(&grid, &bot, 19, "Test Group").await;
+
+    // the shared folder
+    say("@getinv=20,getpath=21,getinvworn:Gear=22,findfolders:spa=23,findfolder:a=24");
+    said(&grid, &bot, 20, "Gear,Hats").await;
+    said(&grid, &bot, 21, "Hats").await;
+    said(&grid, &bot, 22, "|11,Spare|10").await;
+    said(&grid, &bot, 23, "Gear/Spare").await;
+    said(&grid, &bot, 24, "Gear/Spare").await;
+
+    // a stranger's object is not heard, a master's is
+    let stranger = uuid_from(0x0b1e_0001);
+    grid.owner_say(stranger, "Trap", uuid_from(0x5eed_0002), "@version=30");
+    let master_object = uuid_from(0x0b1e_0002);
+    grid.owner_say(
+        master_object,
+        "Relay",
+        uuid_from(0x5eed_0001),
+        "@fly=n,version=31",
+    );
+    said(&grid, &bot, 31, "RestrainedLife viewer v1.23 (Ferrobot)").await;
+    bot.wait_log("Trap is neither the bot's object nor a master's")
+        .await;
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::Chat { channel: 30, .. })),
+        0
+    );
+    say("@getstatusall=32");
+    said(&grid, &bot, 32, "/detach/sendchat/fly").await;
+
+    // the hat keeps itself on (@detach=n): RLV's detach leaves it, until lifted
+    say("@detach:head=force,versionnum=33");
+    said(&grid, &bot, 33, "1230100").await;
+    let hat_off = format!("detach {}", inv::HAT);
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::Object { what } if *what == hat_off)),
+        0,
+        "{}",
+        bot.log()
+    );
+    say("@detach=y,remattach:head=force");
+    wait_for(
+        &grid,
+        &bot,
+        "the hat taken off",
+        |s| matches!(s, Seen::Object { what } if *what == hat_off),
+    )
+    .await;
+
+    // the outfit from the shared folder: added (attachover), in place (attach), taken off
+    say("@attachover:gear=force");
+    let collar_on = format!("attach {} pt 128", inv::COLLAR);
+    let socks_linked = format!("link {} in {}", inv::SOCKS, inv::COF);
+    wait_for(
+        &grid,
+        &bot,
+        "the collar added",
+        |s| matches!(s, Seen::Object { what } if *what == collar_on),
+    )
+    .await;
+    wait_for(
+        &grid,
+        &bot,
+        "the socks linked",
+        |s| matches!(s, Seen::Object { what } if *what == socks_linked),
+    )
+    .await;
+    wait_for(&grid, &bot, "a bake", |s| {
+        matches!(s, Seen::AppearanceRequest { .. })
+    })
+    .await;
+    say("@attach:Gear/Spare=force");
+    let ring_on = format!("attach {} pt 0", inv::RING);
+    wait_for(
+        &grid,
+        &bot,
+        "the ring worn in place",
+        |s| matches!(s, Seen::Object { what } if *what == ring_on),
+    )
+    .await;
+    say("@getoutfit:socks=34");
+    said(&grid, &bot, 34, "1").await;
+    say("@detachall:gear=force");
+    for (what, item) in [
+        ("detach", inv::COLLAR),
+        ("detach", inv::RING),
+        ("unlink", inv::SOCKS),
+    ] {
+        let text = format!("{what} {item}");
+        wait_for(
+            &grid,
+            &bot,
+            &text,
+            |s| matches!(s, Seen::Object { what } if *what == text),
+        )
+        .await;
+    }
+
+    // group, sit, stand, turn
+    say("@setgroup:second group=force");
+    wait_for(&grid, &bot, "the second group active", |s| {
+        *s == Seen::ActivateGroup {
+            group: ferro_testgrid::SECOND_GROUP,
+        }
+    })
+    .await;
+    let seat = uuid_from(0x5ea7_0001);
+    say(&format!("@sit:{seat}=force"));
+    wait_for(&grid, &bot, "the sit request", |s| {
+        *s == Seen::AgentRequestSit { target: seat }
+    })
+    .await;
+    wait_for(&grid, &bot, "the bot seated", |s| *s == Seen::AgentSit).await;
+    // the seat the region placed it on
+    say("@getsitid=35");
+    wait_for(&grid, &bot, "the seat's key on channel 35", |s| {
+        matches!(s, Seen::Chat { message, channel: 35, .. }
+            if uuid::Uuid::parse_str(message).is_ok_and(|id| !id.is_nil()))
+    })
+    .await;
+    say("@unsit=force");
+    bot.wait_log("rlv: Stand:").await;
+    say("@setrot:1.5707964=force");
+    wait_for(&grid, &bot, "the bot facing east", |s| {
+        *s == Seen::Facing { heading: 90 }
+    })
+    .await;
+
+    // @clear: the hat's restrictions gone, the master's object keeps its own
+    say("@clear");
+    say("@getstatusall=36");
+    said(&grid, &bot, 36, "/fly").await;
+
+    // teleports: a region by name, then global coordinates
+    say("@tpto:Second Region/10/20/30=force");
+    let second = grid.region_handle(ferro_testgrid::SECOND_REGION);
+    wait_for(&grid, &bot, "a teleport to the second region", |s| {
+        matches!(s, Seen::TeleportLocationRequest { region_handle, .. } if *region_handle == second)
+    })
+    .await;
+    arrived(&grid, &bot, 1).await;
+    wait_for(&grid, &bot, "the arrival in the second region", |s| {
+        *s == Seen::CompleteAgentMovement {
+            session: 1,
+            region: ferro_testgrid::SECOND_REGION,
+        }
+    })
+    .await;
+    let first = grid.region_handle(ferro_testgrid::FIRST_REGION);
+    say("@tpto:256100/256200/25=force");
+    wait_for(&grid, &bot, "a teleport to the first region", |s| {
+        matches!(s, Seen::TeleportLocationRequest { region_handle, .. } if *region_handle == first)
+    })
+    .await;
+
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
+
+/// RLV is off unless asked for: an OwnerSay command does nothing.
+#[tokio::test]
+async fn rlv_is_off_by_default() {
+    let grid = grid().await;
+    let mut bot = Bot::start(&grid, &[]);
+    arrived(&grid, &bot, 1).await;
+    let hat = ferro_testgrid::attachment_key(ferro_testgrid::inventory::HAT);
+    grid.owner_say(hat, "Hat", grid.agent_id(), "@version=11");
+    // a line said after it comes back first: the command was not answered
+    grid.say("Other Avatar", "hello");
+    bot.wait_log("hello").await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::Chat { channel: 11, .. })),
+        0
+    );
+    assert!(!bot.log().contains("rlv on"));
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}
