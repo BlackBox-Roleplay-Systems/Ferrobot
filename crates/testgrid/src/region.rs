@@ -54,6 +54,9 @@ impl Region {
         let Some(c) = self.clients.get_mut(&to) else {
             return;
         };
+        if self.shared.silent(c.n) {
+            return;
+        }
         let seq = c.next_seq;
         c.next_seq += 1;
         build_packet(msg, seq, reliable, false, &[], &mut self.buf);
@@ -98,6 +101,9 @@ impl Region {
             self.send(from, &ack, false);
         }
         let n = self.clients[&from].n;
+        if self.shared.silent(n) {
+            return;
+        }
         let id = pkt.id;
         if id == StartPingCheck::ID {
             if let Ok(m) = pkt.decode::<StartPingCheck>() {
