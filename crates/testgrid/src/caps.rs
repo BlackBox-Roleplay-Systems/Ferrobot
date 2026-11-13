@@ -27,6 +27,7 @@ pub async fn handle(
         ("displaynames", "GET") => display_names(shared, n, query),
         ("groupmemberdata", "POST") => member_data(shared, body),
         ("chatsessionrequest", "POST") => chat_session_request(shared, body),
+        ("groupapi", "GET" | "POST") => group_api(shared, method, query, body),
         _ => Response::status(404),
     }
 }
@@ -52,6 +53,12 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         m.insert(
             "GetDisplayNames".into(),
             format!("http://{}/cap/{n}/{region}/displaynames", shared.http_addr).into(),
+        );
+    }
+    if caps.iter().any(|c| c == "GroupAPIv1") {
+        m.insert(
+            "GroupAPIv1".into(),
+            format!("http://{}/cap/{n}/{region}/groupapi", shared.http_addr).into(),
         );
     }
     if caps.iter().any(|c| c == "ChatSessionRequest") {
@@ -194,6 +201,49 @@ fn member_data(shared: &Arc<Shared>, body: &[u8]) -> Response {
         Some(g) => llsd_reply(&crate::groups::member_data(&g, shared.agent_id)),
         None => Response::status(403),
     }
+}
+
+/// GroupAPIv1, the group bans: `?group_id=`; GET the list, POST `{ban_action, ban_ids}`. A group
+/// the bot is not in, or where it has no ban power: 403.
+fn group_api(shared: &Arc<Shared>, method: &str, query: &str, body: &[u8]) -> Response {
+    let group = query
+        .split('&')
+        .find_map(|p| p.strip_prefix("group_id="))
+        .and_then(|g| g.parse::<uuid::Uuid>().ok())
+        .unwrap_or_default();
+    let mut st = shared.state();
+    let allowed = st
+        .groups
+        .iter()
+        .any(|g| g.id == group && g.bot_member && g.powers & crate::groups::GROUP_BAN_ACCESS != 0);
+    if !allowed {
+        return Response::status(403);
+    }
+    if method == "POST" {
+        let Ok(v) = from_xml(body) else {
+            return Response::status(400);
+        };
+        let ids: Vec<uuid::Uuid> = v["ban_ids"].as_array().iter().map(Llsd::as_uuid).collect();
+        let ban = v["ban_action"].as_i32() == 1;
+        let list = st.bans.entry(group).or_default();
+        for id in &ids {
+            list.retain(|b| b != id);
+            if ban {
+                list.push(*id);
+            }
+        }
+        drop(st);
+        shared.saw(Seen::GroupBanChange { group, ids, ban });
+        return llsd_reply(&Llsd::Map(Map::new()));
+    }
+    let mut list = Map::new();
+    for id in st.bans.get(&group).into_iter().flatten() {
+        list.insert(id.to_string(), Llsd::Map(Map::new()));
+    }
+    let mut v = Map::new();
+    v.insert("group_id".into(), group.into());
+    v.insert("ban_list".into(), Llsd::Map(list));
+    llsd_reply(&Llsd::Map(v))
 }
 
 /// ChatSessionRequest: "accept invitation" joins the bot to a group chat.

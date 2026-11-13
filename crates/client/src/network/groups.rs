@@ -75,6 +75,44 @@ pub(crate) enum GroupRequest {
         group: Uuid,
         reply: oneshot::Sender<()>,
     },
+    /// A group notice (send_group_notice): an IM to the group, an item attached or not.
+    Notice {
+        group: Uuid,
+        subject: String,
+        message: String,
+        item: Option<Uuid>,
+        reply: oneshot::Sender<()>,
+    },
+    /// Wear the title of one of the bot's roles (GroupTitleUpdate).
+    ActivateTitle {
+        group: Uuid,
+        role: Uuid,
+        reply: oneshot::Sender<()>,
+    },
+    /// Make a group the active one (ActivateGroup; the nil id: none).
+    Activate {
+        group: Uuid,
+        reply: oneshot::Sender<()>,
+    },
+    /// JoinGroupRequest, answered by JoinGroupReply's success.
+    Join {
+        group: Uuid,
+        reply: oneshot::Sender<bool>,
+    },
+    /// LeaveGroupRequest, answered by LeaveGroupReply's success.
+    Leave {
+        group: Uuid,
+        reply: oneshot::Sender<bool>,
+    },
+    /// The ban list (GroupAPIv1); with an action first, ban or unban these.
+    Bans {
+        group: Uuid,
+        action: Option<i32>,
+        ids: Vec<Uuid>,
+        reply: oneshot::Sender<Result<Vec<Uuid>, String>>,
+    },
+    /// Ask again for the group list (AgentDataUpdateRequest).
+    Reload { reply: oneshot::Sender<()> },
     /// Answer a group invitation (send_join_group_response): an IM to the group.
     AnswerInvite {
         group: Uuid,
@@ -94,6 +132,9 @@ pub(super) struct GroupWaits {
     titles: HashMap<Uuid, oneshot::Sender<Vec<GroupTitle>>>,
     /// EjectGroupMemberReply names the group only: answered in order.
     ejects: HashMap<Uuid, VecDeque<oneshot::Sender<bool>>>,
+    /// Joins and leaves asked for, by group.
+    joins: HashMap<Uuid, Vec<oneshot::Sender<bool>>>,
+    leaves: HashMap<Uuid, Vec<oneshot::Sender<bool>>>,
     /// Group chats being joined, by group.
     chat_joins: HashMap<Uuid, Vec<oneshot::Sender<Result<(), String>>>>,
 }
@@ -173,6 +214,12 @@ impl GroupWaits {
             q.retain(|tx| !tx.is_closed());
         }
         self.ejects.retain(|_, q| !q.is_empty());
+        for m in [&mut self.joins, &mut self.leaves] {
+            for v in m.values_mut() {
+                v.retain(|tx| !tx.is_closed());
+            }
+            m.retain(|_, v| !v.is_empty());
+        }
         for v in self.chat_joins.values_mut() {
             v.retain(|tx| !tx.is_closed());
         }
@@ -286,6 +333,64 @@ impl Session<'_> {
                 self.shared.state_mut().group_chats.retain(|g| *g != group);
                 let _ = reply.send(());
             }
+            GroupRequest::Notice {
+                group,
+                subject,
+                message,
+                item,
+                reply,
+            } => {
+                let (text, bucket) =
+                    groups::notice_to_send(&subject, &message, item.map(|i| (i, agent)));
+                self.send_im(group, dialog::GROUP_NOTICE, Uuid::nil(), &text, bucket);
+                let _ = reply.send(());
+            }
+            GroupRequest::ActivateTitle { group, role, reply } => {
+                let mut m = GroupTitleUpdate::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.agent_data.group_id = group;
+                m.agent_data.title_role_id = role;
+                self.send(&m, true);
+                let _ = reply.send(());
+            }
+            GroupRequest::Activate { group, reply } => {
+                let mut m = ActivateGroup::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.agent_data.group_id = group;
+                self.send(&m, true);
+                let _ = reply.send(());
+            }
+            GroupRequest::Join { group, reply } => {
+                let mut m = JoinGroupRequest::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.group_data.group_id = group;
+                self.send(&m, true);
+                self.groups.joins.entry(group).or_default().push(reply);
+            }
+            GroupRequest::Leave { group, reply } => {
+                let mut m = LeaveGroupRequest::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.group_data.group_id = group;
+                self.send(&m, true);
+                self.groups.leaves.entry(group).or_default().push(reply);
+            }
+            GroupRequest::Bans {
+                group,
+                action,
+                ids,
+                reply,
+            } => self.group_bans(group, action, ids, reply),
+            GroupRequest::Reload { reply } => {
+                let mut r = AgentDataUpdateRequest::default();
+                r.agent_data.agent_id = agent;
+                r.agent_data.session_id = session;
+                self.send(&r, true);
+                let _ = reply.send(());
+            }
             GroupRequest::AnswerInvite {
                 group,
                 transaction,
@@ -337,6 +442,39 @@ impl Session<'_> {
                     None => Err("GroupMemberData: no member data received".to_owned()),
                 },
                 Err(e) => Err(format!("GroupMemberData: {e}")),
+            };
+            let _ = reply.send(answer);
+        });
+    }
+
+    /// The ban list through GroupAPIv1 (Aurora's group_bans: the group in the query; a POST bans
+    /// or unbans, then the list is fetched again).
+    fn group_bans(
+        &mut self,
+        group: Uuid,
+        action: Option<i32>,
+        ids: Vec<Uuid>,
+        reply: oneshot::Sender<Result<Vec<Uuid>, String>>,
+    ) {
+        let Some(cap) = self.caps.get("GroupAPIv1").cloned() else {
+            let _ = reply.send(Err("no GroupAPIv1 capability".into()));
+            return;
+        };
+        let url = format!("{cap}?group_id={group}");
+        let http = self.http.clone();
+        tokio::spawn(async move {
+            if let Some(action) = action
+                && let Err(e) =
+                    crate::caps::post_llsd(&http, &url, &groups::ban_body(action, &ids)).await
+            {
+                let _ = reply.send(Err(format!("GroupAPIv1: {e}")));
+                return;
+            }
+            let answer = match crate::caps::get_llsd(&http, &url).await {
+                Ok(v) => groups::ban_list(&v)
+                    .map(|(_, bans)| bans.into_iter().map(|(id, _)| id).collect())
+                    .ok_or_else(|| "GroupAPIv1: no ban list".to_owned()),
+                Err(e) => Err(format!("GroupAPIv1: {e}")),
             };
             let _ = reply.send(answer);
         });
@@ -402,6 +540,22 @@ impl Session<'_> {
                 && let Some(tx) = self.groups.titles.remove(&m.agent_data.request_id)
             {
                 let _ = tx.send(groups::titles_reply(&m));
+            }
+        } else if id == JoinGroupReply::ID {
+            let m: JoinGroupReply = pkt.decode()?;
+            if m.agent_data.agent_id == me {
+                let g = m.group_data.group_id;
+                for tx in self.groups.joins.remove(&g).unwrap_or_default() {
+                    let _ = tx.send(m.group_data.success);
+                }
+            }
+        } else if id == LeaveGroupReply::ID {
+            let m: LeaveGroupReply = pkt.decode()?;
+            if m.agent_data.agent_id == me {
+                let g = m.group_data.group_id;
+                for tx in self.groups.leaves.remove(&g).unwrap_or_default() {
+                    let _ = tx.send(m.group_data.success);
+                }
             }
         } else if id == EjectGroupMemberReply::ID {
             let m: EjectGroupMemberReply = pkt.decode()?;

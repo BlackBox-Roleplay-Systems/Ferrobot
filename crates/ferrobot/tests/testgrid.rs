@@ -819,6 +819,122 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// SecondBot's other group commands: notices, bans, titles, the active group, join and leave.
+    #[tokio::test]
+    async fn more_group_commands() {
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("in 2 groups").await;
+        let group = TEST_GROUP.to_string();
+        let third = ferro_testgrid::THIRD_GROUP.to_string();
+        let officers = ferro_testgrid::OFFICERS.to_string();
+
+        assert_eq!(
+            api.reply("Groupnotice", &[&group, "Hello", "A notice"])
+                .await,
+            "Sending notice"
+        );
+        let item = "00000000-0000-0000-0000-0000000000aa";
+        assert_eq!(
+            api.reply(
+                "GroupnoticeWithAttachment",
+                &[&group, "Hi", "With an item", item]
+            )
+            .await,
+            "Sending notice with attachment"
+        );
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.contains(&Seen::GroupNotice {
+                    group: TEST_GROUP,
+                    message: "Hello|A notice".into(),
+                    attached: false,
+                }) && seen.contains(&Seen::GroupNotice {
+                    group: TEST_GROUP,
+                    message: "Hi|With an item".into(),
+                    attached: true,
+                })
+            })
+            .await
+        );
+        assert_eq!(
+            api.failure("Groupnotice", &[&third, "x", "y"]).await.0,
+            "Unknown group"
+        );
+
+        // bans: an avatar banned (ejected first), listed, unbanned
+        assert_eq!(api.reply("GetGroupBanList", &[&group]).await, "[]");
+        assert_eq!(
+            api.reply("GroupBan", &[&group, OTHER, "true"]).await,
+            format!("Accepted Ban for {OTHER}")
+        );
+        assert!(
+            !grid
+                .group_members(TEST_GROUP)
+                .iter()
+                .any(|m| m.id == uuid_from(0x5eed_0002))
+        );
+        assert_eq!(
+            api.reply("GetGroupBanList", &[&group]).await,
+            format!(r#"["{OTHER}"]"#)
+        );
+        assert_eq!(
+            api.reply("GroupBan", &[&group, OTHER, "false"]).await,
+            format!("Accepted Unban for {OTHER}")
+        );
+        assert_eq!(api.reply("GetGroupBanList", &[&group]).await, "[]");
+
+        // titles and the active group
+        let titles: Value =
+            serde_json::from_str(&api.reply("GetGroupTitles", &[&group]).await).expect("map");
+        assert_eq!(titles[&officers]["title"], "Bot");
+        assert_eq!(titles[&officers]["selected"], true);
+        assert_eq!(
+            api.reply("GroupActiveTitle", &[&group, &officers]).await,
+            "Switching title"
+        );
+        let second = ferro_testgrid::SECOND_GROUP.to_string();
+        assert_eq!(
+            api.reply("GroupActiveGroup", &[&second]).await,
+            "Switching active group"
+        );
+        assert!(
+            grid.wait_until(WAIT, |seen| {
+                seen.contains(&Seen::GroupTitleUpdate {
+                    group: TEST_GROUP,
+                    role: ferro_testgrid::OFFICERS,
+                }) && seen.contains(&Seen::ActivateGroup {
+                    group: ferro_testgrid::SECOND_GROUP,
+                })
+            })
+            .await
+        );
+
+        // a member's roles
+        let roles: Value =
+            serde_json::from_str(&api.reply("GetGroupMemberRoles", &[&group, SOME]).await)
+                .expect("map");
+        assert_eq!(roles[ferro_testgrid::BUILDERS.to_string()], "Builders");
+        assert_eq!(roles[ferro_testgrid::OWNERS.to_string()], "Owners");
+
+        // join the open group, leave it
+        assert_eq!(api.reply("GroupJoin", &[&third]).await, "Joined group");
+        bot.wait_log("in 3 groups").await;
+        assert_eq!(api.reply("GroupJoin", &[&third]).await, "Already in group");
+        assert_eq!(api.reply("GroupLeave", &[&third]).await, "Left group");
+        assert!(
+            grid.wait_until(WAIT, |seen| seen.contains(&Seen::LeaveGroup {
+                group: ferro_testgrid::THIRD_GROUP
+            }))
+            .await
+        );
+        assert_eq!(api.reply("ForceLoadGroups", &[]).await, "Working on it");
+
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's Chat and Groupchat commands, and the history behind them.
     #[tokio::test]
     async fn chat_commands_and_their_history() {

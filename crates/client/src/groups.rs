@@ -424,6 +424,53 @@ pub fn invite_messages(
         .collect()
 }
 
+/// The instant message text and binary bucket of send_group_notice: the subject and the message
+/// joined by "|", the attachment as an LLSD map of its item and owner, or the empty bucket.
+pub fn notice_to_send(
+    subject: &str,
+    message: &str,
+    item: Option<(Uuid, Uuid)>,
+) -> (String, Vec<u8>) {
+    let text = format!("{subject}|{message}");
+    let bucket = match item {
+        // send_group_notice (indra/newview/llviewermessage.cpp) uses LLSDSerialize's format
+        // header, without a terminating null. The HTTP XML declaration alone is rejected as
+        // inventory by the sim.
+        Some((item, owner)) => {
+            ferro_llsd::to_serialized_xml(&llsd_map! { "item_id" => item, "owner_id" => owner })
+        }
+        // EMPTY_BINARY_BUCKET
+        None => vec![0],
+    };
+    (text, bucket)
+}
+
+/// GroupAPIv1's ban actions (LLGroupMgr::BAN_CREATE, BAN_DELETE).
+pub mod ban {
+    pub const CREATE: i32 = 1;
+    pub const DELETE: i32 = 2;
+}
+
+/// The body of a ban POST (postGroupBanRequestCoro).
+pub fn ban_body(action: i32, ids: &[Uuid]) -> Llsd {
+    llsd_map! {
+        "ban_action" => action,
+        "ban_ids" => Llsd::Array(ids.iter().map(|id| Llsd::from(*id)).collect()),
+    }
+}
+
+/// processGroupBanRequest: the group and its banned residents with the date of each ban (Unix
+/// time, 0 when not given).
+pub fn ban_list(v: &Llsd) -> Option<(Uuid, Vec<(Uuid, f64)>)> {
+    let group = v["group_id"].as_uuid();
+    let list = v["ban_list"].as_map()?;
+    let bans = list
+        .iter()
+        .filter_map(|(id, entry)| Some((Uuid::parse_str(id).ok()?, entry["ban_date"].as_f64())))
+        .collect();
+    Some((group, bans))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,6 +745,28 @@ mod tests {
                 false
             )),
             [0, 3]
+        );
+    }
+
+    #[test]
+    fn notices_and_bans() {
+        let (text, bucket) = notice_to_send("Hi", "Body", None);
+        assert_eq!((text.as_str(), bucket.as_slice()), ("Hi|Body", &[0u8][..]));
+        let (_, bucket) =
+            notice_to_send("Hi", "Body", Some((Uuid::from_u128(1), Uuid::from_u128(2))));
+        let xml = String::from_utf8(bucket).expect("text");
+        assert!(xml.contains("item_id") && !xml.ends_with('\0'));
+        let body = ban_body(ban::CREATE, &[Uuid::from_u128(10)]);
+        assert_eq!(body["ban_action"].as_i32(), 1);
+        assert_eq!(body["ban_ids"].as_array()[0].as_uuid(), Uuid::from_u128(10));
+        let mut list = ferro_llsd::Map::new();
+        list.insert(Uuid::from_u128(10).to_string(), llsd_map! {});
+        let (g, bans) =
+            ban_list(&llsd_map! { "group_id" => Uuid::from_u128(9), "ban_list" => list })
+                .expect("list");
+        assert_eq!(
+            (g, bans),
+            (Uuid::from_u128(9), vec![(Uuid::from_u128(10), 0.0)])
         );
     }
 }

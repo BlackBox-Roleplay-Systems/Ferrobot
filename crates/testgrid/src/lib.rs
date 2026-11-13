@@ -229,6 +229,31 @@ pub enum Seen {
     GroupChatStart {
         group: Uuid,
     },
+    /// A group notice: "subject|message", and whether an item came with it.
+    GroupNotice {
+        group: Uuid,
+        message: String,
+        attached: bool,
+    },
+    GroupTitleUpdate {
+        group: Uuid,
+        role: Uuid,
+    },
+    ActivateGroup {
+        group: Uuid,
+    },
+    JoinGroup {
+        group: Uuid,
+    },
+    LeaveGroup {
+        group: Uuid,
+    },
+    /// GroupAPIv1: a ban (`ban`) or an unban.
+    GroupBanChange {
+        group: Uuid,
+        ids: Vec<Uuid>,
+        ban: bool,
+    },
     /// ChatSessionRequest "accept invitation".
     GroupChatAccept {
         group: Uuid,
@@ -331,6 +356,10 @@ struct State {
     group_invites: HashMap<Uuid, Uuid>,
     /// The group chats the bot is in.
     group_chats: HashSet<Uuid>,
+    /// The bot's active group, as it changes it.
+    active_group: Option<Uuid>,
+    /// The banned avatars, by group.
+    bans: HashMap<Uuid, Vec<Uuid>>,
 }
 
 /// A region as the others see it.
@@ -482,6 +511,7 @@ impl TestGrid {
             },
         ];
         let groups = cfg.groups.clone();
+        let active_group = cfg.active_group;
         let shared = Arc::new(Shared {
             cfg,
             agent_id: Uuid::new_v4(),
@@ -495,6 +525,8 @@ impl TestGrid {
                 groups,
                 group_invites: HashMap::new(),
                 group_chats: HashSet::new(),
+                active_group,
+                bans: HashMap::new(),
             }),
             eq_wake: Notify::new(),
         });

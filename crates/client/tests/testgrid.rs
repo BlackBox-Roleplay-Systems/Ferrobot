@@ -117,8 +117,8 @@ async fn the_state_after_arrival() {
         .find(|g| g.name == "Test Group")
         .expect("Test Group");
     assert_eq!(test_group.id, Uuid::from_u128(0x6000_0001));
-    // invite, eject, assign and remove members
-    assert_eq!(test_group.powers, 0x306);
+    // invite, eject, assign and remove members, ban
+    assert_eq!(test_group.powers, 0x306 | (1 << 51));
     assert!(test_group.accept_notices);
 
     assert!(matches!(r.logout().await, End::LoggedOut));

@@ -22,6 +22,7 @@ pub const MEMBER_INVITE: u64 = 1 << 1;
 pub const MEMBER_EJECT: u64 = 1 << 2;
 pub const ROLE_ASSIGN_MEMBER: u64 = 1 << 8;
 pub const ROLE_REMOVE_MEMBER: u64 = 1 << 9;
+pub const GROUP_BAN_ACCESS: u64 = 1 << 51;
 const NOTICES_RECEIVE: u64 = 1 << 43;
 
 /// Entries per reply packet.
@@ -43,7 +44,11 @@ pub fn default_groups() -> Vec<GridGroup> {
             id: TEST_GROUP,
             name: "Test Group".into(),
             title: "Bot".into(),
-            powers: MEMBER_INVITE | MEMBER_EJECT | ROLE_ASSIGN_MEMBER | ROLE_REMOVE_MEMBER,
+            powers: MEMBER_INVITE
+                | MEMBER_EJECT
+                | ROLE_ASSIGN_MEMBER
+                | ROLE_REMOVE_MEMBER
+                | GROUP_BAN_ACCESS,
             bot_member: true,
             bot_roles: vec![OFFICERS],
             roles: vec![

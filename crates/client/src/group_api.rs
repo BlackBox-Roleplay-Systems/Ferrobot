@@ -253,4 +253,107 @@ impl Client {
         })
         .await
     }
+
+    /// Send a group notice, an item of the bot's attached or not (needs the notices power).
+    pub async fn group_notice(
+        &self,
+        group: Uuid,
+        subject: &str,
+        message: &str,
+        item: Option<Uuid>,
+    ) -> Result<(), ClientError> {
+        self.check_group(group)?;
+        let (subject, message) = (subject.to_owned(), message.to_owned());
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Notice {
+            group,
+            subject,
+            message,
+            item,
+            reply,
+        })
+        .await
+    }
+
+    /// Wear the title of one of the bot's roles in the group.
+    pub async fn group_activate_title(&self, group: Uuid, role: Uuid) -> Result<(), ClientError> {
+        self.check_group(group)?;
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| {
+            GroupRequest::ActivateTitle { group, role, reply }
+        })
+        .await
+    }
+
+    /// Make the group the bot's active group (the grid answers with AgentDataUpdate).
+    pub async fn group_activate(&self, group: Uuid) -> Result<(), ClientError> {
+        self.check_group(group)?;
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Activate {
+            group,
+            reply,
+        })
+        .await
+    }
+
+    /// Join a group with open enrollment; false when the grid refused (invite only, a fee).
+    pub async fn group_join(&self, group: Uuid) -> Result<bool, ClientError> {
+        self.ask(|reply| Request::Group(GroupRequest::Join { group, reply }))
+            .await
+    }
+
+    /// Leave a group; false when the grid refused.
+    pub async fn group_leave(&self, group: Uuid) -> Result<bool, ClientError> {
+        self.check_group(group)?;
+        let left = self
+            .group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Leave {
+                group,
+                reply,
+            })
+            .await?;
+        if left {
+            self.forget_group_members(group);
+        }
+        Ok(left)
+    }
+
+    /// The avatars banned from the group (GroupAPIv1; needs the ban power).
+    pub async fn group_bans(&self, group: Uuid) -> Result<Vec<Uuid>, ClientError> {
+        self.check_group(group)?;
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Bans {
+            group,
+            action: None,
+            ids: Vec::new(),
+            reply,
+        })
+        .await?
+        .map_err(ClientError::Refused)
+    }
+
+    /// Ban (or unban) avatars from the group; answers the ban list after.
+    pub async fn group_ban(
+        &self,
+        group: Uuid,
+        ids: &[Uuid],
+        ban: bool,
+    ) -> Result<Vec<Uuid>, ClientError> {
+        self.check_group(group)?;
+        let action = if ban {
+            crate::groups::ban::CREATE
+        } else {
+            crate::groups::ban::DELETE
+        };
+        let ids = ids.to_vec();
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Bans {
+            group,
+            action: Some(action),
+            ids,
+            reply,
+        })
+        .await?
+        .map_err(ClientError::Refused)
+    }
+
+    /// Ask the grid for the group list again (SecondBot's ForceLoadGroups).
+    pub async fn reload_groups(&self) -> Result<(), ClientError> {
+        self.ask(|reply| Request::Group(GroupRequest::Reload { reply }))
+            .await
+    }
 }

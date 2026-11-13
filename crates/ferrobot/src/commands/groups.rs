@@ -239,3 +239,257 @@ pub async fn group_remove_role(client: &Client, group: &str, who: &str, role: &s
         Err(e) => failure(C, why(&e), &args),
     }
 }
+
+/// Groupnotice and GroupnoticeWithAttachment: "Sending notice" (with attachment).
+pub async fn group_notice(
+    client: &Client,
+    group: &str,
+    title: &str,
+    message: &str,
+    attachment: Option<&str>,
+) -> Answer {
+    let (c, args) = match attachment {
+        Some(a) => (
+            "GroupnoticeWithAttachment",
+            owned(&[group, title, message, a]),
+        ),
+        None => ("Groupnotice", owned(&[group, title, message])),
+    };
+    let Some(id) = key(group) else {
+        return failure(c, "Invaild group UUID", &args);
+    };
+    let item = match attachment {
+        Some(a) => match key(a) {
+            Some(item) => Some(item),
+            None => return failure(c, "Invaild inventory UUID", &args),
+        },
+        None => None,
+    };
+    if !known_group(client, id) {
+        return failure(c, "Unknown group", &args);
+    }
+    if title.trim().is_empty() {
+        return failure(c, "Title empty", &args);
+    }
+    if message.trim().is_empty() {
+        return failure(c, "Message empty", &args);
+    }
+    let done = if item.is_some() {
+        "Sending notice with attachment"
+    } else {
+        "Sending notice"
+    };
+    match client.group_notice(id, title, message, item).await {
+        Ok(()) => basic(c, done, &args),
+        Err(e) => failure(c, why(&e), &args),
+    }
+}
+
+/// GetGroupBanList: the keys of the banned avatars.
+pub async fn get_group_ban_list(client: &Client, group: &str) -> Answer {
+    const C: &str = "GetGroupBanList";
+    let args = owned(&[group]);
+    let Some(id) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    if !known_group(client, id) {
+        return failure(C, "Unknown group", &args);
+    }
+    match client.group_bans(id).await {
+        Ok(bans) => {
+            let ids: Vec<String> = bans.iter().map(ToString::to_string).collect();
+            basic(C, &json(&ids), &args)
+        }
+        Err(ClientError::Timeout) => failure(C, "No reply from the grid [Retry later]", &args),
+        Err(_) => failure(
+            C,
+            "Ban list request failed [Does the bot have the GroupBanAccess power?]",
+            &args,
+        ),
+    }
+}
+
+/// GroupBan: ejected first, then banned ("true") or unbanned ("false").
+pub async fn group_ban(client: &Client, group: &str, who: &str, state: &str) -> Answer {
+    const C: &str = "GroupBan";
+    let args = owned(&[group, who, state]);
+    let Some(gid) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    if !known_group(client, gid) {
+        return failure(C, "Unknown group", &args);
+    }
+    let Some(id) = avatar(client, who).await else {
+        return failure(C, "Unknown avatar", &args);
+    };
+    let ban = state != "false";
+    if ban && client.is_group_member(gid, id).await == Ok(true) {
+        let _ = client.group_eject(gid, id).await;
+    }
+    match client.group_ban(gid, &[id], ban).await {
+        Ok(_) => {
+            let action = if ban { "Ban" } else { "Unban" };
+            basic(C, &format!("Accepted {action} for {id}"), &[])
+        }
+        Err(_) => failure(C, "Missing group GroupBanAccess power", &args),
+    }
+}
+
+/// GetGroupTitles: `{role: {title, selected}}` of the bot's titles.
+pub async fn get_group_titles(client: &Client, group: &str) -> Answer {
+    const C: &str = "GetGroupTitles";
+    let args = owned(&[group]);
+    let Some(id) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    if !known_group(client, id) {
+        return failure(C, "Unknown group", &args);
+    }
+    #[derive(serde::Serialize)]
+    struct Title {
+        title: String,
+        selected: bool,
+    }
+    match client.group_titles(id).await {
+        Ok(titles) => {
+            let map: BTreeMap<String, Title> = titles
+                .into_iter()
+                .map(|t| {
+                    (
+                        t.role.to_string(),
+                        Title {
+                            title: t.title,
+                            selected: t.selected,
+                        },
+                    )
+                })
+                .collect();
+            basic(C, &json(&map), &args)
+        }
+        Err(_) => failure(C, "No reply from the grid [Retry later]", &args),
+    }
+}
+
+/// GroupActiveTitle: "Switching title".
+pub async fn group_active_title(client: &Client, group: &str, role: &str) -> Answer {
+    const C: &str = "GroupActiveTitle";
+    let args = owned(&[group, role]);
+    let Some(gid) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    let Some(rid) = key(role) else {
+        return failure(C, "Invaild role UUID", &args);
+    };
+    if !known_group(client, gid) {
+        return failure(C, "Unknown group", &args);
+    }
+    match client.group_activate_title(gid, rid).await {
+        Ok(()) => basic(C, "Switching title", &args),
+        Err(e) => failure(C, why(&e), &args),
+    }
+}
+
+/// GroupActiveGroup: "Switching active group".
+pub async fn group_active_group(client: &Client, group: &str) -> Answer {
+    const C: &str = "GroupActiveGroup";
+    let args = owned(&[group]);
+    let Some(gid) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    if !known_group(client, gid) {
+        return failure(C, "Unknown group", &args);
+    }
+    match client.group_activate(gid).await {
+        Ok(()) => basic(C, "Switching active group", &args),
+        Err(e) => failure(C, why(&e), &args),
+    }
+}
+
+/// GroupJoin: a group with open enrollment.
+pub async fn group_join(client: &Client, group: &str) -> Answer {
+    const C: &str = "GroupJoin";
+    let args = owned(&[group]);
+    let Some(gid) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    if known_group(client, gid) {
+        return basic(C, "Already in group", &args);
+    }
+    match client.group_join(gid).await {
+        Ok(true) => {
+            let _ = client.reload_groups().await;
+            basic(C, "Joined group", &args)
+        }
+        Ok(false) => failure(
+            C,
+            "Join failed (group is invite only or the fee could not be paid)",
+            &args,
+        ),
+        Err(_) => failure(C, "No reply from the grid [Retry later]", &args),
+    }
+}
+
+/// GroupLeave: the bot leaves, its roles and powers in the group with it.
+pub async fn group_leave(client: &Client, group: &str) -> Answer {
+    const C: &str = "GroupLeave";
+    let args = owned(&[group]);
+    let Some(gid) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    if !known_group(client, gid) {
+        return failure(C, "Unknown group", &args);
+    }
+    match client.group_leave(gid).await {
+        Ok(true) => {
+            let _ = client.reload_groups().await;
+            basic(C, "Left group", &args)
+        }
+        Ok(false) => failure(C, "Leave failed", &args),
+        Err(_) => failure(C, "No reply from the grid [Retry later]", &args),
+    }
+}
+
+/// GetGroupMemberRoles: `{role: name}` of a member's roles.
+pub async fn get_group_member_roles(client: &Client, group: &str, who: &str) -> Answer {
+    const C: &str = "GetGroupMemberRoles";
+    let args = owned(&[group, who]);
+    let Some(gid) = key(group) else {
+        return failure(C, "Invaild group UUID", &args);
+    };
+    if !known_group(client, gid) {
+        return failure(C, "Unknown group", &args);
+    }
+    let Some(id) = avatar(client, who).await else {
+        return failure(C, "avatar lookup", &args);
+    };
+    match client.is_group_member(gid, id).await {
+        Ok(true) => {}
+        Ok(false) => return failure(C, "Not in group", &args),
+        Err(e) => return failure(C, why(&e), &args),
+    }
+    let (Ok(pairs), Ok(roles)) = (
+        client.group_role_members(gid).await,
+        client.group_roles(gid).await,
+    ) else {
+        return failure(C, "No reply from the grid [Retry later]", &args);
+    };
+    let map: BTreeMap<String, String> = pairs
+        .iter()
+        .filter(|(_, m)| *m == id)
+        .map(|(r, _)| {
+            let name = roles
+                .iter()
+                .find(|x| x.id == *r)
+                .map(|x| x.name.clone())
+                .unwrap_or_default();
+            (r.to_string(), name)
+        })
+        .collect();
+    basic(C, &json(&map), &args)
+}
+
+/// ForceLoadGroups: "Working on it".
+pub async fn force_load_groups(client: &Client) -> Answer {
+    let _ = client.reload_groups().await;
+    basic("ForceLoadGroups", "Working on it", &[])
+}

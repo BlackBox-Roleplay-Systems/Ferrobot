@@ -53,6 +53,24 @@ pub async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd) -> Result
     from_xml(&bytes).map_err(|_| CapsError::Malformed)
 }
 
+pub async fn get_llsd(http: &reqwest::Client, url: &str) -> Result<Llsd, CapsError> {
+    let resp = http
+        .get(url)
+        .header("Accept", "application/llsd+xml")
+        .send()
+        .await
+        .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(CapsError::Status(status.as_u16()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
+    from_xml(&bytes).map_err(|_| CapsError::Malformed)
+}
+
 /// Ask the seed for the capabilities, a few times (the region may not be ready at once).
 pub async fn resolve_seed(
     http: &reqwest::Client,

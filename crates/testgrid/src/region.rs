@@ -274,9 +274,15 @@ impl Region {
     /// group list as AgentGroupDataUpdate on the event queue, as the grid sends them.
     fn agent_data(&mut self, to: SocketAddr, n: u32) {
         let cfg = &self.shared.cfg;
-        let active = cfg
-            .active_group
-            .and_then(|id| cfg.groups.iter().find(|g| g.id == id));
+        let active = {
+            let st = self.shared.state();
+            st.active_group.and_then(|id| {
+                st.groups
+                    .iter()
+                    .find(|g| g.id == id && g.bot_member)
+                    .cloned()
+            })
+        };
         let mut m = AgentDataUpdate::default();
         m.agent_data.agent_id = self.shared.agent_id;
         m.agent_data.first_name = str_field(&cfg.first);
@@ -407,6 +413,44 @@ impl Region {
                     let r = g::titles_reply(&grp, bot, m.agent_data.request_id);
                     self.send(from, &r, true);
                 }
+            }
+        } else if id == GroupTitleUpdate::ID {
+            if let Ok(m) = pkt.decode::<GroupTitleUpdate>() {
+                self.shared.saw(Seen::GroupTitleUpdate {
+                    group: m.agent_data.group_id,
+                    role: m.agent_data.title_role_id,
+                });
+            }
+        } else if id == ActivateGroup::ID {
+            if let Ok(m) = pkt.decode::<ActivateGroup>() {
+                let group = m.agent_data.group_id;
+                self.shared.saw(Seen::ActivateGroup { group });
+                self.shared.state().active_group = (!group.is_nil()).then_some(group);
+                // the grid answers with the agent's data
+                self.agent_data_only(from);
+            }
+        } else if id == JoinGroupRequest::ID {
+            if let Ok(m) = pkt.decode::<JoinGroupRequest>() {
+                let group = m.group_data.group_id;
+                self.shared.saw(Seen::JoinGroup { group });
+                // the third group has open enrollment; the others do not exist for joining
+                let ok = group == crate::THIRD_GROUP && self.set_member(group, true, n);
+                let mut r = JoinGroupReply::default();
+                r.agent_data.agent_id = bot;
+                r.group_data.group_id = group;
+                r.group_data.success = ok;
+                self.send(from, &r, true);
+            }
+        } else if id == LeaveGroupRequest::ID {
+            if let Ok(m) = pkt.decode::<LeaveGroupRequest>() {
+                let group = m.group_data.group_id;
+                self.shared.saw(Seen::LeaveGroup { group });
+                let ok = self.set_member(group, false, n);
+                let mut r = LeaveGroupReply::default();
+                r.agent_data.agent_id = bot;
+                r.group_data.group_id = group;
+                r.group_data.success = ok;
+                self.send(from, &r, true);
             }
         } else if id == InviteGroupRequest::ID {
             if let Ok(m) = pkt.decode::<InviteGroupRequest>() {
@@ -544,6 +588,12 @@ impl Region {
                         to: b.to_agent_id,
                         message: field_str(&b.message),
                     }),
+                    // send_group_notice: needs the notices power, as the grid checks
+                    32 => self.shared.saw(Seen::GroupNotice {
+                        group,
+                        message: field_str(&b.message),
+                        attached: b.binary_bucket.len() > 1,
+                    }),
                     17 => self.shared.saw(Seen::GroupChatSend {
                         group,
                         message: field_str(&b.message),
@@ -612,6 +662,48 @@ impl Region {
                 m.roles.retain(|r| *r != role);
             }
         }
+    }
+
+    /// AgentDataUpdate alone (an ActivateGroup's answer).
+    fn agent_data_only(&mut self, to: SocketAddr) {
+        let active = {
+            let st = self.shared.state();
+            st.active_group.and_then(|id| {
+                st.groups
+                    .iter()
+                    .find(|g| g.id == id && g.bot_member)
+                    .cloned()
+            })
+        };
+        let mut m = AgentDataUpdate::default();
+        m.agent_data.agent_id = self.shared.agent_id;
+        m.agent_data.first_name = str_field(&self.shared.cfg.first);
+        m.agent_data.last_name = str_field(&self.shared.cfg.last);
+        if let Some(g) = active {
+            m.agent_data.active_group_id = g.id;
+            m.agent_data.group_name = str_field(&g.name);
+            m.agent_data.group_title = str_field(&g.title);
+            m.agent_data.group_powers = g.powers;
+        }
+        self.send(to, &m, true);
+    }
+
+    /// The bot joins or leaves a group: the group list goes out again. False when it already was
+    /// (or was not) in it.
+    fn set_member(&mut self, group: Uuid, member: bool, n: u32) -> bool {
+        let body = {
+            let mut st = self.shared.state();
+            let Some(g) = st.groups.iter_mut().find(|g| g.id == group) else {
+                return false;
+            };
+            if g.bot_member == member {
+                return false;
+            }
+            g.bot_member = member;
+            crate::groups::agent_group_data(&st.groups, self.shared.agent_id)
+        };
+        self.shared.queue_event(n, "AgentGroupDataUpdate", body);
+        true
     }
 
     /// The bot joins a group it accepted: the group list goes out again.

@@ -106,6 +106,10 @@ region).
   GroupEject waits for the grid ("Not in group", "Missing group Eject power"); GroupAddRole
   refuses an unknown avatar; Name2Key asks the grid at once
 - ✅ SecondBot setting names accepted next to FERRO_* (basic_*, commands_*, http_*)
+- 🟡 SecondBot's other group commands: Groupnotice, GroupnoticeWithAttachment, GetGroupBanList,
+  GroupBan (GroupAPIv1), GetGroupTitles, GroupActiveTitle, GroupActiveGroup, GroupJoin,
+  GroupLeave, GetGroupMemberRoles, ForceLoadGroups; tested through the API on the test grid.
+  Not GroupCreate (it costs L$100)
 - ⬜ SecondBot's `/json` endpoint (a signed JSON body); not used by BB
 - 🟡 Behind a Cloudflare Tunnel: 90 s command deadline (Cloudflare waits 100 s), `GET /health`,
   `deploy/compose.yaml` with cloudflared, README section; to verify through a real tunnel (human)
