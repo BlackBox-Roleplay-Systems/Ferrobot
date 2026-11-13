@@ -1,14 +1,18 @@
 //! Region restarts: when the region announces one, the bot leaves for home if home is in another
 //! region; if home is here too, it stays, and logs in again once the region is back (the relog
-//! loop). Second Life gives a few minutes' notice; the teleport goes at once.
+//! loop). Second Life gives a few minutes' notice; the teleport goes at once. While homebound
+//! runs, it leaves on its own (services/homebound.rs) and this stands aside.
 
+use crate::services::homebound::Homebound;
 use ferro_client::{Client, Event};
+use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
-pub async fn run(client: Client, mut events: Receiver<Event>) {
+pub async fn run(client: Client, mut events: Receiver<Event>, homebound: Arc<Homebound>) {
     loop {
         match events.recv().await {
+            Ok(Event::RegionRestart { .. }) if homebound.home().is_some() => {}
             Ok(Event::RegionRestart { seconds, .. }) => {
                 let st = client.state();
                 let here = st.region.as_ref().map(|r| r.handle);

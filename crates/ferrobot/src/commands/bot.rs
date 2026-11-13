@@ -14,7 +14,7 @@ use crate::grants::Grant;
 /// SecondBot answers before the teleport.
 pub fn go_home(ctx: &Ctx) -> Answer {
     let client = ctx.client.clone();
-    let home = ctx.home.clone();
+    let home = ctx.homebound.home();
     tokio::spawn(async move {
         let done = match home {
             Some(p) => client.teleport_to_region(&p.region, p.position).await,

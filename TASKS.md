@@ -492,6 +492,21 @@ baking: the bot says so and goes on.
   AllowSendAlertStatus for both), the allowed list ignores spaces and case, the sender is named
   "<address> via Ferrobot", HideStatusOutput ignored (BotStatus counts the mails)
 - ⬜ E-mail: to try with a real SMTP server (human): STARTTLS on 587, TLS on 465, a refused login
+- 🟡 Service control (services/control.rs, commands/services.rs; SecondBot's Commands/Services.cs
+  and BotServices): EnableAndStartService, StopService, RestartService, ChangeConfigValue, off
+  unless FERRO_ALLOW_SERVICE_CONTROL (commands_AllowServiceControl), under the rate limit, out of
+  a command grant's reach. RelayService, HomeboundService, InteractionService, DialogService,
+  DiscordService and Ferrobot's ChatLogService, by SecondBot's names and settings; a changed
+  setting wins over the environment and takes effect at the next (re)start; the settings are
+  read through config::Source. Tested on the test grid. Deliberate differences: BotClientService
+  and HttpService answer "Unable to manage selected service" (SecondBot stops them and locks the
+  operator out); CommandsService (masters, shared secret) stays unknown, as in SecondBot;
+  ChangeConfigValue refuses secrets, settings the service does not read and values it cannot
+  read (SecondBot keeps anything); names in any case; DialogService's start sets the relay
+  targets from the settings (SecondBot reads them once); a command by IM is logged by its name
+  alone (its arguments may hold a value)
+- ⬜ Service control for the services still to come (EventsService, TriggerOnEventService,
+  RLVService, ChatGptService, SmtpService, RabbitService…): a `spec()` each, registered in main.rs
 
 ## Phase 8 - Running it for real
 

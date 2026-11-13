@@ -8,6 +8,7 @@
 //! here the expired ones go.
 
 use crate::api::signing::sign_with;
+use crate::services::control::Spec;
 use ferro_client::events::chat_type;
 use ferro_client::{Client, Event, ScriptDialog};
 use serde::Serialize;
@@ -76,15 +77,23 @@ fn now() -> i64 {
 impl Dialogs {
     pub fn new(t: Targets) -> Self {
         let d = Dialogs::default();
-        {
-            let mut i = d.lock();
-            i.next = 1;
-            i.channels.extend(t.channel.filter(|c| *c >= 0));
-            i.avatars.extend(t.avatar.filter(|a| !a.is_nil()));
-            i.urls.extend(t.url.filter(|u| u.starts_with("http")));
-            i.owner_only = t.owner_only.filter(|o| !o.is_nil());
-        }
+        d.lock().next = 1;
+        d.set_targets(t);
         d
+    }
+
+    /// The relay targets from the settings, in place of those before (DialogService's start;
+    /// what DialogRelay…Target changed lasts until then).
+    pub fn set_targets(&self, t: Targets) {
+        let mut i = self.lock();
+        i.channels = t.channel.filter(|c| *c >= 0).into_iter().collect();
+        i.avatars = t.avatar.filter(|a| !a.is_nil()).into_iter().collect();
+        i.urls = t
+            .url
+            .filter(|u| u.starts_with("http"))
+            .into_iter()
+            .collect();
+        i.owner_only = t.owner_only.filter(|o| !o.is_nil());
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -171,6 +180,34 @@ fn form_encode(s: &str) -> String {
 }
 
 /// Keep each dialog and relay it.
+/// DialogService's settings (SecondBot's DialogRelayConfig, `dialogrelay_…`).
+const SETTINGS: &[&str] = &[
+    "RelayChannel",
+    "RelayAvatar",
+    "RelayObjectOwnerOnly",
+    "RelayHttpurl",
+];
+
+/// DialogService, for the service control (services/control.rs): a start sets the relay targets
+/// from the settings. Stopped, no dialog is kept or relayed; those kept can still be answered.
+pub fn spec(client: Client, dialogs: Arc<Dialogs>, secret: Option<String>) -> Spec {
+    Spec::new(
+        "DialogService",
+        "dialogrelay",
+        SETTINGS,
+        crate::config::dialog_relay,
+        move |targets| {
+            dialogs.set_targets(targets);
+            vec![tokio::spawn(run(
+                client.clone(),
+                client.subscribe(),
+                dialogs.clone(),
+                secret.clone(),
+            ))]
+        },
+    )
+}
+
 pub async fn run(
     client: Client,
     mut events: Receiver<Event>,

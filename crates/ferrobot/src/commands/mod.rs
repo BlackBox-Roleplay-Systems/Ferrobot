@@ -20,11 +20,11 @@ mod outfit;
 mod parcel;
 mod rabbit;
 pub mod reply;
+mod services;
 mod world;
 
 use crate::dialogs::Dialogs;
 use crate::history::History;
-use crate::services::homebound::Place;
 use crate::store::{CommandRecord, Store};
 use ferro_client::Client;
 use reply::Answer;
@@ -43,11 +43,9 @@ pub struct Ctx {
     pub history: Arc<History>,
     pub dialogs: Arc<Dialogs>,
     pub store: Arc<Store>,
-    /// Homebound's home, for GoHome.
-    pub home: Option<Place>,
     /// Stops the bot (Logoff).
     pub stop: Arc<tokio::sync::watch::Sender<bool>>,
-    /// Homebound, paused by a teleport command.
+    /// Homebound, paused by a teleport command; its home, for GoHome.
     pub homebound: Arc<crate::services::homebound::Homebound>,
     /// The Funds commands (FERRO_ALLOW_FUNDS).
     pub allow_funds: bool,
@@ -56,8 +54,8 @@ pub struct Ctx {
     /// What avatars were granted beyond the interaction settings (AcceptNext, SetPermFlag,
     /// AddToAllowAnimations).
     pub grants: Arc<crate::grants::Grants>,
-    /// The Discord connection, when Discord is on.
-    pub discord: Option<Arc<crate::discord::Discord>>,
+    /// The Discord connection, while DiscordService runs.
+    pub discord: Arc<crate::discord::Slot>,
     /// Who hears of the items that come into the inventory (SetInventoryUpdate).
     pub inventory_updates: Arc<crate::inventory_updates::InventoryUpdates>,
     /// The RabbitMQ connection, when RabbitMQ is on.
@@ -66,6 +64,8 @@ pub struct Ctx {
     pub custom: Arc<custom::CustomCommands>,
     /// E-mail (SendEmail, reply targets by e-mail); off unless configured.
     pub smtp: Arc<crate::services::smtp::Mailer>,
+    /// The services the service control commands stop, start and change.
+    pub services: Arc<crate::services::control::Services>,
 }
 
 /// Who asks for a command, for what they may run. Set by the way the command came, after it was
@@ -178,6 +178,10 @@ const CHANGING: &[&str] = &[
     "Discord_RoleCreate",
     "Discord_RoleRemove",
     "SendEmail",
+    "EnableAndStartService",
+    "StopService",
+    "RestartService",
+    "ChangeConfigValue",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -409,11 +413,24 @@ const COMMANDS: &[(&str, usize)] = &[
     ("DialogRelayHttpTarget", 1),
     ("DialogResponce", 2),
     ("SendMessageToQ", 2),
+    ("EnableAndStartService", 1),
+    ("StopService", 1),
+    ("RestartService", 1),
+    ("ChangeConfigValue", 3),
 ];
 
-/// The commands that hand out grants (crate::grants): never run for an avatar on its "command"
-/// grant alone, so that a grant cannot widen or pass itself on.
-pub const GRANTING: &[&str] = &["SetPermFlag", "AcceptNext", "AddToAllowAnimations"];
+/// The commands that hand out grants (crate::grants), and those that change the bot's services
+/// and settings (one of them may widen who the bot obeys): never run for an avatar on its
+/// "command" grant alone, so that a grant cannot widen or pass itself on.
+pub const GRANTING: &[&str] = &[
+    "SetPermFlag",
+    "AcceptNext",
+    "AddToAllowAnimations",
+    "EnableAndStartService",
+    "StopService",
+    "RestartService",
+    "ChangeConfigValue",
+];
 
 /// A command's name as SecondBot spells it, whatever the case asked; `None` when there is no
 /// such command.
@@ -494,9 +511,15 @@ async fn builtin(ctx: &Ctx, caller: Caller, name: &str, args: &[String]) -> (boo
         log::warn!("{command}: refused, a command grant does not reach it");
         return (false, "A command grant does not reach this command".into());
     }
+    // ChangeConfigValue's value is never echoed back nor kept in the history
+    let shown = if command == "ChangeConfigValue" {
+        &args[..2]
+    } else {
+        args
+    };
     if CHANGING.contains(&command) && !ctx.store.admit(PATIENCE).await {
         log::warn!("{command}: too many commands, refused");
-        let answer = reply::failure(command, "Too many commands [Retry later]", args);
+        let answer = reply::failure(command, "Too many commands [Retry later]", shown);
         return (true, answer);
     }
     let answer: Answer = match command {
@@ -754,6 +777,10 @@ async fn builtin(ctx: &Ctx, caller: Caller, name: &str, args: &[String]) -> (boo
         "DialogRelayHttpTarget" => dialogs::relay_http(ctx, a(0)),
         "DialogResponce" => dialogs::respond(ctx, a(0), a(1)).await,
         "SendMessageToQ" => rabbit::send_message_to_q(ctx, a(0), a(1)).await,
+        "EnableAndStartService" => services::enable_and_start(ctx, a(0)).await,
+        "StopService" => services::stop(ctx, a(0)).await,
+        "RestartService" => services::restart(ctx, a(0)).await,
+        "ChangeConfigValue" => services::change_config_value(ctx, a(0), a(1), a(2)).await,
         _ => return (false, "Unknown command".into()),
     };
     let now = std::time::SystemTime::now()
@@ -761,7 +788,7 @@ async fn builtin(ctx: &Ctx, caller: Caller, name: &str, args: &[String]) -> (boo
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
     ctx.store.record(CommandRecord {
         Command: command.to_owned(),
-        Args: args.to_vec(),
+        Args: shown.to_vec(),
         Unixtime: now,
         status: answer.contains(r#""status":true"#),
         results: None,
@@ -804,17 +831,17 @@ pub fn test_ctx() -> Ctx {
         history: Arc::default(),
         dialogs: Arc::default(),
         store: Arc::new(Store::new(0)),
-        home: None,
         stop: Arc::new(tokio::sync::watch::channel(false).0),
         homebound: Arc::default(),
         allow_funds: false,
         http: reqwest::Client::new(),
         grants: Arc::default(),
-        discord: None,
+        discord: Arc::default(),
         inventory_updates: Arc::default(),
         rabbit: None,
         custom: Arc::new(custom::CustomCommands::new(Vec::new())),
         smtp: Arc::default(),
+        services: Arc::new(crate::services::control::Services::new(false)),
     }
 }
 

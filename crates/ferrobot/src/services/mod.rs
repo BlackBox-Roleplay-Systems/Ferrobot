@@ -2,6 +2,7 @@
 
 pub mod chat_log;
 pub mod chatgpt;
+pub mod control;
 pub mod events;
 pub mod health;
 pub mod homebound;
