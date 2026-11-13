@@ -27,6 +27,7 @@ a Second Life viewer in Rust, GPL-3.0-or-later. They may have been changed since
 | `crates/client/src/estate.rs` | `crates/aurora-net/src/estate.rs`: the estate and access flags, `EstateInfo` and `parse_estate_update_info`, `estate_change_body` / `estate_change_strings`, `parse_estate_access`, `RegionRules`, `access_delta_strings`, `region_message_strings` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/terrain.rs` | the RAW file's upload of `crates/aurora-net/src/session/terrain_raw.rs`, and `packet` of `crates/aurora-net/src/session/inventory_upload.rs` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/gesture.rs` | `crates/aurora-assets/src/gesture.rs` (the decoding) | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
+| `crates/client/src/walking.rs` | the control flags of `crates/aurora-net/src/types.rs`, the follow-up update of `crates/aurora-net/src/agent_update.rs`, the keys' flags of `control_flags` in `crates/aurora-viewer/src/agent.rs`, the follow distance bounds of `FollowSettings` in `crates/aurora-viewer/src/autopilot.rs` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/region_restart.rs` | `crates/aurora-net/src/region_restart.rs`, without the channel announcement | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 
 Aurora's code in turn follows the Second Life viewer's sources (Linden Lab,
