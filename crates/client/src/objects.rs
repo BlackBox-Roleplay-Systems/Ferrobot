@@ -160,6 +160,7 @@ pub fn from_terse(b: &improved_terse_object_update::ObjectData) -> Option<Placed
 
 #[derive(Debug, Clone, Copy)]
 struct Place {
+    full_id: Option<Uuid>,
     parent: u32,
     position: Vec3,
     rotation: Quat,
@@ -186,6 +187,7 @@ impl Places {
                 self.objects.insert(
                     p.local_id,
                     Place {
+                        full_id: p.full_id,
                         parent,
                         position: p.position,
                         rotation: p.rotation,
@@ -231,6 +233,17 @@ impl Places {
         let me = self.objects.get(&self.own?)?;
         (me.parent != 0).then_some(me.parent)
     }
+
+    /// What the bot sits on: None while its avatar is unknown, then standing (`Some(None)`) or
+    /// seated (the seat's key, nil when the seat itself is not known).
+    pub fn own_seat(&self) -> Option<Option<Uuid>> {
+        let me = self.objects.get(&self.own?)?;
+        if me.parent == 0 {
+            return Some(None);
+        }
+        let seat = self.objects.get(&me.parent).and_then(|o| o.full_id);
+        Some(Some(seat.unwrap_or_default()))
+    }
 }
 
 #[cfg(test)]
@@ -266,7 +279,9 @@ mod tests {
         assert_eq!(p.rotation, Quat::IDENTITY);
         let mut places = Places::default();
         assert_eq!(places.own_position(), None);
+        assert_eq!(places.own_seat(), None);
         places.update(&p, AGENT);
+        assert_eq!(places.own_seat(), Some(None));
         assert_eq!(places.own_position(), Some(Vec3::new(10.0, 20.0, 30.0)));
         // a block of another size is not read
         let b = object_update::ObjectData {
@@ -317,6 +332,7 @@ mod tests {
         );
         places.update(&full(7, AGENT, 3, true, Vec3::new(0.0, 0.0, 1.0)), AGENT);
         assert_eq!(places.own_parent(), Some(3));
+        assert_eq!(places.own_seat(), Some(Some(chair)));
         assert_eq!(places.own_position(), Some(Vec3::new(100.0, 100.0, 21.0)));
         // the seat gone, the place is unknown until the next update
         places.kill(3);

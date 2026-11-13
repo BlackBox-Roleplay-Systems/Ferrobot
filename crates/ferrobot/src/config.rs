@@ -201,6 +201,15 @@ fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigErr
         backup,
         after: std::time::Duration::from_secs(minutes * 60),
         seek: setting_flag("FERRO_HOME_SEEK", "homebound_AtHomeSeekLocation", true)?,
+        // SecondBot's default is the nil key: no seat
+        sit: match setting("FERRO_HOME_SIT", "homebound_AtHomeAutoSitUuid") {
+            None => None,
+            Some((name, v)) => Some(
+                uuid::Uuid::parse_str(&v)
+                    .map_err(|_| ConfigError::Invalid(name, "an object's key".into()))?,
+            )
+            .filter(|id| !id.is_nil()),
+        },
     }))
 }
 

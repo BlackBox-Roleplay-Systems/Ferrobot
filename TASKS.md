@@ -152,7 +152,9 @@ baking: the bot says so and goes on.
   FERRO_HOME_AFTER minutes away, backup sim when home fails, evacuation on a restart, the spot at
   home, paused by a master's teleport until the next login; regions by name (MapNameRequest, as
   Aurora's teleport by name)
-- ⬜ Homebound: sit on an object at home (AtHomeAutoSitUuid), with movement (phase 7)
+- 🟡 Homebound sits on its seat at home (FERRO_HOME_SIT / homebound_AtHomeAutoSitUuid), asking
+  again every 30 s while not seated, not seeking the spot while seated; a Stand command stops it
+  until the next login (SecondBot's MarkStandup lasts until it restarts); tested on the test grid
 
 ## Phase 6 - Appearance and inventory
 

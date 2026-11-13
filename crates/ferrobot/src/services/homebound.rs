@@ -1,12 +1,12 @@
 //! Homebound, as SecondBot's HomeboundService: the bot goes back to its home sim
 //! (`Region/x/y/z`) when it has been away for FERRO_HOME_AFTER minutes, to the backup sim when
 //! that fails, and leaves the region for the other one when a restart is announced. At home it
-//! goes to its spot when it is more than a few metres away. A master's teleport pauses it until
-//! the next login (SecondBot's MarkTeleport).
-//!
-//! Not here yet: sitting on an object at home (AtHomeAutoSitUuid), with movement (phase 7).
+//! goes to its spot when it is more than a few metres away, and sits on its seat
+//! (AtHomeAutoSitUuid) when one is given. A master's teleport pauses it until the next login
+//! (SecondBot's MarkTeleport); a Stand command stops the sitting until the next login (its
+//! MarkStandup, which lasts until SecondBot restarts).
 
-use ferro_client::{Client, Event};
+use ferro_client::{Client, Event, Move};
 use glam::Vec3;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +19,8 @@ const CHECK_EVERY: Duration = Duration::from_secs(5);
 const LOCKOUT: Duration = Duration::from_secs(30);
 /// At home, nearer than this to the spot is there.
 const NEAR: f32 = 5.0;
+/// Asks to sit at least this far apart, while the seat does not take the bot.
+const SIT_EVERY: Duration = Duration::from_secs(30);
 
 /// A place as SecondBot's SimSlURL reads it: `Region Name/x/y/z` (`%20` for spaces).
 #[derive(Debug, Clone, PartialEq)]
@@ -58,12 +60,16 @@ pub struct Settings {
     pub after: Duration,
     /// At home, go to the spot (AtHomeSeekLocation).
     pub seek: bool,
+    /// At home, sit on this object (AtHomeAutoSitUuid).
+    pub sit: Option<uuid::Uuid>,
 }
 
 /// What other services tell homebound.
 #[derive(Default)]
 pub struct Homebound {
     paused: AtomicBool,
+    /// A Stand command: no sitting at home until the next login.
+    stood: AtomicBool,
 }
 
 impl Homebound {
@@ -72,6 +78,11 @@ impl Homebound {
         if !self.paused.swap(true, Ordering::Relaxed) {
             log::info!("homebound paused until the next login: a master's teleport");
         }
+    }
+
+    /// The bot was told to stand: it stays standing at home until the next login.
+    pub fn stood_up(&self) {
+        self.stood.store(true, Ordering::Relaxed);
     }
 }
 
@@ -95,6 +106,7 @@ pub async fn run(client: Client, mut events: Receiver<Event>, s: Settings, hb: A
     let mut last_teleport: Option<Instant> = None;
     let mut backup_next = false;
     let mut sought = false;
+    let mut last_sit: Option<Instant> = None;
     let mut logins = 0;
     loop {
         tokio::select! {
@@ -104,6 +116,7 @@ pub async fn run(client: Client, mut events: Receiver<Event>, s: Settings, hb: A
                     if st.logins != logins {
                         logins = st.logins;
                         hb.paused.store(false, Ordering::Relaxed);
+                        hb.stood.store(false, Ordering::Relaxed);
                     }
                     sought = false;
                 }
@@ -131,9 +144,24 @@ pub async fn run(client: Client, mut events: Receiver<Event>, s: Settings, hb: A
                 if s.home.is(&region.name) {
                     away_since = None;
                     backup_next = false;
-                    if s.seek && !sought && st.position.distance(s.home.position) > NEAR {
+                    // seated, the bot is where its seat is: no seeking the spot
+                    let seated = st.sitting_on.is_some();
+                    if s.seek && !sought && !seated && st.position.distance(s.home.position) > NEAR {
                         sought = true;
                         go(&client, &s.home, "to the spot at home").await;
+                        continue;
+                    }
+                    let sit_due = last_sit.is_none_or(|t| t.elapsed() >= SIT_EVERY);
+                    if let Some(seat) = s.sit
+                        && !seated
+                        && sit_due
+                        && !hb.stood.load(Ordering::Relaxed)
+                    {
+                        last_sit = Some(Instant::now());
+                        log::info!("homebound: sitting on {seat} at home");
+                        if let Err(e) = client.move_bot(Move::SitOn(seat)).await {
+                            log::warn!("homebound: could not sit: {e}");
+                        }
                     }
                     continue;
                 }

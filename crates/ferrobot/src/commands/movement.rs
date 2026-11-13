@@ -78,7 +78,9 @@ pub async fn sit(ctx: &Ctx, target: &str) -> Answer {
     go(ctx, "Sit", m, "ok", &args).await
 }
 
+/// Stand, as SecondBot's: homebound no longer sits the bot down (its MarkStandup).
 pub async fn stand(ctx: &Ctx) -> Answer {
+    ctx.homebound.stood_up();
     go(ctx, "Stand", Move::Stand, "ok", &[]).await
 }
 

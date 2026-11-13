@@ -1877,6 +1877,39 @@ async fn script_dialogs_are_relayed_and_answered() {
 
 /// Homebound: logged in away from home, the bot goes home; a restart at home sends it to the
 /// backup.
+/// At home, homebound sits the bot on its seat once, and leaves it seated (AtHomeAutoSitUuid).
+#[tokio::test]
+async fn homebound_sits_on_its_seat_at_home() {
+    let grid = grid().await;
+    let seat = uuid_from(0x5ea7_0001);
+    let seat_text = seat.to_string();
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("FERRO_HOME_SIM", "Test Region/128/128/25"),
+            ("FERRO_HOME_SEEK", "false"),
+            ("homebound_AtHomeAutoSitUuid", seat_text.as_str()),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    wait_for(&grid, &bot, "the sit request", |s| {
+        *s == Seen::AgentRequestSit { target: seat }
+    })
+    .await;
+    wait_for(&grid, &bot, "the bot seated", |s| *s == Seen::AgentSit).await;
+    bot.wait_log("homebound: sitting on").await;
+    // seated, it does not ask again (a check every 5 s)
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert_eq!(
+        grid.count(|s| matches!(s, Seen::AgentRequestSit { .. })),
+        1,
+        "{}",
+        bot.log()
+    );
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0);
+}
+
 #[tokio::test]
 async fn homebound_goes_home_and_leaves_before_a_restart() {
     let grid = grid().await;

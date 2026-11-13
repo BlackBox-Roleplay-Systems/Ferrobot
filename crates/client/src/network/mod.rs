@@ -123,6 +123,7 @@ impl Network {
             st.friends_online.clear();
             st.nearby.clear();
             st.nearby_positions.clear();
+            st.sitting_on = None;
             st.inventory_root = login.inventory_root;
         }
         self.shared
@@ -474,6 +475,15 @@ impl Session<'_> {
             self.position = at;
             self.shared.state_mut().position = at;
         }
+        if let Some(seat) = self.places.own_seat() {
+            let mut st = self.shared.state_mut();
+            if st.sitting_on != seat {
+                // a nil seat: seated on something not seen yet; AvatarSitResponse named it
+                if seat != Some(Uuid::nil()) || st.sitting_on.is_none() {
+                    st.sitting_on = seat;
+                }
+            }
+        }
     }
 
     fn request_balance(&mut self) {
@@ -580,7 +590,11 @@ impl Session<'_> {
         self.region_name.clear();
         self.caps.clear();
         self.places.clear();
-        self.shared.state_mut().region = None;
+        {
+            let mut st = self.shared.state_mut();
+            st.region = None;
+            st.sitting_on = None;
+        }
         self.send_use_circuit_code();
         self.start_caps(seed);
         // a crossing has no request behind it, but it is under way all the same
