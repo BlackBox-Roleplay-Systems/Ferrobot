@@ -64,6 +64,8 @@ pub struct Config {
     pub events: Option<crate::services::events::Settings>,
     /// Commands run on events: off unless on, with events (SecondBot's OnEventConfig).
     pub on_event: Option<crate::services::on_event::Settings>,
+    /// RLV: objects drive the bot with "@" commands; off by default (SecondBot's RlvConfig).
+    pub rlv: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -109,6 +111,7 @@ impl std::fmt::Debug for Config {
                 "on_event",
                 &self.on_event.as_ref().map(|o| o.triggers.len()),
             )
+            .field("rlv", &self.rlv)
             .finish_non_exhaustive()
     }
 }
@@ -1006,6 +1009,7 @@ impl Config {
             relays: relays()?,
             custom_commands: custom_commands()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
+            rlv: setting_flag("FERRO_RLV", "rlv_Enabled", false)?,
             rate_limit: number(
                 var("FERRO_RATE_LIMIT").map(|v| ("FERRO_RATE_LIMIT", v)),
                 60,

@@ -13,6 +13,7 @@ mod inventory_updates;
 mod masters;
 mod on_event;
 mod rabbit;
+mod rlv;
 mod services;
 mod smart_reply;
 mod store;
@@ -92,7 +93,15 @@ async fn main() -> std::process::ExitCode {
         }),
         client.subscribe(),
     ));
-    match cfg.homebound.clone() {
+    // SecondBot turns homebound off when RLV is on: the objects decide where the bot goes
+    let homebound_settings = match cfg.homebound.clone() {
+        Some(_) if cfg.rlv => {
+            log::info!("homebound off: RLV is on");
+            None
+        }
+        h => h,
+    };
+    match homebound_settings {
         Some(settings) => {
             log::info!("homebound to {}", settings.home.region);
             tokio::spawn(services::homebound::run(
@@ -216,6 +225,14 @@ async fn main() -> std::process::ExitCode {
     if let Some(d) = &discord {
         log::info!("discord: server {}", d.settings.server);
         tokio::spawn(discord::run(ctx.clone(), d.clone()));
+    }
+    if cfg.rlv {
+        tokio::spawn(services::rlv::run(
+            ctx.clone(),
+            client.subscribe(),
+            masters.clone(),
+            std::sync::Arc::new(rlv::Rules::default()),
+        ));
     }
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(
