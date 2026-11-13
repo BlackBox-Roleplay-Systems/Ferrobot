@@ -96,6 +96,8 @@ pub struct ParcelInfo {
     pub area: i32,
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,
+    /// The region's 4 m cells the parcel covers: bit `y * 64 + x`, the lowest bit first.
+    pub bitmap: Vec<u8>,
     pub max_prims: i32,
     pub total_prims: i32,
     pub owner_prims: i32,
@@ -158,6 +160,10 @@ pub fn parse_parcel_properties(b: &Llsd) -> ParcelInfo {
         area: pd["Area"].as_i32(),
         aabb_min: vec3(&pd["AABBMin"]),
         aabb_max: vec3(&pd["AABBMax"]),
+        bitmap: match &pd["Bitmap"] {
+            Llsd::Binary(b) => b.clone(),
+            _ => Vec::new(),
+        },
         max_prims: pd["MaxPrims"].as_i32(),
         total_prims: pd["TotalPrims"].as_i32(),
         owner_prims: pd["OwnerPrims"].as_i32(),
@@ -295,6 +301,34 @@ pub fn access_list_chunks(entries: &[AccessEntry]) -> (i32, Vec<Vec<AccessEntry>
     )
 }
 
+/// The region's parcel map: 64 by 64 cells of 4 m (PARCEL_GRID_STEP_METERS).
+pub const MAP_SIZE: usize = 64;
+
+/// Whether a parcel covers the cell (x, y) (LLParcel's bitmap, as LibreMetaverse reads it).
+pub fn covers(bitmap: &[u8], x: usize, y: usize) -> bool {
+    let i = y * MAP_SIZE + x;
+    bitmap.get(i / 8).is_some_and(|b| b & (1 << (i % 8)) != 0)
+}
+
+/// All the parcels of the region, and which covers each cell (0: none known).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RegionParcels {
+    pub parcels: Vec<ParcelInfo>,
+    /// The local id of each cell, `y * 64 + x`.
+    pub map: Vec<i32>,
+}
+
+/// A parcel of the land search (DirLandReply; LibreMetaverse's DirectoryParcel).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LandForSale {
+    pub id: Uuid,
+    pub name: String,
+    pub area: i32,
+    pub price: i32,
+    pub auction: bool,
+    pub for_sale: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +369,17 @@ mod tests {
         assert_eq!(b["name"].as_str(), "Plaza");
         assert_eq!(u32_of(&b["parcel_flags"]), 5);
         assert_eq!(u32_of(&b["flags"]), 1);
+    }
+
+    #[test]
+    fn cells_of_the_bitmap() {
+        let mut b = vec![0u8; 512];
+        // the cell (1, 0) and the cell (0, 1)
+        b[0] = 0b10;
+        b[8] = 0b1;
+        assert!(covers(&b, 1, 0) && covers(&b, 0, 1));
+        assert!(!covers(&b, 0, 0) && !covers(&b, 63, 63));
+        assert!(!covers(&[], 0, 0));
     }
 
     #[test]

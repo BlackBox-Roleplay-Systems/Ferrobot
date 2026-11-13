@@ -8,6 +8,61 @@ use uuid::Uuid;
 pub const PARCEL_ID: Uuid = Uuid::from_u128(0x9a2c_0001);
 pub const PARCEL_LOCAL_ID: i32 = 7;
 pub const DWELL: f32 = 42.5;
+/// The rest of the region, around the Plaza (cells 16 to 47 both ways).
+pub const OUTSKIRTS_LOCAL_ID: i32 = 8;
+
+/// Whether the Plaza covers a 4 m cell.
+fn in_plaza(x: usize, y: usize) -> bool {
+    (16..48).contains(&x) && (16..48).contains(&y)
+}
+
+/// The parcel of a cell: the Plaza's local id, or the Outskirts'.
+pub fn parcel_at(x: usize, y: usize) -> i32 {
+    if in_plaza(x, y) {
+        PARCEL_LOCAL_ID
+    } else {
+        OUTSKIRTS_LOCAL_ID
+    }
+}
+
+/// A parcel's cells, bit `y * 64 + x`, the lowest bit first.
+fn bitmap(local_id: i32) -> Vec<u8> {
+    let mut b = vec![0u8; 512];
+    for y in 0..64 {
+        for x in 0..64 {
+            if parcel_at(x, y) == local_id {
+                let i = y * 64 + x;
+                b[i / 8] |= 1 << (i % 8);
+            }
+        }
+    }
+    b
+}
+
+/// The Outskirts' ParcelProperties: the whole region but the Plaza.
+pub fn outskirts(sequence: i32, owner: Uuid) -> Llsd {
+    let mut d = Map::new();
+    let mut put = |k: &str, v: Llsd| {
+        d.insert(k.into(), v);
+    };
+    put("LocalID", OUTSKIRTS_LOCAL_ID.into());
+    put("SequenceID", sequence.into());
+    put("Name", "Outskirts".into());
+    put("Desc", "".into());
+    put("OwnerID", owner.into());
+    put("GroupID", crate::groups::TEST_GROUP.into());
+    put("Area", 49152.into());
+    put("AABBMin", vec3([0.0, 0.0, 0.0]));
+    put("AABBMax", vec3([256.0, 256.0, 0.0]));
+    put("MaxPrims", 11250.into());
+    put("TotalPrims", 40.into());
+    put("SnapshotID", Uuid::from_u128(0x5a95_0008).into());
+    put("ParcelFlags", u32_llsd(0));
+    put("Bitmap", Llsd::Binary(bitmap(OUTSKIRTS_LOCAL_ID)));
+    let mut body = Map::new();
+    body.insert("ParcelData".into(), Llsd::Array(vec![Llsd::Map(d)]));
+    Llsd::Map(body)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GridParcel {
@@ -75,6 +130,7 @@ impl GridParcel {
         put("Area", 16384.into());
         put("AABBMin", vec3([64.0, 64.0, 0.0]));
         put("AABBMax", vec3([192.0, 192.0, 0.0]));
+        put("Bitmap", Llsd::Binary(bitmap(PARCEL_LOCAL_ID)));
         put("MaxPrims", 3750.into());
         put("TotalPrims", 12.into());
         put("OwnerPrims", 10.into());

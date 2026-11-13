@@ -393,6 +393,14 @@ pub enum Seen {
     ParcelPropertiesRequest {
         sequence: i32,
     },
+    /// DirLandQuery: land for sale asked for.
+    LandQuery {
+        flags: u32,
+        kind: u32,
+        price: i32,
+        area: i32,
+        start: i32,
+    },
     /// Something done to a parcel or on it, in words: "eject <key> <flags>", "freeze …",
     /// "return <type> <owners>", "deed <local id> <group>", "release", "buy", "reclaim".
     Parcel {

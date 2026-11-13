@@ -273,6 +273,7 @@ impl Region {
 
         let mut h = RegionHandshake::default();
         h.region_info.sim_name = str_field(&self.shared.regions[self.index].name);
+        h.region_info3.product_name = str_field("Estate / Full Region");
         // the bot manages the first region's estate, not the second's
         h.region_info.is_estate_manager = self.index == 0;
         h.region_info2.region_id = Uuid::from_u128(0x2e61_0000 + self.index as u128);
@@ -627,11 +628,19 @@ impl Region {
             if let Ok(m) = pkt.decode::<ParcelPropertiesRequest>() {
                 let sequence = m.parcel_data.sequence_id;
                 self.shared.saw(Seen::ParcelPropertiesRequest { sequence });
-                let body = self
-                    .shared
-                    .state()
-                    .parcel
-                    .properties(sequence, self.shared.agent_id);
+                // the parcel of the cell asked for (its south-west corner)
+                let (x, y) = (
+                    (m.parcel_data.west / 4.0).clamp(0.0, 63.0) as usize,
+                    (m.parcel_data.south / 4.0).clamp(0.0, 63.0) as usize,
+                );
+                let body = if crate::parcels::parcel_at(x, y) == crate::parcels::PARCEL_LOCAL_ID {
+                    self.shared
+                        .state()
+                        .parcel
+                        .properties(sequence, self.shared.agent_id)
+                } else {
+                    crate::parcels::outskirts(sequence, self.shared.agent_id)
+                };
                 self.shared.queue_event(n, "ParcelProperties", body);
             }
         } else if id == EstateOwnerMessage::ID {
@@ -782,6 +791,29 @@ impl Region {
                 self.shared.saw(Seen::Parcel {
                     what: format!("reclaim {}", m.data.local_id),
                 });
+            }
+        } else if id == DirLandQuery::ID {
+            if let Ok(m) = pkt.decode::<DirLandQuery>() {
+                let q = &m.query_data;
+                self.shared.saw(Seen::LandQuery {
+                    flags: q.query_flags,
+                    kind: q.search_type,
+                    price: q.price,
+                    area: q.area,
+                    start: q.query_start,
+                });
+                let mut r = DirLandReply::default();
+                r.agent_data.agent_id = self.shared.agent_id;
+                r.query_data.query_id = q.query_id;
+                r.query_replies = vec![dir_land_reply::QueryReplies {
+                    parcel_id: Uuid::from_u128(0x1a4d_0001),
+                    name: str_field("Beach Lot"),
+                    auction: false,
+                    for_sale: true,
+                    sale_price: 1200,
+                    actual_area: 512,
+                }];
+                self.send(from, &r, true);
             }
         } else if id == ParcelDwellRequest::ID {
             if let Ok(m) = pkt.decode::<ParcelDwellRequest>() {
