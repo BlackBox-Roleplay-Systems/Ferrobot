@@ -18,12 +18,12 @@ All settings come from environment variables.
 | `FERRO_RELOG_DELAY` | `60` | Seconds to wait before logging in again |
 | `FERRO_MASTERS` | (none) | Avatars the bot obeys, comma-separated: `First Last` or usernames |
 | `FERRO_SHARED_SECRET` | (none) | The secret that signs the HTTP API's commands. Without it, the API is off |
-| `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`) |
+| `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`, `POST /json`) |
 | `FERRO_HTTP_PORT` | `80` | Its port |
 | `FERRO_HTTP_BIND` | `0.0.0.0` | The address it listens on: `127.0.0.1` behind a tunnel on the same host |
 | `FERRO_TIME_WINDOW` | `35` | Seconds a signed command stays valid |
 | `FERRO_IM_COMMANDS` | `true` | Commands by IM: from masters, and signed ones from objects |
-| `FERRO_ENFORCE_TIME_WINDOW` | `false` | Commands by IM carry their time and must be recent |
+| `FERRO_ENFORCE_TIME_WINDOW` | `false` | Commands by IM carry their time and must be recent (the HTTP API's always do) |
 | `FERRO_OBJECT_MASTER_OPTOUT` | `false` | An object owned by a master needs no signature |
 | `FERRO_ACCEPT_TELEPORTS`, `FERRO_TELEPORT_LEVEL` | `true`, `Owner` | Teleport offers and requests: accepted at all, and from whom: `Owner` (the masters), `Friends` or `Anyone` |
 | `FERRO_ACCEPT_GROUP_INVITES`, `FERRO_GROUP_INVITE_LEVEL` | `true`, `Owner` | Group invitations (never one with a fee) |
@@ -155,6 +155,20 @@ avatar's objects may animate the bot); profiles: `GetProfileAbout`, `GetProfileI
 `Discord_Role_UpdatePerms`, `Discord_RoleCreate`, `Discord_RoleList`, `Discord_RoleRemove`,
 `Discord_TextChannels_List`, `Discord_VoiceJoin`, `Discord_VoiceLeave`; its dialog commands:
 `DialogResponce`, `DialogRelayChatTarget`, `DialogRelayAvatarTarget`, `DialogRelayHttpTarget`.
+
+An empty argument cannot be sent in the form: `args` is split on `~#~` with the empty parts left
+out, before the signature is checked, as SecondBot does (so `a~#~` is the one argument `a`, and a
+signature made over `a~#~` is refused).
+
+`POST /json` is SecondBot's other entry: the body is one command, as a JSON object
+`{"cmd": "Name2Key", "args": ["Some Resident"], "unixtime": 1800000000, "signing": "…", "reply": "7"}`
+(`reply` optional: a channel, an avatar or an address that gets the answer too), or in the text form
+of commands by IM, `Name2Key|||Some Resident#|#7@@@signature;|;unixtime`. The signature is the same
+as `/api/Run`'s, and here empty arguments are kept. Every answer, the refusals ("No bot connected
+yet", "No body sent", "Command request rejected") as much as `{"Key": …, "Value": …}`, comes as a
+JSON string, as SecondBot's does: decode the body once to get SecondBot's text. Unlike SecondBot's,
+the signature always carries the time and an older command is refused (SecondBot asks for it only
+with `commands_EnforceTimeWindow`).
 
 ### Behind a Cloudflare Tunnel
 

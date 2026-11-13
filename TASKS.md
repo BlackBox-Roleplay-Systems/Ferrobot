@@ -120,7 +120,15 @@ baking: the bot says so and goes on.
 - 🟡 SecondBot's Hello, Version, UnixTimeNow, GetPosition, GoHome, Logoff, GetLastCommands,
   ReadKeyValue, SetKeyValue, ClearKeyValue. Deliberate differences: SetKeyValue and ClearKeyValue
   work (SecondBot's check is inverted), GetLastCommands gives the newest five
-- ⬜ SecondBot's `/json` endpoint (a signed JSON body); not used by BB
+- 🟡 SecondBot's `/json` endpoint (src/api/mod.rs, as its HttpService.JsonInput): the body in
+  SignedCommand's JSON or text form (now unpacked as SignedCommand does, in api/signing.rs, for IM
+  and Discord too: the time as a string, wrong field types refused, the text not trimmed), its
+  reply target, "No bot connected yet", "No body sent", "Command request rejected", every answer
+  a JSON string as EmbedIO's SendDataAsync writes it (Swan's escapes); the rate limit and the 90 s
+  deadline as `/api/Run`; tested on the test grid. Deliberate difference: the signature always
+  carries the time and the 35 s window applies (SecondBot follows EnforceTimeWindow, off by
+  default, which lets a signed body be sent again forever). Not a difference: an empty argument
+  in `/api/Run`'s form is dropped before the signature is checked, as SecondBot's Run does
 - 🟡 Behind a Cloudflare Tunnel: 90 s command deadline (Cloudflare waits 100 s), `GET /health`,
   `deploy/compose.yaml` with cloudflared, README section; to verify through a real tunnel (human)
 - ✅ BB's bot tests pass against Ferrobot on the test grid (2026-11-12): BB's own SlBot.php,
