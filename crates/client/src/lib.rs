@@ -21,7 +21,7 @@ pub mod region_restart;
 pub mod state;
 mod xmlrpc;
 
-pub use events::{ChatMessage, Event, InstantMessage};
+pub use events::{ChatMessage, Event, InstantMessage, ScriptDialog};
 pub use login::{LoginError, LoginRequest, LoginResponse, StartLocation};
 pub use names::DisplayName;
 pub use network::{End, Network};
@@ -110,6 +110,13 @@ pub(crate) enum Interaction {
         transaction: Uuid,
         accept: bool,
         from_task: bool,
+    },
+    /// ScriptDialogReply: a button pressed.
+    DialogReply {
+        object_id: Uuid,
+        channel: i32,
+        index: i32,
+        label: String,
     },
     /// StartLure: offer an avatar a teleport to the bot.
     OfferTeleport { to: Uuid, message: String },
@@ -446,5 +453,23 @@ impl Client {
     ) -> Result<(), ClientError> {
         self.interact(Interaction::DeclineTeleportRequest { to, transaction })
             .await
+    }
+
+    /// Press a script dialog's button (ScriptDialogReply): the dialog's object and channel, the
+    /// button's index and label.
+    pub async fn reply_dialog(
+        &self,
+        object_id: Uuid,
+        channel: i32,
+        index: i32,
+        label: &str,
+    ) -> Result<(), ClientError> {
+        self.interact(Interaction::DialogReply {
+            object_id,
+            channel,
+            index,
+            label: label.to_owned(),
+        })
+        .await
     }
 }

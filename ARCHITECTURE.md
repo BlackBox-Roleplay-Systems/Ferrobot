@@ -31,6 +31,7 @@ crates/
     src/api/               SecondBot's HTTP API: POST /api/Run, signatures (axum)
     src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat)
     src/masters.rs         who the masters are, by name or by key
+    src/dialogs.rs         script dialogs: kept, relayed, answered (SecondBot's DialogService)
     src/history.rs         what the bot heard: local chat, IM and group windows (SecondBot's store)
     src/services/          one service per job, on the client's events (chat_log, health, im_commands, interactions, restart)
     tests/testgrid.rs      the real bot, run as a process against the test grid

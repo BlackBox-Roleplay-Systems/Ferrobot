@@ -285,6 +285,21 @@ impl Session<'_> {
                 };
                 self.send_im(to, d, transaction, "", bucket);
             }
+            Interaction::DialogReply {
+                object_id,
+                channel,
+                index,
+                label,
+            } => {
+                let mut m = ScriptDialogReply::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.data.object_id = object_id;
+                m.data.chat_channel = channel;
+                m.data.button_index = index;
+                m.data.button_label = str_field(&label);
+                self.send(&m, true);
+            }
             Interaction::OfferTeleport { to, message } => {
                 // LLAvatarActions::offerTeleport: StartLure, lure type 0
                 let mut m = StartLure::default();
@@ -712,6 +727,25 @@ impl Session<'_> {
             };
             self.on_session_message(&im);
             self.shared.emit(Event::InstantMessage(im));
+        } else if id == ScriptDialog::ID {
+            let m: ScriptDialog = pkt.decode()?;
+            let d = &m.data;
+            let first = field_str(&d.first_name);
+            let last = field_str(&d.last_name);
+            self.shared
+                .emit(Event::ScriptDialog(crate::events::ScriptDialog {
+                    object_id: d.object_id,
+                    object_name: field_str(&d.object_name),
+                    owner_id: m.owner_data.first().map_or(Uuid::nil(), |o| o.owner_id),
+                    owner_name: format!("{first} {last}").trim().to_owned(),
+                    message: field_str(&d.message),
+                    channel: d.chat_channel,
+                    buttons: m
+                        .buttons
+                        .iter()
+                        .map(|b| field_str(&b.button_label))
+                        .collect(),
+                }));
         } else if id == AlertMessage::ID {
             let m: AlertMessage = pkt.decode()?;
             // OpenSim pads its messages with spaces and newlines

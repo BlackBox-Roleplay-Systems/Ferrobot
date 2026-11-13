@@ -3,6 +3,7 @@
 mod api;
 mod commands;
 mod config;
+mod dialogs;
 mod history;
 mod masters;
 mod services;
@@ -65,9 +66,16 @@ async fn main() -> std::process::ExitCode {
     tokio::spawn(services::restart::run(client.clone()));
     let history = std::sync::Arc::new(history::History::default());
     tokio::spawn(history::run(client.clone(), history.clone()));
+    let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));
+    tokio::spawn(dialogs::run(
+        client.clone(),
+        dialogs.clone(),
+        cfg.shared_secret.clone(),
+    ));
     let ctx = commands::Ctx {
         client: client.clone(),
         history,
+        dialogs,
     };
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(

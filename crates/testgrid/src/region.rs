@@ -455,6 +455,15 @@ impl Region {
                     transaction: m.transaction_block.transaction_id,
                 });
             }
+        } else if id == ScriptDialogReply::ID {
+            if let Ok(m) = pkt.decode::<ScriptDialogReply>() {
+                self.shared.saw(Seen::DialogReply {
+                    object_id: m.data.object_id,
+                    channel: m.data.chat_channel,
+                    index: m.data.button_index,
+                    label: field_str(&m.data.button_label),
+                });
+            }
         } else if id == StartLure::ID {
             if let Ok(m) = pkt.decode::<StartLure>() {
                 for t in &m.target_data {
@@ -778,6 +787,30 @@ impl Region {
                 b.binary_bucket = bucket;
                 b.from_agent_name = str_field(&name);
                 b.message = str_field(&text);
+                self.send(to, &m, true);
+            }
+            RegionCommand::Dialog {
+                object_id,
+                object_name,
+                owner,
+                message,
+                buttons,
+                channel,
+            } => {
+                let mut m = ScriptDialog::default();
+                m.data.object_id = object_id;
+                m.data.first_name = str_field(&owner.first);
+                m.data.last_name = str_field(&owner.last);
+                m.data.object_name = str_field(&object_name);
+                m.data.message = str_field(&message);
+                m.data.chat_channel = channel;
+                m.buttons = buttons
+                    .iter()
+                    .map(|b| script_dialog::Buttons {
+                        button_label: str_field(b),
+                    })
+                    .collect();
+                m.owner_data = vec![script_dialog::OwnerData { owner_id: owner.id }];
                 self.send(to, &m, true);
             }
             RegionCommand::Kick { reason } => {

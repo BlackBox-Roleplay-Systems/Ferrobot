@@ -28,6 +28,8 @@ All settings come from environment variables.
 | `FERRO_ACCEPT_GROUP_INVITES`, `FERRO_GROUP_INVITE_LEVEL` | `true`, `Owner` | Group invitations (never one with a fee) |
 | `FERRO_ACCEPT_INVENTORY`, `FERRO_INVENTORY_LEVEL` | `true`, `Owner` | Inventory offers (else declined) |
 | `FERRO_ACCEPT_FRIENDS`, `FERRO_FRIEND_LEVEL` | `true`, `Owner` | Friendship offers (`Friends` does not apply) |
+| `FERRO_DIALOG_CHANNEL`, `FERRO_DIALOG_AVATAR`, `FERRO_DIALOG_HTTP` | (none) | Where script dialogs are relayed: a channel, an avatar's key, an address |
+| `FERRO_DIALOG_OWNER` | (none) | Only the dialogs of this avatar's objects |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
@@ -37,7 +39,8 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `commands_EnforceTimeWindow`, `commands_ObjectMasterOptout`, `http_Enabled`, `http_Port`,
 `interaction_AcceptTeleports`, `interaction_TeleportRequestLevel`, `interaction_AcceptGroupInvites`,
 `interaction_GroupInviteLevel`, `interaction_AcceptInventory`, `interaction_InventoryTransferLevel`,
-`interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`. The `FERRO_*` name
+`interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`, `dialogrelay_RelayChannel`,
+`dialogrelay_RelayAvatar`, `dialogrelay_RelayHttpurl`, `dialogrelay_RelayObjectOwnerOnly`. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
 
 ### SecondBot's HTTP API
@@ -50,7 +53,8 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `GroupInvite`, `GroupEject`, `GroupAddRole`, `GroupRemoveRole`; and SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,
 `haveunreadims`, `getimchat`, `Groupchat`, `GroupchatHistory`, `GroupchatListAllUnreadGroups`,
-`GroupchatGroupHasUnread`, `GroupchatAnyUnread`, `GroupchatClearAll`.
+`GroupchatGroupHasUnread`, `GroupchatAnyUnread`, `GroupchatClearAll`; its dialog commands:
+`DialogResponce`, `DialogRelayChatTarget`, `DialogRelayAvatarTarget`, `DialogRelayHttpTarget`.
 
 ### Behind a Cloudflare Tunnel
 

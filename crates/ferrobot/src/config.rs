@@ -31,6 +31,8 @@ pub struct Config {
     pub object_master_optout: bool,
     /// What the bot accepts from whom (SecondBot's InteractionConfig).
     pub interactions: Rules,
+    /// Where script dialogs are relayed (SecondBot's DialogRelayConfig).
+    pub dialog_relay: crate::dialogs::Targets,
 }
 
 impl std::fmt::Debug for Config {
@@ -51,6 +53,7 @@ impl std::fmt::Debug for Config {
             .field("enforce_time_window", &self.enforce_time_window)
             .field("object_master_optout", &self.object_master_optout)
             .field("interactions", &self.interactions)
+            .field("dialog_relay", &self.dialog_relay)
             .finish_non_exhaustive()
     }
 }
@@ -215,6 +218,21 @@ impl Config {
                 "commands_ObjectMasterOptout",
                 false,
             )?,
+            dialog_relay: crate::dialogs::Targets {
+                channel: number(
+                    setting("FERRO_DIALOG_CHANNEL", "dialogrelay_RelayChannel"),
+                    -1,
+                    "a channel number",
+                )
+                .map(|c: i32| (c >= 0).then_some(c))?,
+                avatar: setting("FERRO_DIALOG_AVATAR", "dialogrelay_RelayAvatar")
+                    .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok()),
+                url: setting("FERRO_DIALOG_HTTP", "dialogrelay_RelayHttpurl")
+                    .map(|(_, v)| v)
+                    .filter(|v| v.starts_with("http")),
+                owner_only: setting("FERRO_DIALOG_OWNER", "dialogrelay_RelayObjectOwnerOnly")
+                    .and_then(|(_, v)| uuid::Uuid::parse_str(&v).ok()),
+            },
             interactions: Rules {
                 teleports: rule(
                     ("FERRO_ACCEPT_TELEPORTS", "interaction_AcceptTeleports"),

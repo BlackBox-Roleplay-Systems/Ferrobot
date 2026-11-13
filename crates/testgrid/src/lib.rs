@@ -265,6 +265,13 @@ pub enum Seen {
     StartLure {
         target: Uuid,
     },
+    /// The bot pressed a dialog's button (ScriptDialogReply).
+    DialogReply {
+        object_id: Uuid,
+        channel: i32,
+        index: i32,
+        label: String,
+    },
     TeleportLureRequest {
         session: u32,
         lure: Uuid,
@@ -404,6 +411,14 @@ enum RegionCommand {
     OfferTeleport {
         from: Resident,
         lure: Uuid,
+    },
+    Dialog {
+        object_id: Uuid,
+        object_name: String,
+        owner: Resident,
+        message: String,
+        buttons: Vec<String>,
+        channel: i32,
     },
     Kick {
         reason: String,
@@ -567,6 +582,27 @@ impl TestGrid {
             from: from.into(),
             text: text.into(),
         });
+    }
+
+    /// An object of `owner`'s shows the bot a dialog (llDialog). Returns the object's key.
+    pub fn dialog(
+        &self,
+        object_name: &str,
+        owner: &Resident,
+        message: &str,
+        buttons: &[&str],
+        channel: i32,
+    ) -> Uuid {
+        let object_id = Uuid::new_v4();
+        self.command(RegionCommand::Dialog {
+            object_id,
+            object_name: object_name.into(),
+            owner: owner.clone(),
+            message: message.into(),
+            buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
+            channel,
+        });
+        object_id
     }
 
     /// A resident sends the bot an IM, with their key as the grid gives it.

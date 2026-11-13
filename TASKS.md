@@ -126,7 +126,10 @@ region).
   masters unsigned, from objects signed (FERRO_OBJECT_MASTER_OPTOUT), the text and JSON forms,
   the reply target (channel, avatar, HTTP POST; not e-mail). Deliberate difference: a master is
   recognised by key, not by the name an IM carries (also for teleport offers)
-- ⬜ Script dialogs
+- 🟡 Script dialogs (src/dialogs.rs, SecondBot's DialogService and Dialogs commands): numbered,
+  440 s, relayed as its JSON to channels, avatars and HTTP (signed); DialogResponce,
+  DialogRelayChatTarget, DialogRelayAvatarTarget, DialogRelayHttpTarget. Deliberate difference:
+  expired dialogs are cleaned, not the live ones
 - ⬜ Relays: Discord, webhooks
 - ⬜ Homebound
 

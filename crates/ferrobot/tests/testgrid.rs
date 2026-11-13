@@ -1111,3 +1111,91 @@ async fn a_strangers_item_is_declined_by_default() {
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
+
+/// Script dialogs: relayed on a channel as SecondBot's JSON, answered with DialogResponce.
+#[tokio::test]
+async fn script_dialogs_are_relayed_and_answered() {
+    let grid = grid().await;
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind")
+        .local_addr()
+        .expect("address")
+        .port()
+        .to_string();
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("FERRO_HTTP_PORT", port.as_str()),
+            ("FERRO_SHARED_SECRET", "s"),
+            ("FERRO_DIALOG_CHANNEL", "7"),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    bot.wait_log("HTTP API on port").await;
+    let some = ferro_testgrid::Resident {
+        id: uuid_from(0x5eed_0001),
+        first: "Some".into(),
+        last: "Resident".into(),
+    };
+    let object = grid.dialog("Door", &some, "Open the door?", &["Yes", "No"], -42);
+    wait_for(&grid, &bot, "the dialog relayed on channel 7", |s| {
+        matches!(s, Seen::Chat { message, channel: 7, .. }
+            if message.starts_with(r#"{"message":"Open the door?","buttons":["Yes","No"],"objectname":"Door","dialogid":1,"#))
+    })
+    .await;
+
+    // DialogResponce through the API, signed as BB signs
+    use sha1::Digest;
+    let http = reqwest::Client::new();
+    let run = |args: &'static str| {
+        let http = http.clone();
+        let port = port.clone();
+        async move {
+            let t = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_secs();
+            let sig: String = sha1::Sha1::digest(format!("DialogResponce{args}{t}s"))
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let body = format!(
+                "commandName=DialogResponce&args={}&unixtime={t}&signing={sig}",
+                args.replace("~#~", "%7E%23%7E")
+            );
+            let text = http
+                .post(format!("http://127.0.0.1:{port}/api/Run"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(body)
+                .send()
+                .await
+                .expect("answer")
+                .text()
+                .await
+                .expect("body");
+            let outer: serde_json::Value = serde_json::from_str(&text).expect("json");
+            let inner: serde_json::Value =
+                serde_json::from_str(outer["Value"].as_str().expect("Value")).expect("inner");
+            inner["reply"].as_str().expect("reply").to_owned()
+        }
+    };
+    assert_eq!(run("1~#~Maybe").await, "Invaild dialog button");
+    assert_eq!(run("1~#~No").await, "action");
+    wait_for(&grid, &bot, "the button pressed", |s| {
+        *s == Seen::DialogReply {
+            object_id: object,
+            channel: -42,
+            index: 1,
+            label: "No".into(),
+        }
+    })
+    .await;
+    assert_eq!(
+        run("1~#~No").await,
+        "Invaild dialog window",
+        "answered once"
+    );
+
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}

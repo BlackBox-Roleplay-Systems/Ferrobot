@@ -30,6 +30,8 @@ pub enum Event {
         from_name: String,
         message: String,
     },
+    /// A script dialog (llDialog, ScriptDialog).
+    ScriptDialog(ScriptDialog),
     /// A teleport failed; the bot stays where it is (TeleportFailed).
     TeleportFailed { reason: String },
     /// The session ended; a new login comes next, or not, as the caller decides.
@@ -44,6 +46,19 @@ pub mod chat_type {
     pub const START_TYPING: u8 = 4;
     pub const STOP_TYPING: u8 = 5;
     pub const OWNER_SAY: u8 = 8;
+}
+
+#[derive(Debug, Clone)]
+pub struct ScriptDialog {
+    pub object_id: Uuid,
+    pub object_name: String,
+    pub owner_id: Uuid,
+    /// The owner's name as the dialog gives it.
+    pub owner_name: String,
+    pub message: String,
+    /// Where the answer goes.
+    pub channel: i32,
+    pub buttons: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

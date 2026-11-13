@@ -4,10 +4,12 @@
 
 mod avatars;
 mod chat;
+mod dialogs;
 mod groups;
 mod info;
 pub mod reply;
 
+use crate::dialogs::Dialogs;
 use crate::history::History;
 use ferro_client::Client;
 use reply::Answer;
@@ -19,6 +21,7 @@ use uuid::Uuid;
 pub struct Ctx {
     pub client: Client,
     pub history: Arc<History>,
+    pub dialogs: Arc<Dialogs>,
 }
 
 /// The commands, with their number of arguments (SecondBot checks the count first).
@@ -50,6 +53,10 @@ const COMMANDS: &[(&str, usize)] = &[
     ("GroupchatClearAll", 0),
     ("GroupchatHistory", 1),
     ("Groupchat", 2),
+    ("DialogRelayAvatarTarget", 1),
+    ("DialogRelayChatTarget", 1),
+    ("DialogRelayHttpTarget", 1),
+    ("DialogResponce", 2),
 ];
 
 /// What CommandsService.RunCommand answers: whether the command ran, and its answer (or why not).
@@ -96,6 +103,10 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "GroupchatClearAll" => chat::group_chat_clear_all(ctx),
         "GroupchatHistory" => chat::group_chat_history(ctx, a(0)),
         "Groupchat" => chat::group_chat(ctx, a(0), a(1)).await,
+        "DialogRelayAvatarTarget" => dialogs::relay_avatar(ctx, a(0)).await,
+        "DialogRelayChatTarget" => dialogs::relay_chat(ctx, a(0)),
+        "DialogRelayHttpTarget" => dialogs::relay_http(ctx, a(0)),
+        "DialogResponce" => dialogs::respond(ctx, a(0), a(1)).await,
         _ => return (false, "Unknown command".into()),
     };
     (true, answer)
@@ -137,6 +148,7 @@ mod tests {
         let client = Ctx {
             client,
             history: Arc::default(),
+            dialogs: Arc::default(),
         };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,
