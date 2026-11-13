@@ -265,6 +265,10 @@ pub enum Seen {
     StartLure {
         target: Uuid,
     },
+    /// The bot looked a region up by name (MapNameRequest).
+    MapNameRequest {
+        name: String,
+    },
     /// The bot pressed a dialog's button (ScriptDialogReply).
     DialogReply {
         object_id: Uuid,

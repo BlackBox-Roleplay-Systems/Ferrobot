@@ -1199,3 +1199,64 @@ async fn script_dialogs_are_relayed_and_answered() {
     bot.terminate();
     assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
 }
+
+/// Homebound: logged in away from home, the bot goes home; a restart at home sends it to the
+/// backup.
+#[tokio::test]
+async fn homebound_goes_home_and_leaves_before_a_restart() {
+    let grid = grid().await;
+    let mut bot = Bot::start(
+        &grid,
+        &[
+            ("FERRO_HOME_SIM", "Second%20Region/100/110/22"),
+            ("FERRO_BACKUP_SIM", "Test Region/128/128/25"),
+            ("FERRO_HOME_AFTER", "0"),
+        ],
+    );
+    arrived(&grid, &bot, 1).await;
+    wait_for(&grid, &bot, "the arrival at home", |s| {
+        *s == Seen::CompleteAgentMovement {
+            session: 1,
+            region: ferro_testgrid::SECOND_REGION,
+        }
+    })
+    .await;
+    bot.wait_log("homebound: away from home, to Second Region")
+        .await;
+    assert!(
+        grid.count(|s| matches!(s, Seen::MapNameRequest { name } if name == "Second Region")) >= 1
+    );
+
+    grid.announce_restart(120);
+    bot.wait_log("homebound: the region restarts, to Test Region")
+        .await;
+    wait_for(&grid, &bot, "the arrival at the backup", |s| {
+        // the login's arrival in the first region, then this one
+        matches!(
+            s,
+            Seen::CompleteAgentMovement {
+                session: 1,
+                region: 0
+            }
+        )
+    })
+    .await;
+    assert!(
+        grid.wait_until(WAIT, |seen| seen
+            .iter()
+            .filter(|s| matches!(
+                s,
+                Seen::CompleteAgentMovement {
+                    session: 1,
+                    region: 0
+                }
+            ))
+            .count()
+            == 2)
+            .await,
+        "{}",
+        bot.log()
+    );
+    bot.terminate();
+    assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+}

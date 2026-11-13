@@ -455,6 +455,34 @@ impl Region {
                     transaction: m.transaction_block.transaction_id,
                 });
             }
+        } else if id == MapNameRequest::ID {
+            if let Ok(m) = pkt.decode::<MapNameRequest>() {
+                let name = field_str(&m.name_data.name);
+                self.shared.saw(Seen::MapNameRequest { name: name.clone() });
+                // the regions whose name starts so, then the end of the list (access 255), as
+                // OpenSim's MapSearchModule answers
+                let want = name.to_lowercase();
+                let mut r = MapBlockReply::default();
+                r.agent_data.agent_id = self.shared.agent_id;
+                r.agent_data.flags = 2;
+                for region in &self.shared.regions {
+                    if region.name.to_lowercase().starts_with(&want) {
+                        r.data.push(map_block_reply::Data {
+                            x: (region.x / 256) as u16,
+                            y: (region.y / 256) as u16,
+                            name: str_field(&region.name),
+                            access: 13,
+                            ..Default::default()
+                        });
+                    }
+                }
+                r.data.push(map_block_reply::Data {
+                    name: str_field(&name),
+                    access: 255,
+                    ..Default::default()
+                });
+                self.send(from, &r, true);
+            }
         } else if id == ScriptDialogReply::ID {
             if let Ok(m) = pkt.decode::<ScriptDialogReply>() {
                 self.shared.saw(Seen::DialogReply {

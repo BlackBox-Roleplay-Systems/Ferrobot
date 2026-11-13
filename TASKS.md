@@ -131,7 +131,11 @@ region).
   DialogRelayChatTarget, DialogRelayAvatarTarget, DialogRelayHttpTarget. Deliberate difference:
   expired dialogs are cleaned, not the live ones
 - ⬜ Relays: Discord, webhooks
-- ⬜ Homebound
+- 🟡 Homebound (services/homebound.rs, SecondBot's HomeboundService): home sim after
+  FERRO_HOME_AFTER minutes away, backup sim when home fails, evacuation on a restart, the spot at
+  home, paused by a master's teleport until the next login; regions by name (MapNameRequest, as
+  Aurora's teleport by name)
+- ⬜ Homebound: sit on an object at home (AtHomeAutoSitUuid), with movement (phase 7)
 
 ## Phase 6 - Appearance and inventory
 

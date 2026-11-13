@@ -14,6 +14,7 @@
 //! "next accept" list and its JSON event output are not here yet (TASKS.md).
 
 use crate::masters::Masters;
+use crate::services::homebound::Homebound;
 use ferro_client::events::dialog;
 use ferro_client::{Client, Event, InstantMessage};
 use std::sync::Arc;
@@ -99,7 +100,13 @@ fn fee(bucket: &[u8]) -> Option<i32> {
     (bucket.len() == 20).then(|| i32::from_be_bytes(bytes))
 }
 
-async fn on_offer(client: Client, masters: Arc<Masters>, rules: Rules, im: InstantMessage) {
+async fn on_offer(
+    client: Client,
+    masters: Arc<Masters>,
+    rules: Rules,
+    homebound: Arc<Homebound>,
+    im: InstantMessage,
+) {
     let (what, rule, kind) = match im.dialog {
         dialog::LURE_USER => ("teleport offer", rules.teleports, Kind::Teleport),
         dialog::TELEPORT_REQUEST => ("teleport request", rules.teleports, Kind::Teleport),
@@ -141,13 +148,13 @@ async fn on_offer(client: Client, masters: Arc<Masters>, rules: Rules, im: Insta
         Ok(()) => {
             log::info!("{what} from {from} accepted");
             match im.dialog {
-                dialog::LURE_USER => match client.accept_lure(im.id).await {
-                    Ok(region) => {
+                dialog::LURE_USER => {
+                    // homebound does not bring the bot back from where it was sent
+                    homebound.pause();
+                    client.accept_lure(im.id).await.map(|region| {
                         log::info!("teleported to {region}");
-                        Ok(())
-                    }
-                    Err(e) => Err(e),
-                },
+                    })
+                }
                 dialog::TELEPORT_REQUEST => client.offer_teleport(im.from_agent_id, "").await,
                 // the group's id is the invitation's sender
                 dialog::GROUP_INVITATION => {
@@ -171,12 +178,18 @@ async fn on_offer(client: Client, masters: Arc<Masters>, rules: Rules, im: Insta
     }
 }
 
-pub async fn run(client: Client, masters: Arc<Masters>, rules: Rules) {
+pub async fn run(client: Client, masters: Arc<Masters>, rules: Rules, homebound: Arc<Homebound>) {
     let mut events = client.subscribe();
     loop {
         match events.recv().await {
             Ok(Event::InstantMessage(im)) => {
-                tokio::spawn(on_offer(client.clone(), masters.clone(), rules, im));
+                tokio::spawn(on_offer(
+                    client.clone(),
+                    masters.clone(),
+                    rules,
+                    homebound.clone(),
+                    im,
+                ));
             }
             Ok(_) => {}
             Err(RecvError::Lagged(n)) => log::warn!("interactions: {n} events missed"),

@@ -2,6 +2,7 @@
 
 pub mod chat_log;
 pub mod health;
+pub mod homebound;
 pub mod im_commands;
 pub mod interactions;
 pub mod restart;

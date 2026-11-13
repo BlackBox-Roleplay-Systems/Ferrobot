@@ -9,6 +9,7 @@ publish.workspace = true
 ferro-client = { path = "../client" }
 # SecondBot's HTTP API: a small HTTP/1 server with form bodies (MIT)
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "form"] }
+glam = "0.34.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 # the commands' signatures are SHA-1, as SecondBot's (MIT / Apache-2.0)

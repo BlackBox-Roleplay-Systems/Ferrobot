@@ -86,6 +86,11 @@ pub(crate) enum Request {
         message: String,
         reply: oneshot::Sender<()>,
     },
+    /// A region's handle by its name (MapNameRequest); `None` when there is no such region.
+    RegionHandle {
+        name: String,
+        reply: oneshot::Sender<Option<u64>>,
+    },
     /// Answers to offers: friendships, inventory, teleports.
     Interact {
         interaction: Interaction,
@@ -471,5 +476,25 @@ impl Client {
             label: label.to_owned(),
         })
         .await
+    }
+
+    /// A region's handle by its name, from the world map (MapNameRequest); `None` when the grid
+    /// has no region of that name.
+    pub async fn region_handle(&self, name: &str) -> Result<Option<u64>, ClientError> {
+        let name = name.trim().to_owned();
+        self.ask(|reply| Request::RegionHandle { name, reply })
+            .await
+    }
+
+    /// Teleport to a place in a region given by name (LibreMetaverse's Teleport(simName, …)).
+    pub async fn teleport_to_region(
+        &self,
+        region: &str,
+        position: glam::Vec3,
+    ) -> Result<String, ClientError> {
+        match self.region_handle(region).await? {
+            Some(handle) => self.teleport_to(handle, position).await,
+            None => Err(ClientError::Refused(format!("no region named {region}"))),
+        }
     }
 }

@@ -58,12 +58,27 @@ async fn main() -> std::process::ExitCode {
     tokio::spawn(services::chat_log::run(client.clone()));
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
+    let homebound = std::sync::Arc::new(services::homebound::Homebound::default());
     tokio::spawn(services::interactions::run(
         client.clone(),
         masters.clone(),
         cfg.interactions,
+        homebound.clone(),
     ));
-    tokio::spawn(services::restart::run(client.clone()));
+    match cfg.homebound.clone() {
+        Some(settings) => {
+            log::info!("homebound to {}", settings.home.region);
+            tokio::spawn(services::homebound::run(
+                client.clone(),
+                settings,
+                homebound.clone(),
+            ));
+        }
+        // without homebound, a restart sends the bot to its Second Life home
+        None => {
+            tokio::spawn(services::restart::run(client.clone()));
+        }
+    }
     let history = std::sync::Arc::new(history::History::default());
     tokio::spawn(history::run(client.clone(), history.clone()));
     let dialogs = std::sync::Arc::new(dialogs::Dialogs::new(cfg.dialog_relay.clone()));

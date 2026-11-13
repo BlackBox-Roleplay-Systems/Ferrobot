@@ -176,6 +176,8 @@ struct Session<'a> {
     picker_waits: HashMap<Uuid, oneshot::Sender<Vec<(Uuid, String)>>>,
     /// Group replies being gathered.
     groups: groups::GroupWaits,
+    /// Region names asked of the world map (lower case), and who waits.
+    map_waits: Vec<(String, oneshot::Sender<Option<u64>>)>,
 }
 
 impl Session<'_> {
@@ -492,6 +494,16 @@ impl Session<'_> {
             }
             Request::Teleport { to, reply } => self.start_teleport(to, reply),
             Request::Group(r) => self.on_group_request(r),
+            Request::RegionHandle { name, reply } => {
+                // LLWorldMapMessage::sendNamedRegionRequest; the reply gives the grid position
+                let mut m = MapNameRequest::default();
+                m.agent_data.agent_id = self.login.agent_id;
+                m.agent_data.session_id = self.login.session_id;
+                m.agent_data.flags = 2; // LAYER_FLAG
+                m.name_data.name = str_field(&name);
+                self.send(&m, true);
+                self.map_waits.push((name.to_lowercase(), reply));
+            }
             Request::Interact { interaction, reply } => {
                 self.interact(interaction);
                 let _ = reply.send(());
@@ -621,6 +633,7 @@ impl Session<'_> {
         self.name_waits.retain(|(_, reply)| !reply.is_closed());
         self.picker_waits.retain(|_, reply| !reply.is_closed());
         self.groups.retain_open();
+        self.map_waits.retain(|(_, tx)| !tx.is_closed());
         if now.duration_since(self.circuit.last_recv) > REGION_TIMEOUT {
             return Some(End::Lost(format!(
                 "nothing from the region for {} s",
@@ -727,6 +740,9 @@ impl Session<'_> {
             };
             self.on_session_message(&im);
             self.shared.emit(Event::InstantMessage(im));
+        } else if id == MapBlockReply::ID {
+            let m: MapBlockReply = pkt.decode()?;
+            self.on_map_blocks(&m);
         } else if id == ScriptDialog::ID {
             let m: ScriptDialog = pkt.decode()?;
             let d = &m.data;
@@ -878,6 +894,38 @@ impl Session<'_> {
             return Ok(Some(End::Lost("the region closed the connection".into())));
         }
         Ok(None)
+    }
+
+    /// MapBlockReply for the names asked (Aurora's teleport by name): the region of that very
+    /// name, the end-of-list block (access 255, MapSearchModule's) never one; a reply with only
+    /// other names starting like it, or empty ones, means there is no such region.
+    fn on_map_blocks(&mut self, m: &MapBlockReply) {
+        let names: Vec<(String, u8, u64)> = m
+            .data
+            .iter()
+            .map(|d| {
+                let handle = ((u64::from(d.x) * 256) << 32) | (u64::from(d.y) * 256);
+                (field_str(&d.name).to_lowercase(), d.access, handle)
+            })
+            .collect();
+        let waits = std::mem::take(&mut self.map_waits);
+        for (want, tx) in waits {
+            let found = names
+                .iter()
+                .find(|(n, access, _)| *access != 255 && *n == want)
+                .map(|(_, _, h)| *h);
+            if let Some(handle) = found {
+                let _ = tx.send(Some(handle));
+            } else if names
+                .iter()
+                .all(|(n, _, _)| n.is_empty() || n.starts_with(&want))
+            {
+                let _ = tx.send(None);
+            } else {
+                // a reply to something else (map browsing): still waiting
+                self.map_waits.push((want, tx));
+            }
+        }
     }
 
     fn drop_group(&mut self, group: Uuid) {
@@ -1070,6 +1118,7 @@ async fn run(
         name_waits: Vec::new(),
         picker_waits: HashMap::new(),
         groups: groups::GroupWaits::default(),
+        map_waits: Vec::new(),
     };
     s.send_use_circuit_code();
     // capabilities and the event queue, alongside the circuit

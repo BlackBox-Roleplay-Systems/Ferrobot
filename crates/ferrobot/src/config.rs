@@ -33,6 +33,8 @@ pub struct Config {
     pub interactions: Rules,
     /// Where script dialogs are relayed (SecondBot's DialogRelayConfig).
     pub dialog_relay: crate::dialogs::Targets,
+    /// Homebound: off unless a home sim is given (SecondBot's HomeboundConfig).
+    pub homebound: Option<crate::services::homebound::Settings>,
 }
 
 impl std::fmt::Debug for Config {
@@ -54,6 +56,7 @@ impl std::fmt::Debug for Config {
             .field("object_master_optout", &self.object_master_optout)
             .field("interactions", &self.interactions)
             .field("dialog_relay", &self.dialog_relay)
+            .field("homebound", &self.homebound)
             .finish_non_exhaustive()
     }
 }
@@ -104,6 +107,40 @@ fn setting_flag(
     default: bool,
 ) -> Result<bool, ConfigError> {
     setting(ferro, secondbot).map_or(Ok(default), |(name, v)| parse_flag(name, &v))
+}
+
+/// Homebound's settings: on with a home sim (FERRO_HOME_SIM, or SecondBot's homebound_Enabled
+/// with homebound_HomeSimSlUrl).
+fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigError> {
+    use crate::services::homebound::{Place, Settings};
+    let home = match var("FERRO_HOME_SIM") {
+        Some(v) => Some(("FERRO_HOME_SIM", v)),
+        None if setting_flag("FERRO_HOMEBOUND", "homebound_Enabled", false)? => {
+            setting("FERRO_HOME_SIM", "homebound_HomeSimSlUrl")
+        }
+        None => None,
+    };
+    let Some((name, home)) = home else {
+        return Ok(None);
+    };
+    let place = |name: &'static str, v: &str| {
+        Place::parse(v).ok_or(ConfigError::Invalid(name, "Region Name/x/y/z".into()))
+    };
+    let backup = match setting("FERRO_BACKUP_SIM", "homebound_BackupSimSLUrl") {
+        Some((name, v)) => Some(place(name, &v)?),
+        None => None,
+    };
+    let minutes: u64 = number(
+        setting("FERRO_HOME_AFTER", "homebound_ReturnToHomeSimAfterMins"),
+        1,
+        "a number of minutes",
+    )?;
+    Ok(Some(Settings {
+        home: place(name, &home)?,
+        backup,
+        after: std::time::Duration::from_secs(minutes * 60),
+        seek: setting_flag("FERRO_HOME_SEEK", "homebound_AtHomeSeekLocation", true)?,
+    }))
 }
 
 /// An interaction rule: its switch (on by default) and its level ("Owner" by default).
@@ -218,6 +255,7 @@ impl Config {
                 "commands_ObjectMasterOptout",
                 false,
             )?,
+            homebound: homebound()?,
             dialog_relay: crate::dialogs::Targets {
                 channel: number(
                     setting("FERRO_DIALOG_CHANNEL", "dialogrelay_RelayChannel"),

@@ -30,6 +30,10 @@ All settings come from environment variables.
 | `FERRO_ACCEPT_FRIENDS`, `FERRO_FRIEND_LEVEL` | `true`, `Owner` | Friendship offers (`Friends` does not apply) |
 | `FERRO_DIALOG_CHANNEL`, `FERRO_DIALOG_AVATAR`, `FERRO_DIALOG_HTTP` | (none) | Where script dialogs are relayed: a channel, an avatar's key, an address |
 | `FERRO_DIALOG_OWNER` | (none) | Only the dialogs of this avatar's objects |
+| `FERRO_HOME_SIM` | (none) | Homebound: the bot's home sim, `Region Name/x/y/z`; it goes back there |
+| `FERRO_BACKUP_SIM` | (none) | Where it goes when home fails, or home restarts |
+| `FERRO_HOME_AFTER` | `1` | Minutes away before it goes home |
+| `FERRO_HOME_SEEK` | `true` | At home, go to the spot given |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
 
@@ -40,7 +44,9 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `interaction_AcceptTeleports`, `interaction_TeleportRequestLevel`, `interaction_AcceptGroupInvites`,
 `interaction_GroupInviteLevel`, `interaction_AcceptInventory`, `interaction_InventoryTransferLevel`,
 `interaction_AcceptFriendRequests`, `interaction_FriendRequestLevel`, `dialogrelay_RelayChannel`,
-`dialogrelay_RelayAvatar`, `dialogrelay_RelayHttpurl`, `dialogrelay_RelayObjectOwnerOnly`. The `FERRO_*` name
+`dialogrelay_RelayAvatar`, `dialogrelay_RelayHttpurl`, `dialogrelay_RelayObjectOwnerOnly`,
+`homebound_Enabled`, `homebound_HomeSimSlUrl`, `homebound_BackupSimSLUrl`,
+`homebound_ReturnToHomeSimAfterMins`, `homebound_AtHomeSeekLocation`. The `FERRO_*` name
 wins when both are set. `http_DisableCommandValidation` is ignored: commands are always signed.
 
 ### SecondBot's HTTP API
