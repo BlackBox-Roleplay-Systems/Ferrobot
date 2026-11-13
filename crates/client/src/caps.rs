@@ -27,6 +27,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "RemoteParcelRequest",
     "UpdateAvatarAppearance",
     "UpdateNotecardAgentInventory",
+    "ViewerAsset",
 ];
 
 #[derive(Debug, thiserror::Error)]

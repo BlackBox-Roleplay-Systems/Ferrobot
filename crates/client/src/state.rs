@@ -36,6 +36,8 @@ pub struct State {
     pub mute_list: Option<Vec<crate::mutes::Mute>>,
     /// The parcel the bot stands on (ParcelProperties).
     pub parcel: Option<crate::parcels::ParcelInfo>,
+    /// The animations the region says the bot plays (AvatarAnimation).
+    pub animations: Vec<Uuid>,
     /// Marked away (SetAway).
     pub away: bool,
     /// The object the bot sits on (AvatarSitResponse), until it stands.

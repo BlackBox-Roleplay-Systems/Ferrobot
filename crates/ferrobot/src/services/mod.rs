@@ -7,3 +7,4 @@ pub mod im_commands;
 pub mod interactions;
 pub mod relays;
 pub mod restart;
+pub mod script_permissions;

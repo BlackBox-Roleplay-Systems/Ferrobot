@@ -29,6 +29,19 @@ pub async fn handle(
         ("chatsessionrequest", "POST") => chat_session_request(shared, body),
         ("groupapi", "GET" | "POST") => group_api(shared, method, query, body),
         ("appearance", "POST") => appearance(shared, body),
+        ("viewerasset", "GET") => {
+            let want = query
+                .split('&')
+                .find_map(|kv| kv.strip_prefix("gesture_id="))
+                .and_then(|v| uuid::Uuid::parse_str(v).ok());
+            match want {
+                Some(id) if id == crate::inventory::GESTURE_ASSET => {
+                    shared.saw(Seen::ViewerAsset { asset: id });
+                    Response::new(200, "application/octet-stream", crate::inventory::gesture())
+                }
+                _ => Response::status(404),
+            }
+        }
         ("estateaccess", "GET") => {
             // the bot manages the estate; one resident is banned
             let entry = |k: &str, id: uuid::Uuid| {
@@ -191,6 +204,7 @@ fn seed(shared: &Arc<Shared>, n: u32, region: usize, body: &[u8]) -> Response {
         ("AgentPreferences", "preferences"),
         ("RemoteParcelRequest", "remoteparcel"),
         ("EstateAccess", "estateaccess"),
+        ("ViewerAsset", "viewerasset"),
         ("DispatchRegionInfo", "regioninfo"),
         ("EstateChangeInfo", "estatechangeinfo"),
         ("ParcelPropertiesUpdate", "parcelupdate"),

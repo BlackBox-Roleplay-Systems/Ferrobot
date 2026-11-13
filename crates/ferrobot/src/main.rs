@@ -1,5 +1,6 @@
 //! Ferrobot: a Second Life bot in a container.
 
+mod animators;
 mod api;
 mod commands;
 mod config;
@@ -66,6 +67,12 @@ async fn main() -> std::process::ExitCode {
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
     let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
     let homebound = std::sync::Arc::new(services::homebound::Homebound::default());
+    let animators = std::sync::Arc::new(animators::Animators::default());
+    tokio::spawn(services::script_permissions::run(
+        client.clone(),
+        client.subscribe(),
+        animators.clone(),
+    ));
     tokio::spawn(services::interactions::run(
         client.clone(),
         client.subscribe(),
@@ -117,6 +124,7 @@ async fn main() -> std::process::ExitCode {
         homebound: homebound.clone(),
         allow_funds: cfg.allow_funds,
         http: http.clone(),
+        animators: animators.clone(),
     };
     if cfg.im_commands {
         tokio::spawn(services::im_commands::run(

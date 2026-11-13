@@ -11,7 +11,7 @@ use glam::Vec3;
 
 /// The heading (degrees clockwise from north) from one place to another; none when the second is
 /// right above or below the first.
-fn heading_to(from: Vec3, to: Vec3) -> Option<f32> {
+pub fn heading_to(from: Vec3, to: Vec3) -> Option<f32> {
     let d = to - from;
     (d.x != 0.0 || d.y != 0.0).then(|| d.x.atan2(d.y).to_degrees())
 }
@@ -75,10 +75,13 @@ pub async fn sit(ctx: &Ctx, target: &str) -> Answer {
     go(ctx, "Sit", m, "ok", &args).await
 }
 
-/// Stand, as SecondBot's: homebound no longer sits the bot down (its MarkStandup).
+/// Stand, as SecondBot's: homebound no longer sits the bot down (its MarkStandup), and the
+/// animations are reset (its ResetAnimations).
 pub async fn stand(ctx: &Ctx) -> Answer {
     ctx.homebound.stood_up();
-    go(ctx, "Stand", Move::Stand, "ok", &[]).await
+    let answer = go(ctx, "Stand", Move::Stand, "ok", &[]).await;
+    super::animation::stop_all(ctx).await;
+    answer
 }
 
 pub async fn autopilot(ctx: &Ctx, x: &str, y: &str, z: &str) -> Answer {

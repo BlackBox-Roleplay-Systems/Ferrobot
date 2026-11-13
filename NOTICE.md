@@ -25,6 +25,7 @@ a Second Life viewer in Rust, GPL-3.0-or-later. They may have been changed since
 | `crates/client/src/mutes.rs` | the mute list xfer of `crates/aurora-net/src/session_social.rs`, and `parse_line` of `crates/aurora-viewer/src/world/mutes.rs` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/parcels.rs` | `parse_parcel_properties`, `ParcelUpdate::to_llsd`, `access_list_chunks` of `crates/aurora-net/src/land.rs`, and `ParcelInfo` / `ParcelMedia` of `crates/aurora-net/src/types.rs` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/estate.rs` | `crates/aurora-net/src/estate.rs`: the estate and access flags, `EstateInfo` and `parse_estate_update_info`, `estate_change_body` / `estate_change_strings`, `parse_estate_access`, `RegionRules`, `access_delta_strings`, `region_message_strings` | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
+| `crates/client/src/gesture.rs` | `crates/aurora-assets/src/gesture.rs` (the decoding) | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 | `crates/client/src/region_restart.rs` | `crates/aurora-net/src/region_restart.rs`, without the channel announcement | `b8cf1f047dd111f71981b500ae8825ef0c1321ed` (2026-11-12) |
 
 Aurora's code in turn follows the Second Life viewer's sources (Linden Lab,

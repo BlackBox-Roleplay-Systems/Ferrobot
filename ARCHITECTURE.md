@@ -32,6 +32,7 @@ crates/
     src/mutes.rs           the mute list: its download by xfer and its file (from Aurora)
     src/parcels.rs         a parcel's record (ParcelProperties) and its update (from Aurora)
     src/estate.rs          the estate's info, access lists and changes (from Aurora)
+    src/gesture.rs         gesture assets (from Aurora) and their playing
   ferrobot/   ferrobot     the bot
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables

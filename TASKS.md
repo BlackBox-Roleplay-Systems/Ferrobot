@@ -247,7 +247,15 @@ baking: the bot says so and goes on.
 - ⬜ SetEstateTerrainRaw (a terrain upload by xfer), QueryLandSaleData, the region's parcel list
   (GetListOfParcels, UpdateListOfParcels, GetParcelListSnapshots, GetSimParcelLayers)
 - ⬜ GetObjectsInParcel, UnRezObject (with the objects)
-- ⬜ Profiles, animations and gestures
+- 🟡 Animations and gestures: PlayGesture and PlayGestureDirect (the asset by ViewerAsset, decoded
+  as Aurora's gesture.rs, its steps played as LLGestureMgr: animations, sounds by SoundTrigger,
+  chat with its channel, waits; its animations stopped at its end), ResetAnimations (what
+  AvatarAnimation says the bot plays; Stand does it too, as SecondBot's), PointAt (the point
+  animation, LLHUDEffectPointAt and a beam), AddToAllowAnimations (ScriptQuestion: that avatar's
+  objects get PERMISSION_TRIGGER_ANIMATION, nothing more); tested on the test grid. Deliberate
+  differences: AddToAllowAnimations works (SecondBot's answers "@todo"), PointAt finds the avatar
+  (SecondBot's reads the key before looking it up)
+- ⬜ Profiles
 
 ## Phase 8 - Running it for real
 

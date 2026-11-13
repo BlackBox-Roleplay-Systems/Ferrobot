@@ -344,6 +344,22 @@ pub enum Seen {
     AlwaysRun {
         on: bool,
     },
+    SoundTrigger {
+        asset: Uuid,
+    },
+    /// A ViewerAsset download.
+    ViewerAsset {
+        asset: Uuid,
+    },
+    /// ViewerEffect: its type (15 point at, 7 beam) and its target.
+    Effect {
+        kind: u8,
+        target: Uuid,
+    },
+    ScriptAnswer {
+        task: Uuid,
+        questions: i32,
+    },
     /// AgentAnimation: an animation started or stopped.
     Animation {
         id: Uuid,
@@ -583,6 +599,12 @@ enum RegionCommand {
         reason: String,
     },
     DisableSimulator,
+    /// A script asks the bot for permissions.
+    ScriptQuestion {
+        task: Uuid,
+        owner: String,
+        questions: i32,
+    },
     RestartNotice {
         seconds: i32,
     },
@@ -948,6 +970,15 @@ impl TestGrid {
     /// RegionRestartSeconds or RegionRestartMinutes notification).
     pub fn announce_restart(&self, seconds: i32) {
         self.command(RegionCommand::RestartNotice { seconds });
+    }
+
+    /// A script of an object owned by `owner` (a name) asks the bot for permissions.
+    pub fn script_question(&self, task: Uuid, owner: &str, questions: i32) {
+        self.command(RegionCommand::ScriptQuestion {
+            task,
+            owner: owner.to_owned(),
+            questions,
+        });
     }
 
     /// The region closes the circuit (DisableSimulator), as when it shuts down.

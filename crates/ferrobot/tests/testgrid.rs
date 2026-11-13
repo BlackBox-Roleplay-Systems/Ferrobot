@@ -2119,6 +2119,128 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// Gestures, animations, pointing, and which scripts may animate the bot.
+    #[tokio::test]
+    async fn animation_commands() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let some = uuid_from(0x5eed_0001);
+
+        // the gesture: downloaded, then its animation, sound and chat
+        assert_eq!(
+            api.reply("PlayGesture", &[&inv::GESTURE.to_string()]).await,
+            "Accepted"
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::ViewerAsset {
+                    asset: inv::GESTURE_ASSET
+                })
+            .await
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::Animation {
+                    id: inv::GESTURE_ANIMATION,
+                    start: true
+                })
+            .await
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::SoundTrigger {
+                    asset: inv::GESTURE_SOUND
+                })
+            .await
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| matches!(s, Seen::Chat { message, channel: 7, .. }
+                if message == "hello from a gesture"))
+                .await
+        );
+        assert_eq!(
+            api.reply("PlayGestureDirect", &["nothing"]).await,
+            "Error with gesture"
+        );
+        assert_eq!(
+            api.failure("PlayGesture", &[&inv::BOX.to_string()]).await.0,
+            "ViewerAsset: status 404"
+        );
+
+        // what the region says the bot plays, stopped
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            let r = api.reply("ResetAnimations", &[]).await;
+            if r == "Accepted - 1 stopped animations" {
+                break;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "{r}");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::Animation {
+                    id: inv::GESTURE_ANIMATION,
+                    start: false
+                })
+            .await
+        );
+
+        // pointing at a resident: the animation, the point-at effect and a beam
+        assert_eq!(api.reply("PointAt", &["Some Resident"]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::Effect {
+                    kind: 15,
+                    target: some
+                })
+            .await
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::Effect {
+                    kind: 7,
+                    target: some
+                })
+            .await
+        );
+        assert_eq!(
+            api.failure("PointAt", &[&uuid_from(0xdead).to_string()])
+                .await
+                .0,
+            "Cant find UUID in sim"
+        );
+
+        // a script of an allowed avatar may animate the bot, and nothing more
+        assert_eq!(
+            api.reply("AddToAllowAnimations", &["Some Resident"]).await,
+            "ok"
+        );
+        let (task, other_task) = (uuid_from(0x7a5c), uuid_from(0x7a5d));
+        grid.script_question(other_task, "Other Avatar", 0x10);
+        grid.script_question(task, "Some Resident", 0x10 | 0x4);
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::ScriptAnswer {
+                    task,
+                    questions: 0x10
+                })
+            .await
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            grid.count(|s| matches!(s, Seen::ScriptAnswer { .. })),
+            1,
+            "another's object is not answered"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

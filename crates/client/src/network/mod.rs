@@ -424,6 +424,74 @@ impl Session<'_> {
                 self.send(&m, true);
             }
             Interaction::RequestMuteList => self.request_mute_list(),
+            Interaction::Animate { anims } => {
+                let mut m = AgentAnimation::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.animation_list = anims
+                    .into_iter()
+                    .map(|(anim_id, start_anim)| agent_animation::AnimationList {
+                        anim_id,
+                        start_anim,
+                    })
+                    .collect();
+                self.send(&m, true);
+            }
+            Interaction::Sound { asset } => {
+                // LLGestureMgr's sound step: send_sound_trigger at the agent
+                let handle = self.shared.state().region.as_ref().map_or(0, |r| r.handle);
+                let mut m = SoundTrigger::default();
+                m.sound_data.sound_id = asset;
+                m.sound_data.owner_id = agent;
+                m.sound_data.handle = handle;
+                m.sound_data.position = self.position;
+                m.sound_data.gain = 1.0;
+                self.send(&m, false);
+            }
+            Interaction::PointAt { target } => {
+                // LLHUDEffectPointAt (15, POINTAT_TARGET_SELECT) and LLHUDEffectBeam (7), as
+                // LibreMetaverse's PointAtEffect and BeamEffect; Aurora's pointat_effect
+                let attention = |kind: u8, target: Uuid, offset: [f64; 3], extra: Option<u8>| {
+                    let mut d = Vec::with_capacity(57);
+                    d.extend_from_slice(agent.as_bytes());
+                    d.extend_from_slice(target.as_bytes());
+                    for v in offset {
+                        d.extend_from_slice(&v.to_le_bytes());
+                    }
+                    if let Some(b) = extra {
+                        d.push(b);
+                    }
+                    viewer_effect::Effect {
+                        id: Uuid::new_v4(),
+                        agent_id: agent,
+                        type_: kind,
+                        duration: if kind == 15 { f32::MAX / 4.0 } else { 3.0 },
+                        color: vec![255, 255, 255, 255],
+                        type_data: d,
+                    }
+                };
+                let mut m = ViewerEffect::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.effect = vec![
+                    attention(15, target, [0.0; 3], Some(1)),
+                    attention(7, target, [0.0, 0.0, 2.0], None),
+                ];
+                self.send(&m, false);
+            }
+            Interaction::ScriptAnswer {
+                task,
+                item,
+                questions,
+            } => {
+                let mut m = ScriptAnswerYes::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.data.task_id = task;
+                m.data.item_id = item;
+                m.data.questions = questions;
+                self.send(&m, true);
+            }
         }
     }
 
@@ -842,6 +910,29 @@ impl Session<'_> {
                     let _ = reply.send(answer);
                 });
             }
+            Request::ViewerAsset { kind, asset, reply } => {
+                // LLViewerAssetStorage: GET <ViewerAsset>?<kind>=<asset>
+                let Some(cap) = self.caps.get("ViewerAsset").cloned() else {
+                    let _ = reply.send(Err("no ViewerAsset capability".into()));
+                    return;
+                };
+                let http = self.http.clone();
+                tokio::spawn(async move {
+                    let sep = if cap.contains('?') { '&' } else { '?' };
+                    let url = format!("{cap}{sep}{kind}={asset}");
+                    let answer = match http.get(&url).timeout(Duration::from_secs(30)).send().await
+                    {
+                        Ok(r) if r.status().is_success() => r
+                            .bytes()
+                            .await
+                            .map(|b| b.to_vec())
+                            .map_err(|e| e.without_url().to_string()),
+                        Ok(r) => Err(format!("ViewerAsset: status {}", r.status().as_u16())),
+                        Err(e) => Err(format!("ViewerAsset: {}", e.without_url())),
+                    };
+                    let _ = reply.send(answer);
+                });
+            }
             Request::FindRegion { name, reply } => {
                 // LLWorldMapMessage::sendNamedRegionRequest; the reply gives the grid position
                 let mut m = MapNameRequest::default();
@@ -1129,6 +1220,24 @@ impl Session<'_> {
             }
             let avatars = self.places.avatar_positions();
             self.shared.state_mut().avatars = avatars;
+        } else if id == AvatarAnimation::ID {
+            // the animations the region plays on the bot (SignaledAnimations)
+            let m: AvatarAnimation = pkt.decode()?;
+            if m.sender.id == self.login.agent_id {
+                self.shared.state_mut().animations =
+                    m.animation_list.iter().map(|a| a.anim_id).collect();
+            }
+        } else if id == ScriptQuestion::ID {
+            let m: ScriptQuestion = pkt.decode()?;
+            let d = &m.data;
+            self.shared
+                .emit(Event::ScriptQuestion(crate::events::ScriptQuestion {
+                    task: d.task_id,
+                    item: d.item_id,
+                    object_name: field_str(&d.object_name),
+                    owner_name: field_str(&d.object_owner),
+                    questions: d.questions,
+                }));
         } else if id == EstateOwnerMessage::ID {
             let m: EstateOwnerMessage = pkt.decode()?;
             self.on_estate_owner_message(&m);

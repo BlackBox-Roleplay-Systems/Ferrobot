@@ -13,6 +13,7 @@ mod caps;
 mod circuit;
 pub mod estate;
 pub mod events;
+pub mod gesture;
 mod group_api;
 mod inventory_api;
 pub use inventory_api::FolderNode;
@@ -108,6 +109,12 @@ pub(crate) enum Request {
     /// A region's handle by its name (MapNameRequest); `None` when there is no such region.
     Parcel(network::ParcelRequest),
     Estate(network::EstateRequest),
+    /// An asset from the ViewerAsset capability (`kind` its query key, gesture_id…).
+    ViewerAsset {
+        kind: &'static str,
+        asset: Uuid,
+        reply: oneshot::Sender<Result<Vec<u8>, String>>,
+    },
     FindRegion {
         name: String,
         reply: oneshot::Sender<Option<MapRegion>>,
@@ -146,6 +153,18 @@ pub(crate) enum Interaction {
     FindAgent { prey: Uuid },
     /// MuteListRequest, without a cached copy.
     RequestMuteList,
+    /// AgentAnimation: animations started (true) or stopped.
+    Animate { anims: Vec<(Uuid, bool)> },
+    /// SoundTrigger where the bot stands.
+    Sound { asset: Uuid },
+    /// ViewerEffect: point at an avatar, and a beam to it.
+    PointAt { target: Uuid },
+    /// ScriptAnswerYes: the permissions granted to a script.
+    ScriptAnswer {
+        task: Uuid,
+        item: Uuid,
+        questions: i32,
+    },
     /// AcceptFriendship, the calling card in the inventory's root.
     AcceptFriendship { from: Uuid, transaction: Uuid },
     /// IM_INVENTORY_ACCEPTED / DECLINED (TASK_ for an object's offer), the item to the root.
@@ -726,6 +745,52 @@ impl Client {
     /// lands in the state's `friend_locations`.
     pub async fn map_friend(&self, friend: Uuid) -> Result<(), ClientError> {
         self.interact(Interaction::FindAgent { prey: friend }).await
+    }
+
+    /// Start and stop animations (AgentAnimation).
+    pub async fn animate(&self, anims: Vec<(Uuid, bool)>) -> Result<(), ClientError> {
+        self.interact(Interaction::Animate { anims }).await
+    }
+
+    /// Play a sound where the bot stands (SoundTrigger).
+    pub async fn trigger_sound(&self, asset: Uuid) -> Result<(), ClientError> {
+        self.interact(Interaction::Sound { asset }).await
+    }
+
+    /// Point at an avatar: the point-at effect and a beam (ViewerEffect).
+    pub async fn point_at(&self, target: Uuid) -> Result<(), ClientError> {
+        self.interact(Interaction::PointAt { target }).await
+    }
+
+    /// Grant a script the permissions it asked for (ScriptAnswerYes; 0 grants none).
+    pub async fn answer_script(
+        &self,
+        task: Uuid,
+        item: Uuid,
+        questions: i32,
+    ) -> Result<(), ClientError> {
+        self.interact(Interaction::ScriptAnswer {
+            task,
+            item,
+            questions,
+        })
+        .await
+    }
+
+    /// An asset from the ViewerAsset capability: `kind` is its query key (gesture_id,
+    /// animatn_id…).
+    pub async fn viewer_asset(
+        &self,
+        kind: &'static str,
+        asset: Uuid,
+    ) -> Result<Vec<u8>, ClientError> {
+        self.ask_within(Duration::from_secs(45), |reply| Request::ViewerAsset {
+            kind,
+            asset,
+            reply,
+        })
+        .await?
+        .map_err(ClientError::Refused)
     }
 
     /// Ask the grid for the mute list again (MuteListRequest); it lands in the state's

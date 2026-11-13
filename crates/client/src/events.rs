@@ -32,6 +32,8 @@ pub enum Event {
     },
     /// A script dialog (llDialog, ScriptDialog).
     ScriptDialog(ScriptDialog),
+    /// A script asks for permissions (ScriptQuestion, llRequestPermissions).
+    ScriptQuestion(ScriptQuestion),
     /// A teleport failed; the bot stays where it is (TeleportFailed).
     TeleportFailed { reason: String },
     /// The session ended; a new login comes next, or not, as the caller decides.
@@ -113,4 +115,16 @@ pub struct InstantMessage {
     pub region_id: Uuid,
     pub position: Vec3,
     pub binary_bucket: Vec<u8>,
+}
+
+/// A script asks the bot for permissions (ScriptQuestion).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptQuestion {
+    pub task: Uuid,
+    pub item: Uuid,
+    pub object_name: String,
+    /// The object owner's name: the message gives no key.
+    pub owner_name: String,
+    /// PERMISSION_* bits asked for (lscript_byteformat.h's SCRIPT_PERMISSION_*).
+    pub questions: i32,
 }

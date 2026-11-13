@@ -41,6 +41,8 @@ struct Region {
     facing: HashMap<SocketAddr, i32>,
     /// The control flags each bot last sent.
     controls: HashMap<SocketAddr, u32>,
+    /// The animations each bot plays.
+    playing: HashMap<SocketAddr, Vec<Uuid>>,
     /// Where each bot's avatar stands, as the object updates told it.
     avatar_at: HashMap<SocketAddr, Vec3>,
 }
@@ -744,12 +746,61 @@ impl Region {
             }
         } else if id == AgentAnimation::ID {
             if let Ok(m) = pkt.decode::<AgentAnimation>() {
+                let playing = self.playing.entry(from).or_default();
                 for a in &m.animation_list {
                     self.shared.saw(Seen::Animation {
                         id: a.anim_id,
                         start: a.start_anim,
                     });
+                    playing.retain(|p| *p != a.anim_id);
+                    if a.start_anim {
+                        playing.push(a.anim_id);
+                    }
                 }
+                // the region tells what the avatar plays now
+                let r = AvatarAnimation {
+                    sender: avatar_animation::Sender {
+                        id: self.shared.agent_id,
+                    },
+                    animation_list: playing
+                        .iter()
+                        .enumerate()
+                        .map(|(i, a)| avatar_animation::AnimationList {
+                            anim_id: *a,
+                            anim_sequence_id: i as i32 + 1,
+                        })
+                        .collect(),
+                    animation_source_list: vec![],
+                    physical_avatar_event_list: vec![],
+                };
+                self.send(from, &r, true);
+            }
+        } else if id == SoundTrigger::ID {
+            if let Ok(m) = pkt.decode::<SoundTrigger>() {
+                self.shared.saw(Seen::SoundTrigger {
+                    asset: m.sound_data.sound_id,
+                });
+            }
+        } else if id == ViewerEffect::ID {
+            if let Ok(m) = pkt.decode::<ViewerEffect>() {
+                for e in &m.effect {
+                    let target = e
+                        .type_data
+                        .get(16..32)
+                        .and_then(|b| Uuid::from_slice(b).ok())
+                        .unwrap_or_default();
+                    self.shared.saw(Seen::Effect {
+                        kind: e.type_,
+                        target,
+                    });
+                }
+            }
+        } else if id == ScriptAnswerYes::ID {
+            if let Ok(m) = pkt.decode::<ScriptAnswerYes>() {
+                self.shared.saw(Seen::ScriptAnswer {
+                    task: m.data.task_id,
+                    questions: m.data.questions,
+                });
             }
         } else if id == FindAgent::ID {
             if let Ok(mut m) = pkt.decode::<FindAgent>() {
@@ -1589,6 +1640,19 @@ impl Region {
                 });
                 self.send(to, &m, true);
             }
+            RegionCommand::ScriptQuestion {
+                task,
+                owner,
+                questions,
+            } => {
+                let mut m = ScriptQuestion::default();
+                m.data.task_id = task;
+                m.data.item_id = Uuid::from_u128(0x17e3);
+                m.data.object_name = str_field("Dance Ball");
+                m.data.object_owner = str_field(&owner);
+                m.data.questions = questions;
+                self.send(to, &m, true);
+            }
             RegionCommand::DisableSimulator => {
                 self.send(to, &DisableSimulator::default(), false);
                 self.drop_client(to);
@@ -1613,6 +1677,7 @@ pub async fn run(
         outbox: Vec::new(),
         facing: HashMap::new(),
         controls: HashMap::new(),
+        playing: HashMap::new(),
         avatar_at: HashMap::new(),
     };
     let mut data = vec![0u8; 8192];

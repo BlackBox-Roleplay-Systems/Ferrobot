@@ -2,6 +2,7 @@
 //! answers as SecondBot's does, the same reply texts and failures, so that its users can switch.
 //! A deliberate difference is noted on the command.
 
+mod animation;
 mod avatars;
 mod bot;
 mod chat;
@@ -47,6 +48,8 @@ pub struct Ctx {
     pub allow_funds: bool,
     /// For the replies that go out by HTTP (smart replies).
     pub http: reqwest::Client,
+    /// The avatars whose objects may animate the bot.
+    pub animators: Arc<crate::animators::Animators>,
 }
 
 /// The commands that change things in world: under the rate limit.
@@ -114,6 +117,7 @@ const CHANGING: &[&str] = &[
     "SetExtendedRegionInfo",
     "SetRegionFlags",
     "SetEstateConfig",
+    "AddToAllowAnimations",
 ];
 
 /// How long a command that changes things may wait for the rate limit.
@@ -231,6 +235,11 @@ const COMMANDS: &[(&str, usize)] = &[
     ("SetExtendedRegionInfo", 12),
     ("SetRegionFlags", 10),
     ("SetEstateConfig", 10),
+    ("AddToAllowAnimations", 1),
+    ("PlayGesture", 1),
+    ("PlayGestureDirect", 1),
+    ("ResetAnimations", 0),
+    ("PointAt", 1),
     ("GetRealUUID", 1),
     ("CreateInventoryFolder", 2),
     ("RenameInventory", 2),
@@ -435,6 +444,11 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
             )
             .await
         }
+        "AddToAllowAnimations" => animation::allow_animations(ctx, a(0)).await,
+        "PlayGesture" => animation::play_gesture(ctx, a(0)).await,
+        "PlayGestureDirect" => animation::play_gesture_direct(ctx, a(0)).await,
+        "ResetAnimations" => animation::reset_animations(ctx).await,
+        "PointAt" => animation::point_at(ctx, a(0)).await,
         "SetEstateConfig" => estate::set_estate_config(ctx, std::array::from_fn(&a)).await,
         "GetRealUUID" => inventory::real_uuid(ctx, a(0)).await,
         "CreateInventoryFolder" => inventory::create_folder(ctx, a(0), a(1)).await,
@@ -533,6 +547,7 @@ mod tests {
             homebound: Arc::default(),
             allow_funds: false,
             http: reqwest::Client::new(),
+            animators: Arc::default(),
         };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,

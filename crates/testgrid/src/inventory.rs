@@ -16,6 +16,11 @@ pub const NOTECARD: Uuid = Uuid::from_u128(0x2000_0001);
 pub const BOX: Uuid = Uuid::from_u128(0x2000_0002);
 pub const LINK: Uuid = Uuid::from_u128(0x2000_0003);
 pub const NOTECARD_ASSET: Uuid = Uuid::from_u128(0x3000_0001);
+/// A gesture in the root, and what it plays.
+pub const GESTURE: Uuid = Uuid::from_u128(0x2000_0004);
+pub const GESTURE_ASSET: Uuid = Uuid::from_u128(0x3000_0004);
+pub const GESTURE_ANIMATION: Uuid = Uuid::from_u128(0x3000_0005);
+pub const GESTURE_SOUND: Uuid = Uuid::from_u128(0x3000_0006);
 
 /// The Welcome notecard's text: an embedded item in it, and long enough for several packets.
 pub fn welcome_text() -> String {
@@ -24,6 +29,15 @@ pub fn welcome_text() -> String {
         t.push_str(&format!("line {i:03}\n"));
     }
     t
+}
+
+/// The Wave gesture (LLMultiGesture v2): an animation, a sound, a line on channel 7, a short
+/// wait.
+pub fn gesture() -> Vec<u8> {
+    format!(
+        "2\n255\n0\n/wave\n\n4\n0\nwave\n{GESTURE_ANIMATION}\n0\n1\nding\n{GESTURE_SOUND}\n0\n2\n/7 hello from a gesture\n0\n3\n0.200000\n1\n\0"
+    )
+    .into_bytes()
 }
 
 /// The assets behind the items: the Welcome notecard's.
@@ -95,6 +109,14 @@ impl Default for Inventory {
                     asset_type: 6,
                     inv_type: 6,
                     asset_id: Uuid::from_u128(0x3000_0002),
+                },
+                Item {
+                    id: GESTURE,
+                    parent: ROOT,
+                    name: "Wave".into(),
+                    asset_type: 21,
+                    inv_type: 20,
+                    asset_id: GESTURE_ASSET,
                 },
                 Item {
                     id: LINK,
