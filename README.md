@@ -94,6 +94,7 @@ All settings come from environment variables.
 | `FERRO_SMTP_ALERTS`, `FERRO_SMTP_LOGIN_NOTICE` | `false`, `false` | The grid's alerts, and each login, mailed to `FERRO_SMTP_NOTIFY` |
 | `FERRO_SMTP_NOTIFY` | (none) | Where alerts and login notices go |
 | `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy, GroupCreate, and UploadMediaWave unless the grid's sounds are free) |
+| `FERRO_ALLOW_SERVICE_CONTROL` | `false` | The service control commands (EnableAndStartService, StopService, RestartService, ChangeConfigValue) |
 | `FERRO_RLV` | `false` | RLV: the bot's own objects (and its masters') drive it with `@` commands (see "RLV" below). Homebound is off while it is on, as SecondBot's |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
@@ -102,6 +103,7 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `basic_Username`, `basic_Password`, `basic_LoginURI`, `commands_MastersCSV`,
 `commands_SharedSecret`, `commands_TimeWindowSecs`, `commands_AllowIMcontrol`,
 `commands_EnforceTimeWindow`, `commands_ObjectMasterOptout`, `commands_AllowFundsCommands`,
+`commands_AllowServiceControl`,
 `http_Enabled`, `http_Port`,
 `interaction_AcceptTeleports`, `interaction_TeleportRequestLevel`, `interaction_AcceptGroupInvites`,
 `interaction_GroupInviteLevel`, `interaction_AcceptInventory`, `interaction_InventoryTransferLevel`,
@@ -140,6 +142,39 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `relay_<n>_target_option`, `relay_<n>_RelayConfig`; and the custom commands: `customcommands_count`,
 `customcommands_<n>_trigger`, `customcommands_<n>_args`, `customcommands_<n>_steps`,
 `customcommands_<n>_commands_<m>`.
+
+### Service control
+
+With `FERRO_ALLOW_SERVICE_CONTROL=true`, SecondBot's service commands stop, start and restart the
+bot's optional services while it runs, and change their settings: `EnableAndStartService`,
+`StopService`, `RestartService` (a service name) and `ChangeConfigValue` (a service, a setting and
+its value). Each answers `ok`, or SecondBot's "Service control is not enabled by config" and
+"Unknown service". They count as commands that change things (the rate limit), and a command grant
+(SetPermFlag) does not reach them.
+
+| Service | What it is | Settings ChangeConfigValue takes |
+|---|---|---|
+| `RelayService` | the relays | `count`, `UseShortEncoder`, `<n>_enabled`, `<n>_extended`, `<n>_source_type`, `<n>_source_option`, `<n>_target_type`, `<n>_target_option`, `<n>_RelayConfig` |
+| `HomeboundService` | homebound | `Enabled`, `HomeSimSlUrl`, `BackupSimSLUrl`, `ReturnToHomeSimAfterMins`, `AtHomeSeekLocation`, `AtHomeAutoSitUuid` |
+| `InteractionService` | the answers to offers (stopped, offers are left unanswered) | `AcceptTeleports`, `TeleportRequestLevel`, `AcceptGroupInvites`, `GroupInviteLevel`, `AcceptInventory`, `InventoryTransferLevel`, `AcceptFriendRequests`, `FriendRequestLevel`, `EnableJsonOutputEvents`, `JsonOutputEventsTarget` |
+| `DialogService` | script dialogs kept and relayed (a start sets the relay targets from the settings) | `RelayChannel`, `RelayAvatar`, `RelayObjectOwnerOnly`, `RelayHttpurl` |
+| `DiscordService` | the bot on Discord | `Enabled`, `ServerID`, `AllowDiscordCommands`, `InteractionEnabled`, `InteractionCommandName`, `InteractionHttpTarget`, `InteractionChannelNumber`, `hideChatterName`, `ClearChatOnConnect` |
+| `ChatLogService` | Ferrobot's chat and IM log lines | none |
+
+The settings are SecondBot's, named without their file's prefix (`count` for `relay_count`). A
+changed value wins over the environment until the bot stops, and takes effect at the service's next
+start: `RestartService` (or `EnableAndStartService`, which also sets its `Enabled` setting to true).
+An empty value unsets it: its default applies, not the environment's. Settings that hold secrets
+(tokens, passwords, keys) are refused ("Secret values can not be changed by command"); a setting the
+service does not read answers "Unknown config name", a value it cannot read "Invalid config value".
+The answers never carry the arguments, the command history keeps the service and the setting but not
+the value, and a command by IM is logged by its name alone.
+
+Never stoppable nor changed by command, so that nobody locks the operator out or changes whose
+commands the bot takes (its masters, the shared secret, `FERRO_DISCORD_MASTERS`): the login and the session (`BotClientService`), the HTTP API (`HttpService`): both
+"Unable to manage selected service"; the commands and their settings, masters and shared secret
+among them (`CommandsService`, unknown to the service commands as in SecondBot), the commands by IM,
+the chat history, the health file. SecondBot stops BotClientService and HttpService when asked.
 
 ### Discord
 
@@ -429,7 +464,9 @@ sent and failed); SecondBot's chat commands:
 `Discord_Role_UpdatePerms`, `Discord_RoleCreate`, `Discord_RoleList`, `Discord_RoleRemove`,
 `Discord_TextChannels_List`, `Discord_VoiceJoin`, `Discord_VoiceLeave`; its dialog commands:
 `DialogResponce`, `DialogRelayChatTarget`, `DialogRelayAvatarTarget`, `DialogRelayHttpTarget`;
-RabbitMQ: `SendMessageToQ`.
+RabbitMQ: `SendMessageToQ`;
+the service control (see above): `EnableAndStartService`, `StopService`, `RestartService`,
+`ChangeConfigValue`.
 
 An empty argument cannot be sent in the form: `args` is split on `~#~` with the empty parts left
 out, before the signature is checked, as SecondBot does (so `a~#~` is the one argument `a`, and a

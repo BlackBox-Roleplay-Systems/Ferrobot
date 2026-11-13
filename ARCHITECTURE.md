@@ -64,6 +64,7 @@ crates/
     src/services/          one service per job, on the client's events (chat_log, chatgpt, events, health, homebound, im_commands, interactions, on_event, relays, restart, rlv, script_permissions, smtp)
     src/services/smtp.rs   e-mail through an SMTP server (lettre): SendEmail, e-mail reply targets,
                            alert and login mails (SecondBot's SmtpService)
+    src/services/control.rs  the services that can be stopped, started and changed by name (SecondBot's service control)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it
@@ -112,6 +113,30 @@ crates/
   Services subscribe to what they need.
 - **State** the client keeps (groups, names, regions) lives in the client, behind small read
   methods, so that the API answers from memory when it can, like SecondBot's data store.
+
+### Services under control
+
+The optional services (relays, homebound, interactions, dialogs, Discord, the chat log) are
+registered in `main.rs` with `services/control.rs`, which starts them before the login and stops,
+starts and restarts them by name for SecondBot's EnableAndStartService, StopService and
+RestartService (`commands/services.rs`). Each one gives a `Spec`, from a `spec()` function next to
+its code:
+
+- its name: SecondBot's (`RelayService`), or Ferrobot's own in the same style when SecondBot has
+  no such service;
+- the prefix of its settings (SecondBot's config file name: `relay` for `relay_count`) and the
+  settings ChangeConfigValue may change (`<n>_` stands for a number). Never a setting that holds
+  a secret: the control refuses those by their name anyway;
+- `read`: its settings from a `config::Source` (the environment, under the values changed at
+  runtime), an error for a wrong one. The functions of `config.rs` take that source;
+- `run`: spawns its tasks with those settings (subscribing to the client's events now, not when
+  the task first runs) and returns their handles, none when the settings leave it off.
+
+Stopping aborts the tasks and waits until they are dropped; what a service must undo when it
+stops (homebound's home, Discord's connection in `Ctx`) is held by a guard that its task owns. A
+new service joins with its `spec()` and one line in `main.rs`'s list. What the operator reaches the
+bot through (the login, the HTTP API, the commands and the commands by IM) is not registered: it
+cannot be stopped.
 
 ### The HTTP API
 
