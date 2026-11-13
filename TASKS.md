@@ -383,6 +383,7 @@ baking: the bot says so and goes on.
   whole profile in AvatarPropertiesUpdate, as Aurora's session for OpenSim): SecondBot's
   GetProfileAbout, GetProfileImage, SetProfileAbout, SetProfileImage; tested on the test grid (NGC
   has its profile service off: no viewer sees profiles there either)
+- 🔧 SecondBot's GetProfilePicks, GroupCreate (L$100, FERRO_ALLOW_FUNDS) and UploadMediaWave
 
 ## Phase 8 - Running it for real
 
