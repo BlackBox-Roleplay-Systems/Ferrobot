@@ -25,6 +25,11 @@ pub struct State {
     pub friends_online: Vec<Uuid>,
     /// The avatars in the region, the bot left out (CoarseLocationUpdate).
     pub nearby: Vec<Uuid>,
+    /// Where they stand, as coarse as the region tells it (whole metres, heights by 4 m).
+    pub nearby_positions: std::collections::HashMap<Uuid, Vec3>,
+    /// The object the bot sits on (AvatarSitResponse), until it stands.
+    pub sitting_on: Option<Uuid>,
+    pub flying: bool,
     /// The L$ balance, once the grid has said it (MoneyBalanceReply), and how many times it has.
     pub balance: Option<i32>,
     pub balance_updates: u64,

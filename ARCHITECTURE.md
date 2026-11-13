@@ -31,7 +31,7 @@ crates/
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
     src/api/               SecondBot's HTTP API: POST /api/Run, signatures (axum)
-    src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat)
+    src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat, movement…)
     src/masters.rs         who the masters are, by name or by key
     src/dialogs.rs         script dialogs: kept, relayed, answered (SecondBot's DialogService)
     src/store.rs           key-value store, command history, counts, rate limit

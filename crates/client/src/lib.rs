@@ -89,6 +89,11 @@ pub(crate) enum Request {
         message: String,
         reply: oneshot::Sender<()>,
     },
+    /// The hover height (AgentPreferences).
+    HoverHeight {
+        height: f32,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// Ask the region to bake the bot's outfit (UpdateAvatarAppearance); answered with the outfit
     /// version baked, or why not.
     Rebake {
@@ -135,6 +140,8 @@ pub(crate) enum Interaction {
     },
     /// MoneyBalanceRequest.
     RequestBalance,
+    /// Movement, through the agent updates and the messages the viewer sends.
+    Move(Move),
     /// MoneyTransferRequest: to an avatar (a gift), or to an object (its name given).
     Pay {
         to: Uuid,
@@ -153,6 +160,28 @@ pub(crate) enum Interaction {
     OfferTeleport { to: Uuid, message: String },
     /// IM_LURE_DECLINED: no to a teleport request.
     DeclineTeleportRequest { to: Uuid, transaction: Uuid },
+}
+
+/// What the bot can be asked to do with its body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Move {
+    /// AGENT_CONTROL_FLY in every update, or not.
+    Fly(bool),
+    /// SetAlwaysRun.
+    AlwaysRun(bool),
+    /// AGENT_CONTROL_SIT_ON_GROUND, once.
+    SitOnGround,
+    /// AgentRequestSit on an object (AgentSit when the region asks for it).
+    SitOn(Uuid),
+    /// AGENT_CONTROL_STAND_UP, once.
+    Stand,
+    /// The region walks the bot there (GenericMessage "autopilot", LibreMetaverse's AutoPilot):
+    /// a place in the bot's region.
+    AutoPilot(glam::Vec3),
+    /// AGENT_CONTROL_STOP, once: the autopilot stops.
+    Stop,
+    /// Face this way: a heading in degrees, clockwise from north.
+    Face(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -599,5 +628,18 @@ impl Client {
     /// (LLRelationship::GRANT_*).
     pub async fn grant_rights(&self, to: Uuid, rights: i32) -> Result<(), ClientError> {
         self.interact(Interaction::GrantRights { to, rights }).await
+    }
+
+    /// Move the bot's body ([`Move`]).
+    pub async fn move_bot(&self, m: Move) -> Result<(), ClientError> {
+        self.interact(Interaction::Move(m)).await
+    }
+
+    /// The avatar's hover height, -2 to 2 metres (the AgentPreferences capability, as
+    /// LLAgent::sendHoverHeight and Aurora's set_hover_height).
+    pub async fn set_hover_height(&self, height: f32) -> Result<(), ClientError> {
+        self.ask(|reply| Request::HoverHeight { height, reply })
+            .await?
+            .map_err(ClientError::Refused)
     }
 }

@@ -1213,6 +1213,147 @@ mod api {
         bot.wait_log("logged out").await;
     }
 
+    /// SecondBot's movement commands: fly, run, sit and stand, the autopilot, turning, hovering.
+    #[tokio::test]
+    async fn movement_commands() {
+        const FLY: u32 = 0x2000;
+        const STOP: u32 = 0x4000;
+        const STAND_UP: u32 = 0x1_0000;
+        const SIT_ON_GROUND: u32 = 0x2_0000;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        let flags =
+            |f: u32| move |s: &Seen| matches!(s, Seen::Controls { flags } if flags & f != 0);
+
+        assert_eq!(api.reply("Fly", &["True"]).await, "ok");
+        assert!(grid.wait_for(WAIT, flags(FLY)).await);
+        assert_eq!(api.failure("Fly", &["maybe"]).await.0, "Invaild mode");
+        assert_eq!(api.reply("Fly", &["false"]).await, "ok");
+        assert!(
+            grid.wait_for(
+                WAIT,
+                |s| matches!(s, Seen::Controls { flags } if flags & FLY == 0)
+            )
+            .await
+        );
+
+        assert_eq!(api.reply("SetAlwaysRun", &["true"]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s == Seen::AlwaysRun { on: true })
+                .await
+        );
+
+        // on an object: the region answers, and the bot sits where it is sent
+        let chair = uuid_from(0xc4a1);
+        assert_eq!(api.reply("Sit", &[&chair.to_string()]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s == Seen::AgentRequestSit { target: chair })
+                .await
+        );
+        assert!(grid.wait_for(WAIT, |s| *s == Seen::AgentSit).await);
+        assert_eq!(api.reply("Stand", &[]).await, "ok");
+        assert!(grid.wait_for(WAIT, flags(STAND_UP)).await);
+        assert_eq!(api.reply("Sit", &["ground"]).await, "ok");
+        assert!(grid.wait_for(WAIT, flags(SIT_ON_GROUND)).await);
+        assert_eq!(
+            api.failure("Sit", &["a chair"]).await.0,
+            "Invaild object uuid and not ground"
+        );
+
+        // the bot stands at 128, 128, 25, facing east: it turns north, then walks
+        assert_eq!(api.reply("AutoPilot", &["128", "138", "25"]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s == Seen::Facing { heading: 0 })
+                .await
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::AutoPilot {
+                    params: vec!["256128".into(), "256138".into(), "25".into()]
+                })
+            .await
+        );
+        assert_eq!(
+            api.failure("AutoPilot", &["300", "128", "25"]).await.0,
+            "x value out of range 0-255"
+        );
+        assert_eq!(
+            api.failure("AutoPilot", &["here", "128", "25"]).await.0,
+            "Convert to vector has failed"
+        );
+        assert_eq!(api.reply("AutoPilotStop", &[]).await, "ok");
+        assert!(grid.wait_for(WAIT, flags(STOP)).await);
+
+        assert_eq!(api.reply("RotateTo", &["180"]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s == Seen::Facing { heading: 180 })
+                .await
+        );
+        assert_eq!(
+            api.failure("RotateTo", &["south"]).await.0,
+            "Unable to process rotation"
+        );
+        // a resident stands to the west, once the region has said so (every ping, 2 s)
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            let (_, inner) = api.run("RotateToFace", &["Some Resident"]).await;
+            if inner["status"] == true {
+                assert_eq!(inner["reply"], "True");
+                break;
+            }
+            assert_eq!(inner["reply"], "Unable to see avatar");
+            assert!(tokio::time::Instant::now() < deadline, "{inner}");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        assert!(
+            grid.wait_for(WAIT, |s| *s == Seen::Facing { heading: 270 })
+                .await
+        );
+        assert_eq!(
+            api.failure("RotateToFace", &[&uuid_from(0xdead).to_string()])
+                .await
+                .0,
+            "Unable to see avatar"
+        );
+        assert_eq!(
+            api.reply("RotateToFaceVector", &["<200, 200, 25>"]).await,
+            "True"
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s == Seen::Facing { heading: 45 })
+                .await
+        );
+        assert_eq!(
+            api.failure("RotateToFaceVector", &["<300, 1, 1>"]).await.0,
+            "Vector x value is out of range 0-255"
+        );
+        assert_eq!(
+            api.failure("RotateToFaceVector", &["north"]).await.0,
+            "Invaild vector"
+        );
+
+        assert_eq!(api.reply("HoverHeight", &["0.5"]).await, "ok");
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::HoverHeight {
+                    height: "0.5".into()
+                })
+            .await
+        );
+        assert_eq!(
+            api.failure("HoverHeight", &["3"]).await.0,
+            "height value out of range(-2.0 to 2.0)"
+        );
+        assert_eq!(
+            api.failure("HoverHeight", &["high"]).await.0,
+            "Convert to float has failed"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's other group commands: notices, bans, titles, the active group, join and leave.
     #[tokio::test]
     async fn more_group_commands() {

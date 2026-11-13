@@ -9,6 +9,7 @@ mod dialogs;
 mod groups;
 mod info;
 mod inventory;
+mod movement;
 mod notecard;
 pub mod reply;
 mod world;
@@ -136,6 +137,16 @@ const COMMANDS: &[(&str, usize)] = &[
     ("DeleteInventoryFolder", 1),
     ("MoveInventoryItem", 2),
     ("MoveInventoryFolder", 2),
+    ("Fly", 1),
+    ("SetAlwaysRun", 1),
+    ("Sit", 1),
+    ("Stand", 0),
+    ("AutoPilot", 3),
+    ("AutoPilotStop", 0),
+    ("RotateTo", 1),
+    ("RotateToFace", 1),
+    ("RotateToFaceVector", 1),
+    ("HoverHeight", 1),
     ("Teleport", 4),
     ("TeleportSLURL", 1),
     ("SendTeleportLure", 1),
@@ -245,6 +256,16 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "DeleteInventoryFolder" => inventory::delete_folder(ctx, a(0)).await,
         "MoveInventoryItem" => inventory::move_item(ctx, a(0), a(1)).await,
         "MoveInventoryFolder" => inventory::move_folder(ctx, a(0), a(1)).await,
+        "Fly" => movement::fly(ctx, a(0)).await,
+        "SetAlwaysRun" => movement::always_run(ctx, a(0)).await,
+        "Sit" => movement::sit(ctx, a(0)).await,
+        "Stand" => movement::stand(ctx).await,
+        "AutoPilot" => movement::autopilot(ctx, a(0), a(1), a(2)).await,
+        "AutoPilotStop" => movement::autopilot_stop(ctx).await,
+        "RotateTo" => movement::rotate_to(ctx, a(0)).await,
+        "RotateToFace" => movement::rotate_to_face(ctx, a(0)).await,
+        "RotateToFaceVector" => movement::rotate_to_face_vector(ctx, a(0)).await,
+        "HoverHeight" => movement::hover_height(ctx, a(0)).await,
         "Teleport" => world::teleport_to(ctx, a(0), a(1), a(2), a(3)).await,
         "TeleportSLURL" => world::teleport_slurl(ctx, a(0)).await,
         "SendTeleportLure" => world::send_teleport_lure(ctx, a(0)).await,

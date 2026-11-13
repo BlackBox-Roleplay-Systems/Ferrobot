@@ -37,6 +37,10 @@ struct Region {
     buf: Vec<u8>,
     /// Packets to send, in order.
     outbox: Vec<(Vec<u8>, SocketAddr)>,
+    /// The way each bot faces, as its agent updates say.
+    facing: HashMap<SocketAddr, i32>,
+    /// The control flags each bot last sent.
+    controls: HashMap<SocketAddr, u32>,
 }
 
 impl Region {
@@ -114,6 +118,20 @@ impl Region {
             }
         } else if id == AgentUpdate::ID {
             self.shared.saw(Seen::AgentUpdate { session: n });
+            if let Ok(m) = pkt.decode::<AgentUpdate>() {
+                let a = &m.agent_data;
+                if self.controls.insert(from, a.control_flags).unwrap_or(0) != a.control_flags {
+                    self.shared.saw(Seen::Controls {
+                        flags: a.control_flags,
+                    });
+                }
+                let q = a.body_rotation;
+                let yaw = 2.0 * q.z.atan2(q.w);
+                let heading = (90.0 - yaw.to_degrees()).rem_euclid(360.0).round() as i32 % 360;
+                if self.facing.insert(from, heading) != Some(heading) {
+                    self.shared.saw(Seen::Facing { heading });
+                }
+            }
         } else if id == AgentDataUpdateRequest::ID {
             self.shared.saw(Seen::AgentDataUpdateRequest { session: n });
             self.agent_data(from, n);
@@ -413,6 +431,35 @@ impl Region {
                     let r = g::titles_reply(&grp, bot, m.agent_data.request_id);
                     self.send(from, &r, true);
                 }
+            }
+        } else if id == AgentRequestSit::ID {
+            if let Ok(m) = pkt.decode::<AgentRequestSit>() {
+                let target = m.target_object.target_id;
+                self.shared.saw(Seen::AgentRequestSit { target });
+                let mut r = AvatarSitResponse::default();
+                r.sit_object.id = target;
+                r.sit_transform.auto_pilot = true;
+                self.send(from, &r, true);
+            }
+        } else if id == AgentSit::ID {
+            self.shared.saw(Seen::AgentSit);
+        } else if id == SetAlwaysRun::ID {
+            if let Ok(m) = pkt.decode::<SetAlwaysRun>() {
+                self.shared.saw(Seen::AlwaysRun {
+                    on: m.agent_data.always_run,
+                });
+            }
+        } else if id == GenericMessage::ID {
+            if let Ok(m) = pkt.decode::<GenericMessage>()
+                && field_str(&m.method_data.method) == "autopilot"
+            {
+                self.shared.saw(Seen::AutoPilot {
+                    params: m
+                        .param_list
+                        .iter()
+                        .map(|p| field_str(&p.parameter))
+                        .collect(),
+                });
             }
         } else if id == MoneyBalanceRequest::ID {
             self.balance(from);
@@ -972,10 +1019,14 @@ impl Region {
         let addrs: Vec<SocketAddr> = self.clients.keys().copied().collect();
         for addr in &addrs {
             let m = CoarseLocationUpdate {
-                location: ids
-                    .iter()
-                    .map(|_| coarse_location_update::Location {
-                        x: 128,
+                // the residents in a row to the west of the bot, which is last
+                location: (0..ids.len())
+                    .map(|i| coarse_location_update::Location {
+                        x: if i + 1 == ids.len() {
+                            128
+                        } else {
+                            (98 - 10 * i) as u8
+                        },
                         y: 128,
                         z: 6,
                     })
@@ -1177,6 +1228,8 @@ pub async fn run(
         clients: HashMap::new(),
         buf: Vec::with_capacity(1500),
         outbox: Vec::new(),
+        facing: HashMap::new(),
+        controls: HashMap::new(),
     };
     let mut data = vec![0u8; 8192];
     let mut ping_id = 0u8;

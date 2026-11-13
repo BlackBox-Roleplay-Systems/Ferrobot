@@ -82,7 +82,9 @@ refusal. The commands so far are the ones BB's SL group sync sends: `SimName`, `
 `DeleteInventoryFolder`, `MoveInventoryItem`, `MoveInventoryFolder`; notecards: `NotecardAdd`,
 `NotecardClear`, `NotecardSend`, `NotecardDirectSend`; `Teleport`, `TeleportSLURL`,
 `SendTeleportLure`, `RequestTeleport`, `Key2Name`, `GetDisplayName`, `Nearme`, `Friendslist`,
-`FriendRequest`, `FriendFullPerms`, `Balance`, `PayAvatar`, `PayObject`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
+`FriendRequest`, `FriendFullPerms`, `Balance`, `PayAvatar`, `PayObject`; movement: `Fly`,
+`SetAlwaysRun`, `Sit`, `Stand`, `AutoPilot`, `AutoPilotStop`, `RotateTo`, `RotateToFace`,
+`RotateToFaceVector`, `HoverHeight`; `Hello`, `Version`, `UnixTimeNow`, `GetPosition`, `GoHome`, `Logoff`,
 `GetLastCommands`, `ReadKeyValue`, `SetKeyValue`, `ClearKeyValue`; Ferrobot's own `BotStatus`
 (in world, region, logins, uptime, commands run and failed); SecondBot's chat commands:
 `LocalChatHistory`, `Say`, `Shout`, `Whisper`, `IM`, `chatwindows`, `listwithunread`,

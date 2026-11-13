@@ -122,6 +122,7 @@ impl Network {
             st.friends = login.buddies.clone();
             st.friends_online.clear();
             st.nearby.clear();
+            st.nearby_positions.clear();
             st.inventory_root = login.inventory_root;
         }
         self.shared
@@ -181,6 +182,11 @@ struct Session<'a> {
     picker_waits: HashMap<Uuid, oneshot::Sender<Vec<(Uuid, String)>>>,
     /// Group replies being gathered.
     groups: groups::GroupWaits,
+    /// Control flags in every agent update (fly), and the ones for the next only (stand up…).
+    controls: u32,
+    controls_once: u32,
+    /// The body's rotation in the agent updates.
+    rotation: Quat,
     /// Inventory items being created, by callback number.
     created: HashMap<u32, oneshot::Sender<Uuid>>,
     next_callback: u32,
@@ -232,13 +238,16 @@ impl Session<'_> {
         let a = &mut m.agent_data;
         a.agent_id = self.login.agent_id;
         a.session_id = self.login.session_id;
-        a.body_rotation = Quat::IDENTITY;
-        a.head_rotation = Quat::IDENTITY;
-        a.camera_center = self.position - Vec3::X * 3.0 + Vec3::Z;
-        a.camera_at_axis = Vec3::X;
-        a.camera_left_axis = Vec3::Y;
+        a.body_rotation = self.rotation;
+        a.head_rotation = self.rotation;
+        // the camera behind the avatar, looking where it looks
+        let at = self.rotation * Vec3::X;
+        a.camera_center = self.position - at * 3.0 + Vec3::Z;
+        a.camera_at_axis = at;
+        a.camera_left_axis = self.rotation * Vec3::Y;
         a.camera_up_axis = Vec3::Z;
         a.far = 64.0;
+        a.control_flags = self.controls | std::mem::take(&mut self.controls_once);
         self.send(&m, false);
     }
 
@@ -298,6 +307,7 @@ impl Session<'_> {
                 self.send_im(to, d, transaction, "", bucket);
             }
             Interaction::RequestBalance => self.request_balance(),
+            Interaction::Move(mv) => self.move_body(mv),
             Interaction::Pay {
                 to,
                 amount,
@@ -378,6 +388,77 @@ impl Session<'_> {
                 self.send_im(to, dialog::LURE_DECLINED, transaction, "", Vec::new());
             }
         }
+    }
+
+    /// Movement (LLAgent, LibreMetaverse's AgentMovement): control flags in the agent update,
+    /// sent at once, or the messages the viewer sends.
+    fn move_body(&mut self, mv: crate::Move) {
+        use crate::Move;
+        // AGENT_CONTROL_* (agent.h)
+        const FLY: u32 = 0x0000_2000;
+        const STOP: u32 = 0x0000_4000;
+        const STAND_UP: u32 = 0x0001_0000;
+        const SIT_ON_GROUND: u32 = 0x0002_0000;
+        let (agent, session) = (self.login.agent_id, self.login.session_id);
+        match mv {
+            Move::Fly(on) => {
+                if on {
+                    self.controls |= FLY;
+                } else {
+                    self.controls &= !FLY;
+                }
+                self.shared.state_mut().flying = on;
+            }
+            Move::AlwaysRun(on) => {
+                let mut m = SetAlwaysRun::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.agent_data.always_run = on;
+                self.send(&m, true);
+                return;
+            }
+            Move::SitOnGround => self.controls_once |= SIT_ON_GROUND,
+            Move::SitOn(target) => {
+                let mut m = AgentRequestSit::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.target_object.target_id = target;
+                self.send(&m, true);
+                return;
+            }
+            Move::Stand => {
+                self.controls_once |= STAND_UP;
+                self.shared.state_mut().sitting_on = None;
+            }
+            Move::AutoPilot(target) => {
+                // global coordinates: the region's corner plus the place
+                let handle = self.shared.state().region.as_ref().map_or(0, |r| r.handle);
+                let (gx, gy) = ((handle >> 32) as f64, (handle & 0xffff_ffff) as f64);
+                let mut m = GenericMessage::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.method_data.method = str_field("autopilot");
+                m.param_list = [
+                    format!("{}", (gx + f64::from(target.x)) as u64),
+                    format!("{}", (gy + f64::from(target.y)) as u64),
+                    format!("{}", target.z),
+                ]
+                .iter()
+                .map(|p| generic_message::ParamList {
+                    parameter: str_field(p),
+                })
+                .collect();
+                self.send(&m, true);
+                return;
+            }
+            Move::Stop => self.controls_once |= STOP,
+            Move::Face(heading) => {
+                // a heading clockwise from north is a yaw counter-clockwise from east
+                let yaw = (90.0 - heading).to_radians();
+                self.rotation = Quat::from_rotation_z(yaw);
+            }
+        }
+        self.send_agent_update();
     }
 
     fn request_balance(&mut self) {
@@ -568,6 +649,21 @@ impl Session<'_> {
             Request::Group(r) => self.on_group_request(r),
             Request::Inventory(r) => self.on_inventory_request(r),
             Request::Rebake { reply } => self.request_appearance(Some(reply)),
+            Request::HoverHeight { height, reply } => {
+                let Some(url) = self.caps.get("AgentPreferences").cloned() else {
+                    let _ = reply.send(Err("no AgentPreferences capability".into()));
+                    return;
+                };
+                let http = self.http.clone();
+                tokio::spawn(async move {
+                    let body = ferro_llsd::llsd_map! { "hover_height" => height.clamp(-2.0, 2.0) };
+                    let answer = caps::post_llsd(&http, &url, &body)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| format!("AgentPreferences: {e}"));
+                    let _ = reply.send(answer);
+                });
+            }
             Request::RegionHandle { name, reply } => {
                 // LLWorldMapMessage::sendNamedRegionRequest; the reply gives the grid position
                 let mut m = MapNameRequest::default();
@@ -815,6 +911,16 @@ impl Session<'_> {
             };
             self.on_session_message(&im);
             self.shared.emit(Event::InstantMessage(im));
+        } else if id == AvatarSitResponse::ID {
+            // process_avatar_sit_response: the region seats the bot; AgentSit when it asks
+            let m: AvatarSitResponse = pkt.decode()?;
+            self.shared.state_mut().sitting_on = Some(m.sit_object.id);
+            if m.sit_transform.auto_pilot {
+                let mut s = AgentSit::default();
+                s.agent_data.agent_id = self.login.agent_id;
+                s.agent_data.session_id = self.login.session_id;
+                self.send(&s, true);
+            }
         } else if id == MoneyBalanceReply::ID {
             let m: MoneyBalanceReply = pkt.decode()?;
             let mut st = self.shared.state_mut();
@@ -824,12 +930,25 @@ impl Session<'_> {
             // the avatars in the region (LLWorld::processCoarseUpdate), the bot left out
             let m: CoarseLocationUpdate = pkt.decode()?;
             let me = self.login.agent_id;
-            self.shared.state_mut().nearby = m
+            // the n-th location is the n-th avatar's; heights come divided by 4
+            let positions: std::collections::HashMap<Uuid, Vec3> = m
+                .agent_data
+                .iter()
+                .zip(&m.location)
+                .filter(|(a, _)| a.agent_id != me && !a.agent_id.is_nil())
+                .map(|(a, l)| {
+                    let at = Vec3::new(f32::from(l.x), f32::from(l.y), f32::from(l.z) * 4.0);
+                    (a.agent_id, at)
+                })
+                .collect();
+            let mut st = self.shared.state_mut();
+            st.nearby = m
                 .agent_data
                 .iter()
                 .map(|a| a.agent_id)
                 .filter(|id| *id != me && !id.is_nil())
                 .collect();
+            st.nearby_positions = positions;
         } else if id == OnlineNotification::ID || id == OfflineNotification::ID {
             let online = id == OnlineNotification::ID;
             let ids: Vec<Uuid> = if online {
@@ -1303,6 +1422,9 @@ async fn run(
         appearance_asked: false,
         created: HashMap::new(),
         next_callback: 0,
+        controls: 0,
+        controls_once: 0,
+        rotation: Quat::IDENTITY,
     };
     s.send_use_circuit_code();
     // capabilities and the event queue, alongside the circuit

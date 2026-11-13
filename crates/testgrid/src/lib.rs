@@ -327,6 +327,28 @@ pub enum Seen {
         folder: Uuid,
         parent: Uuid,
     },
+    /// The control flags of the agent updates changed (fly, stand up, sit on the ground, stop).
+    Controls {
+        flags: u32,
+    },
+    /// The way the bot faces changed: a heading in degrees clockwise from north, rounded.
+    Facing {
+        heading: i32,
+    },
+    AgentRequestSit {
+        target: Uuid,
+    },
+    AgentSit,
+    AlwaysRun {
+        on: bool,
+    },
+    /// GenericMessage "autopilot": its parameters.
+    AutoPilot {
+        params: Vec<String>,
+    },
+    HoverHeight {
+        height: String,
+    },
     /// The bot paid: an avatar (5001) or an object (5008).
     Pay {
         to: Uuid,

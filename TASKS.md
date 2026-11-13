@@ -156,10 +156,12 @@ baking: the bot says so and goes on.
 
 ## Phase 6 - Appearance and inventory
 
-- 🟡 Server-side baking: once per login the region is asked to bake the current outfit
+- ✅ Server-side baking: once per login the region is asked to bake the current outfit
   (UpdateAvatarAppearance, the version it expects asked again, as Aurora's
-  request_server_appearance); RebakeAppearance; tested on the test grid, to see in world
-- ⬜ Hover height; changing the outfit (wear, take off)
+  request_server_appearance); RebakeAppearance; verified on the grid 2026-11-12 (never a cloud)
+- 🟡 Hover height (HoverHeight, the AgentPreferences capability, as the viewer's
+  LLVOAvatarSelf::sendHoverHeight); tested on the test grid
+- ⬜ Changing the outfit (wear, take off)
 - 🟡 Inventory (crates/client/src/inventory.rs from Aurora's inventory.rs; FetchInventoryDescendents2,
   FetchInventory2; MoveInventoryItem, MoveInventoryFolder, CreateInventoryFolder; gifts as
   give_inventory): SecondBot's InventoryFolders, InventoryFoldersLimited, InventoryContents,
@@ -179,8 +181,14 @@ baking: the bot says so and goes on.
   (Friendslist with who is online, FriendRequest, FriendFullPerms), funds (Balance, PayAvatar,
   PayObject; off unless FERRO_ALLOW_FUNDS, as SecondBot's AllowFundsCommands); tested on the test
   grid. Deliberate difference: Key2Name works (SecondBot's looks up the nil key)
-- ⬜ Movement (walk, fly, sit, stand, autopilot), profiles, animations and gestures, parcels,
-  estate
+- 🟡 Movement (commands/movement.rs; control flags in the agent update, AgentRequestSit then
+  AgentSit, SetAlwaysRun, the "autopilot" GenericMessage in global coordinates, as the viewer's
+  LLAgent): SecondBot's Fly, SetAlwaysRun, Sit (an object or the ground), Stand, AutoPilot (turns
+  toward the target first, as its TurnToward), AutoPilotStop, RotateTo, RotateToFace (the avatar's
+  coarse location), RotateToFaceVector, HoverHeight; tested on the test grid. Deliberate difference: RotateTo works (SecondBot's check is inverted, it refuses
+  every number); the heading is in degrees clockwise from north
+- ⬜ Movement: walking by keys (forward, back, turn) and following an avatar
+- ⬜ Profiles, animations and gestures, parcels, estate
 
 ## Phase 8 - Running it for real
 
