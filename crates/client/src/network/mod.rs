@@ -251,6 +251,8 @@ struct Session<'a> {
     parcel_waits: parcels::ParcelWaits,
     /// The mute list's file, being downloaded.
     mute_xfer: Option<crate::mutes::XferDownload>,
+    /// A terrain RAW file, being uploaded.
+    terrain_upload: Option<crate::terrain::Upload>,
     /// Where the region's root objects and the bot's avatar stand (the object updates).
     places: crate::objects::Places,
     /// Root objects whose properties are to be asked for, and the pace of the asking.
@@ -849,6 +851,8 @@ impl Session<'_> {
         // the objects asked about stayed behind: their waits end
         self.settle_property_waits();
         self.transfers.clear();
+        // the file was for the region left
+        self.terrain_failed("the bot left the region".into());
         {
             let mut st = self.shared.state_mut();
             st.region = None;
@@ -1091,6 +1095,7 @@ impl Session<'_> {
         for transfer in self.transfers.expire() {
             self.abort_transfer(transfer);
         }
+        self.tick_terrain_upload(now);
         if self.circuit.take_dropped().contains(&self.ucc_seq) {
             return Some(End::Lost(
                 "the region never acknowledged UseCircuitCode".into(),
@@ -1373,12 +1378,19 @@ impl Session<'_> {
         } else if id == SendXferPacket::ID {
             let m: SendXferPacket = pkt.decode()?;
             self.on_xfer_packet(&m);
+        } else if id == RequestXfer::ID {
+            let m: RequestXfer = pkt.decode()?;
+            self.on_request_xfer(&m);
+        } else if id == ConfirmXferPacket::ID {
+            let m: ConfirmXferPacket = pkt.decode()?;
+            self.on_confirm_xfer(&m);
         } else if id == AbortXfer::ID {
             let m: AbortXfer = pkt.decode()?;
-            if self
-                .mute_xfer
-                .as_ref()
-                .is_some_and(|x| x.id == m.xfer_id.id)
+            if !self.on_abort_terrain_xfer(&m)
+                && self
+                    .mute_xfer
+                    .as_ref()
+                    .is_some_and(|x| x.id == m.xfer_id.id)
             {
                 log::warn!("mute list: the region gave up its download");
                 self.mute_xfer = None;
@@ -1937,6 +1949,7 @@ async fn run(
         groups: groups::GroupWaits::default(),
         map_waits: Vec::new(),
         mute_xfer: None,
+        terrain_upload: None,
         region_id: Uuid::nil(),
         estate_manager: false,
         region_product: String::new(),

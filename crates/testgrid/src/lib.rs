@@ -413,6 +413,14 @@ pub enum Seen {
         method: String,
         params: Vec<String>,
     },
+    /// A terrain file the bot uploaded by xfer, whole: its name, the size its first packet
+    /// announced, the bytes received and their [`checksum`].
+    TerrainUploaded {
+        name: String,
+        announced: usize,
+        len: usize,
+        checksum: u64,
+    },
     /// A POST to an estate capability (regioninfo, estatechangeinfo), its body as XML.
     EstatePost {
         cap: String,
@@ -538,6 +546,15 @@ struct State {
     inventory: inventory::Inventory,
     /// The bot's L$.
     balance: i32,
+    /// Files on the grid's web server (`/files/<name>`), for the commands that download one.
+    files: HashMap<String, Vec<u8>>,
+}
+
+/// FNV-1a: what [`Seen::TerrainUploaded`] says of the bytes, rather than all of them.
+pub fn checksum(data: &[u8]) -> u64 {
+    data.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// A region as the others see it.
@@ -725,6 +742,7 @@ impl TestGrid {
                 bans: HashMap::new(),
                 inventory: inventory::Inventory::default(),
                 balance: 500,
+                files: HashMap::new(),
             }),
             eq_wake: Notify::new(),
         });
@@ -992,6 +1010,12 @@ impl TestGrid {
     }
 
     /// The bot's inventory as it is now.
+    /// Put a file on the grid's web server; its URL.
+    pub fn serve_file(&self, name: &str, data: Vec<u8>) -> String {
+        self.shared.state().files.insert(name.to_owned(), data);
+        format!("http://{}/files/{name}", self.shared.http_addr)
+    }
+
     pub fn parcel(&self) -> parcels::GridParcel {
         self.shared.state().parcel.clone()
     }

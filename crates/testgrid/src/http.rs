@@ -1,6 +1,6 @@
-//! A minimal HTTP/1.1 server for the login and the capabilities: one request per connection,
-//! `Content-Length` bodies, `Connection: close` replies. Enough for the bot's client; no
-//! dependency on a web framework.
+//! A minimal HTTP/1.1 server for the login, the capabilities and the files commands download:
+//! one request per connection, `Content-Length` bodies, `Connection: close` replies. Enough for
+//! the bot's client; no dependency on a web framework.
 
 use crate::Shared;
 use std::sync::Arc;
@@ -101,6 +101,12 @@ async fn route(shared: &Arc<Shared>, req: Request) -> Response {
         parts.next(),
         parts.next(),
     ) {
+        (Some("files"), Some(name), None, None, None) if req.method == "GET" => {
+            match shared.state().files.get(name) {
+                Some(data) => Response::new(200, "application/octet-stream", data.clone()),
+                None => Response::status(404),
+            }
+        }
         (Some("cap"), Some(n), Some(region), Some(name), None) => {
             match (n.parse(), region.parse()) {
                 (Ok(n), Ok(region)) => {

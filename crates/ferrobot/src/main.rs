@@ -6,6 +6,7 @@ mod commands;
 mod config;
 mod dialogs;
 mod discord;
+mod download;
 mod history;
 mod inventory_updates;
 mod masters;

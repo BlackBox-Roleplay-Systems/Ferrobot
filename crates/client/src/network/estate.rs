@@ -1,14 +1,17 @@
 //! The session's side of the estate: EstateOwnerMessage (its `getinfo`, answered by
 //! `estateupdateinfo` with the same invoice, and the changes), the EstateAccess capability, the
 //! covenant (EstateCovenantRequest, then its notecard by TransferRequest from the estate), and the
-//! estate's capabilities. As Aurora's session/estate.rs and session_land.rs.
+//! estate's capabilities, and a terrain RAW file's upload by xfer (`terrain` "upload filename",
+//! then the region's RequestXfer). As Aurora's session/estate.rs, session_land.rs and
+//! session/terrain_raw.rs.
 
 use super::Session;
 use crate::caps;
 use crate::estate::{self, Covenant, EstateAccess, EstateInfo};
 use ferro_llsd::Llsd;
 use ferro_msg::msgs::*;
-use ferro_msg::str_field;
+use ferro_msg::{field_str, str_field};
+use std::time::Instant;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -39,7 +42,16 @@ pub(crate) enum EstateRequest {
         body: Llsd,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// A terrain RAW file to upload: answered once asked for, with how it will end.
+    TerrainUpload {
+        name: String,
+        data: Vec<u8>,
+        reply: oneshot::Sender<Result<TerrainDone, String>>,
+    },
 }
+
+/// How a terrain upload ended, once it has.
+pub(crate) type TerrainDone = oneshot::Receiver<Result<(), String>>;
 
 #[derive(Debug, Default)]
 pub(super) struct EstateWaits {
@@ -149,6 +161,110 @@ impl Session<'_> {
                     let _ = reply.send(answer);
                 });
             }
+            EstateRequest::TerrainUpload { name, data, reply } => {
+                // one at a time, as the region takes them (OpenSim: "Another Terrain Upload is in
+                // progress")
+                if self.terrain_upload.is_some() {
+                    let _ = reply.send(Err("a terrain upload is already under way".into()));
+                    return;
+                }
+                let (tx, rx) = oneshot::channel();
+                log::info!("terrain: asking to upload {name} ({} bytes)", data.len());
+                // onUploadRawFilepickerCB: the file's name, then the region asks for it by xfer
+                let strings = ["upload filename".to_owned(), name.clone()];
+                self.terrain_upload = Some(crate::terrain::Upload::new(name, data, tx));
+                self.estate_owner_message("terrain", &strings);
+                let _ = reply.send(Ok(rx));
+            }
+        }
+    }
+
+    /// What the terrain upload does next: a packet, or its end.
+    fn terrain_step(&mut self, step: crate::terrain::Step) {
+        use crate::terrain::Step;
+        let Some(u) = self.terrain_upload.as_mut() else {
+            return;
+        };
+        match step {
+            Step::Ignore => {}
+            Step::Send(packet, data) => {
+                let Some(id) = u.xfer_id() else {
+                    return;
+                };
+                let mut m = SendXferPacket::default();
+                m.xfer_id.id = id;
+                m.xfer_id.packet = packet;
+                m.data_packet.data = data;
+                // unreliable: the xfer confirms and resends its own packets (LLXfer)
+                self.send(&m, false);
+            }
+            Step::Done => {
+                log::info!("terrain: {} uploaded", u.name());
+                u.finish(Ok(()));
+                self.terrain_upload = None;
+            }
+            Step::Failed(why) => self.terrain_failed(why),
+        }
+    }
+
+    pub(super) fn terrain_failed(&mut self, why: String) {
+        if let Some(mut u) = self.terrain_upload.take() {
+            log::warn!("terrain: the upload of {} failed: {why}", u.name());
+            u.finish(Err(why));
+        }
+    }
+
+    /// RequestXfer: the region asks for the terrain file it was told of.
+    pub(super) fn on_request_xfer(&mut self, m: &RequestXfer) {
+        let Some(u) = self.terrain_upload.as_mut() else {
+            return;
+        };
+        let x = &m.xfer_id;
+        let step = u.requested(
+            x.id,
+            &field_str(&x.filename),
+            x.file_path,
+            x.v_file_id.is_nil(),
+            x.use_big_packets,
+            Instant::now(),
+        );
+        if matches!(step, crate::terrain::Step::Send(..)) {
+            log::info!(
+                "terrain: the region asked for {}, sending {} bytes",
+                u.name(),
+                u.len()
+            );
+        } else {
+            log::debug!("RequestXfer for a file the bot does not send");
+        }
+        self.terrain_step(step);
+    }
+
+    pub(super) fn on_confirm_xfer(&mut self, m: &ConfirmXferPacket) {
+        let Some(u) = self.terrain_upload.as_mut() else {
+            return;
+        };
+        let step = u.confirmed(m.xfer_id.id, m.xfer_id.packet, Instant::now());
+        self.terrain_step(step);
+    }
+
+    /// AbortXfer: true when it ended the terrain upload.
+    pub(super) fn on_abort_terrain_xfer(&mut self, m: &AbortXfer) -> bool {
+        let ours = self
+            .terrain_upload
+            .as_ref()
+            .and_then(|u| u.xfer_id())
+            .is_some_and(|id| id == m.xfer_id.id);
+        if ours {
+            self.terrain_failed(format!("the region aborted it ({})", m.xfer_id.result));
+        }
+        ours
+    }
+
+    pub(super) fn tick_terrain_upload(&mut self, now: Instant) {
+        if let Some(u) = self.terrain_upload.as_mut() {
+            let step = u.tick(now);
+            self.terrain_step(step);
         }
     }
 

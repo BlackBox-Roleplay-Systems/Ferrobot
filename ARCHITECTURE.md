@@ -33,6 +33,7 @@ crates/
     src/mutes.rs           the mute list: its download by xfer and its file (from Aurora)
     src/parcels.rs         a parcel's record (ParcelProperties) and its update (from Aurora)
     src/estate.rs          the estate's info, access lists and changes (from Aurora)
+    src/terrain.rs         a terrain RAW file and its upload by xfer (from Aurora)
     src/gesture.rs         gesture assets (from Aurora) and their playing
     src/profile.rs         avatar profiles (AgentProfile, AvatarPropertiesReply)
     src/outfit.rs          attachments and outfits, by the Current Outfit Folder's links
@@ -47,6 +48,7 @@ crates/
     src/history.rs         what the bot heard: local chat, IM and group windows (SecondBot's store)
     src/smart_reply.rs     where a command's answer goes when it names a reply target
     src/inventory_updates.rs  items that come into the inventory, told to SetInventoryUpdate's targets
+    src/download.rs        files the commands fetch from a URL: http(s) only, bounded in size and time
     src/discord/           the bot on a Discord server (twilight): its channels, both ways
     src/services/          one service per job, on the client's events (chat_log, health, homebound, im_commands, interactions, relays, restart, script_permissions)
     tests/testgrid.rs      the real bot, run as a process against the test grid
@@ -55,7 +57,8 @@ crates/
     src/login.rs           login_to_simulator, answered or refused as the grid does
     src/region.rs          the region's UDP side: circuits, handshake, arrival, pings, logout, kicks
     src/caps.rs            the seed capability and the held EventQueueGet poll
-    src/http.rs, xmlrpc.rs a minimal HTTP/1.1 server and the grid's side of XML-RPC
+    src/http.rs, xmlrpc.rs a minimal HTTP/1.1 server (and files to download), the grid's side of
+                           XML-RPC
 ```
 
 One tokio runtime. `Network::session` owns the UDP socket and the circuit, and `select!`s over the

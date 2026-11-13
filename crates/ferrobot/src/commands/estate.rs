@@ -4,7 +4,9 @@
 //!
 //! Deliberate differences: SetEstateConfig keeps the estate's other flags (SecondBot's sets them
 //! from nothing) and sends the sun hour to the capability as the viewer does (SecondBot's times
-//! 1024 there too). Not here yet: SetEstateTerrainRaw (a terrain upload by xfer).
+//! 1024 there too). SetEstateTerrainRaw takes only a RAW file's size (13 bytes a point of a square
+//! region), downloads 64 MiB at most within 60 s, names the file `*.raw` (the URL's last part, else
+//! "terrain.raw") and refuses a second upload while one is under way.
 
 use super::reply::{Answer, basic, failure, json};
 use super::{Ctx, avatar, cs_bool, key, owned};
@@ -12,6 +14,7 @@ use ferro_client::estate::{
     RegionRules, access_delta_strings, estate_access as access, estate_change_body,
     estate_change_strings, estate_flags as flags, region_message_strings,
 };
+use ferro_client::terrain::{MAX_RAW_FILE, REGION_RAW_SIZE, raw_width};
 use serde::Serialize;
 use std::time::Duration;
 
@@ -442,5 +445,92 @@ pub async fn set_estate_config(ctx: &Ctx, v: [&str; 10]) -> Answer {
             .await
         }
         Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
+/// The name the region is told the file has: the URL's last part (SecondBot's), when it names a
+/// `.raw` file plainly; else "terrain.raw". OpenSim reads the file by its name's extension.
+fn raw_file_name(url: &str) -> String {
+    const DEFAULT: &str = "terrain.raw";
+    let Ok(url) = reqwest::Url::parse(url) else {
+        return DEFAULT.into();
+    };
+    let last = url
+        .path_segments()
+        .and_then(|mut s| s.next_back())
+        .unwrap_or_default();
+    let plain = last.len() <= 100 && last.bytes().all(|b| b.is_ascii_graphic());
+    if plain && last.len() > 4 && last.to_ascii_lowercase().ends_with(".raw") {
+        last.to_owned()
+    } else {
+        DEFAULT.into()
+    }
+}
+
+/// SetEstateTerrainRaw: a RAW file downloaded from a URL, uploaded to the region by xfer as the
+/// estate tools' "Upload RAW" (LLPanelRegionTerrainInfo). Answers once the region was told of
+/// the file, as SecondBot's does; how the upload ends is logged.
+pub async fn set_terrain_raw(ctx: &Ctx, url: &str) -> Answer {
+    const C: &str = "SetEstateTerrainRaw";
+    let args = owned(&[url]);
+    if !manager(ctx) {
+        return failure(C, "Not an estate manager here", &args);
+    }
+    if url.is_empty() {
+        return failure(C, "No url provided", &[]);
+    }
+    if !crate::download::allowed(url) {
+        return failure(C, "url must start with http:// or https://", &args);
+    }
+    let data = match crate::download::fetch(url, MAX_RAW_FILE).await {
+        Ok(data) => data,
+        Err(e) => {
+            let why = format!("Unable to download terrain data from url error {e}");
+            return failure(C, &why, &args);
+        }
+    };
+    if raw_width(data.len()).is_none() {
+        let why = format!(
+            "Not a terrain RAW file: {} bytes, a 256 m region's is {REGION_RAW_SIZE} (13 x 256 x 256)",
+            data.len()
+        );
+        return failure(C, &why, &args);
+    }
+    let name = raw_file_name(url);
+    // SecondBot answers with its upload's id, which the grid never sees: here, the log's
+    let id = uuid::Uuid::new_v4();
+    match ctx.client.upload_terrain(name, data).await {
+        Ok(done) => {
+            tokio::spawn(async move {
+                match done.await {
+                    Ok(Ok(())) => log::info!("{C} {id}: the terrain file is uploaded"),
+                    Ok(Err(why)) => log::warn!("{C} {id}: the upload failed: {why}"),
+                    Err(_) => log::warn!("{C} {id}: the session ended before the upload"),
+                }
+            });
+            basic(C, &format!("ok uploading with uuid {id}"), &args)
+        }
+        Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
+#[cfg(test)]
+mod terrain_tests {
+    use super::raw_file_name;
+
+    #[test]
+    fn the_file_is_named_from_the_url() {
+        assert_eq!(
+            raw_file_name("https://x.test/maps/island.raw"),
+            "island.raw"
+        );
+        assert_eq!(
+            raw_file_name("https://x.test/maps/Island.RAW?v=2"),
+            "Island.RAW"
+        );
+        assert_eq!(raw_file_name("https://x.test/get.php?id=3"), "terrain.raw");
+        assert_eq!(raw_file_name("https://x.test/"), "terrain.raw");
+        assert_eq!(raw_file_name("https://x.test/.raw"), "terrain.raw");
+        assert_eq!(raw_file_name("https://x.test/my%20map.raw"), "my%20map.raw");
     }
 }
