@@ -25,7 +25,7 @@ pub mod names;
 mod network;
 pub use network::{ObjectOwner, ParcelAction};
 pub mod objects;
-mod outfit;
+pub mod outfit;
 pub mod parcels;
 pub mod profile;
 pub mod region_restart;

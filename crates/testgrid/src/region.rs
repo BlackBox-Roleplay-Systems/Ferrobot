@@ -432,7 +432,7 @@ impl Region {
         let local = *self.attached.entry(item).or_insert(next);
         let mut b = object_block(
             local,
-            Uuid::from_u128(item.as_u128() + 0x0a00_0000),
+            attachment_key(item),
             AVATAR_LOCAL_ID,
             LL_PCODE_VOLUME,
             Vec3::ZERO,
@@ -1978,6 +1978,24 @@ impl Region {
                 c.message = str_field(&text);
                 self.send(to, &m, false);
             }
+            RegionCommand::OwnerSay {
+                object,
+                name,
+                owner,
+                text,
+            } => {
+                let mut m = ChatFromSimulator::default();
+                let c = &mut m.chat_data;
+                c.from_name = str_field(&name);
+                c.source_id = object;
+                c.owner_id = owner;
+                c.source_type = 2; // an object
+                c.chat_type = 8; // owner say
+                c.audible = 1;
+                c.position = ARRIVAL;
+                c.message = str_field(&text);
+                self.send(to, &m, false);
+            }
             RegionCommand::Im { from, text } => {
                 let mut m = ImprovedInstantMessage::default();
                 m.agent_data.agent_id = Uuid::new_v4();
@@ -2241,6 +2259,11 @@ pub async fn run(
 }
 
 /// A linkset standing on the parcel: its root and a child prim.
+/// The key of the object worn from an item.
+pub fn attachment_key(item: Uuid) -> Uuid {
+    Uuid::from_u128(item.as_u128() + 0x0a00_0000)
+}
+
 pub const OBJECT: Uuid = Uuid::from_u128(0x0b1e_c701);
 pub const OBJECT_CHILD: Uuid = Uuid::from_u128(0x0b1e_c702);
 pub const OBJECT_LOCAL_ID: u32 = 0x0b0c;
