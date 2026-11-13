@@ -76,6 +76,20 @@ async fn main() -> std::process::ExitCode {
     let masters = std::sync::Arc::new(masters::Masters::new(cfg.masters.clone()));
     let homebound = std::sync::Arc::new(services::homebound::Homebound::default());
     let grants = std::sync::Arc::new(grants::Grants::default());
+    let smtp = std::sync::Arc::new(services::smtp::Mailer::new(cfg.smtp.clone()));
+    if let Some(s) = &cfg.smtp {
+        log::info!(
+            "e-mail through {} port {} ({:?})",
+            s.host,
+            s.port,
+            s.security
+        );
+        tokio::spawn(services::smtp::run(
+            smtp.clone(),
+            client.clone(),
+            client.subscribe(),
+        ));
+    }
     tokio::spawn(services::script_permissions::run(
         client.clone(),
         client.subscribe(),
@@ -89,6 +103,7 @@ async fn main() -> std::process::ExitCode {
             homebound: homebound.clone(),
             grants: grants.clone(),
             http: http.clone(),
+            smtp: smtp.clone(),
             events: cfg.interaction_events.clone(),
         }),
         client.subscribe(),
@@ -193,6 +208,7 @@ async fn main() -> std::process::ExitCode {
         custom: std::sync::Arc::new(commands::custom::CustomCommands::new(
             cfg.custom_commands.clone(),
         )),
+        smtp,
     };
     if let Some((_, outbox, settings)) = rabbit {
         log::info!(

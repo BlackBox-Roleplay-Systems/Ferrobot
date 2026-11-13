@@ -1,7 +1,7 @@
 //! SecondBot's SmartCommandReply: where the answer of a command goes when it names a reply
 //! target. A channel number in local chat (999 for a negative one), an avatar's key or name by
-//! IM, an http(s) address as a form POST of `reply` and `command`. SecondBot's e-mail replies are
-//! not followed (Ferrobot sends no e-mail).
+//! IM, an http(s) address as a form POST of `reply` and `command`, an e-mail address as a message
+//! "<command>##commandreply" (when FERRO_SMTP_REPLY_TARGET allows it, crate::services::smtp).
 
 use crate::commands::Ctx;
 use ferro_client::Client;
@@ -10,13 +10,14 @@ use uuid::Uuid;
 
 /// Sends `output` to `target`.
 pub async fn send(ctx: &Ctx, target: &str, output: &str, command: &str) {
-    send_with(&ctx.client, &ctx.http, target, output, command).await;
+    send_with(&ctx.client, &ctx.http, &ctx.smtp, target, output, command).await;
 }
 
 /// The same, for a service that has no command context (the interaction events).
 pub async fn send_with(
     client: &Client,
     http: &reqwest::Client,
+    smtp: &crate::services::smtp::Mailer,
     target: &str,
     output: &str,
     command: &str,
@@ -51,8 +52,11 @@ pub async fn send_with(
         }
         return;
     }
-    if target.contains('@') {
-        log::warn!("command reply by e-mail: not supported");
+    // .NET's EmailAddressAttribute, as SmartCommandReply tells an address
+    if crate::services::smtp::looks_like_address(target) {
+        if let Err(e) = smtp.reply_target(target, command, output).await {
+            log::warn!("command reply by e-mail failed: {}", e.for_log());
+        }
         return;
     }
     if let Ok(channel) = target.parse::<i32>() {
