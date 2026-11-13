@@ -481,30 +481,35 @@ impl Service {
         }
     }
 
-    /// SecondBot's GetAiReply.
-    async fn answer(self: Arc<Self>, h: Heard) {
+    /// SecondBot's GetAiReply, its first half: whether to ask at all. Decided in the order the
+    /// lines come, before the question goes out on its own: a request slot, then the cooldown.
+    fn admit(&self, h: &Heard, now: u64) -> bool {
         self.trace(&format!("Request from {}: {}", h.name, h.message));
-        let now = now();
-        let allowed = self
-            .conversations
-            .lock()
-            .map(|mut c| c.may_ask(h.window, h.cooldown, now))
-            .unwrap_or(false);
-        if !allowed {
-            self.trace(&format!(
-                "Skipped, replying too fast (rate limit {}s)",
-                h.cooldown
-            ));
-            return;
-        }
         if self.in_flight.fetch_add(1, Ordering::SeqCst) >= MAX_IN_FLIGHT {
             self.in_flight.fetch_sub(1, Ordering::SeqCst);
             log::warn!(
                 "AI: skipped a request from {}: {MAX_IN_FLIGHT} already asked",
                 h.name
             );
-            return;
+            return false;
         }
+        let allowed = self
+            .conversations
+            .lock()
+            .map(|mut c| c.may_ask(h.window, h.cooldown, now))
+            .unwrap_or(false);
+        if !allowed {
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            self.trace(&format!(
+                "Skipped, replying too fast (rate limit {}s)",
+                h.cooldown
+            ));
+        }
+        allowed
+    }
+
+    /// GetAiReply's second half, once admitted: ask, then say the reply.
+    async fn answer(self: Arc<Self>, h: Heard, now: u64) {
         let result = self.ask(&h, now).await;
         self.in_flight.fetch_sub(1, Ordering::SeqCst);
         match result {
@@ -665,7 +670,10 @@ pub async fn run(client: Client, mut events: Receiver<Event>, settings: Option<S
         match events.recv().await {
             Ok(event) => {
                 if let Some(h) = service.heard(event) {
-                    tokio::spawn(service.clone().answer(h));
+                    let now = now();
+                    if service.admit(&h, now) {
+                        tokio::spawn(service.clone().answer(h, now));
+                    }
                 }
             }
             Err(RecvError::Lagged(n)) => log::warn!("AI: {n} events missed"),
