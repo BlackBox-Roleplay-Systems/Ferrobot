@@ -206,6 +206,7 @@ baking: the bot says so and goes on.
 - 🟡 Homebound sits on its seat at home (FERRO_HOME_SIT / homebound_AtHomeAutoSitUuid), asking
   again every 30 s while not seated, not seeking the spot while seated; a Stand command stops it
   until the next login (SecondBot's MarkStandup lasts until it restarts); tested on the test grid
+- 🔧 ChatGPT replies (SecondBot's ChatGptService, text only)
 
 ## Phase 6 - Appearance and inventory
 
