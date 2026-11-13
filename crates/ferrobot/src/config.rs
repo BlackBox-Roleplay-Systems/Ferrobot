@@ -1,5 +1,6 @@
 //! The bot's settings, from environment variables (the container's env).
 
+use crate::commands::custom::{CustomCommand, Step};
 use crate::services::interactions::{Level, Rule, Rules};
 use ferro_client::login::{SL_MAIN_GRID, StartLocation};
 
@@ -56,6 +57,8 @@ pub struct Config {
     pub rabbit: Option<crate::rabbit::Settings>,
     /// AI replies: off unless on (SecondBot's ChatGptConfig). Its key is never logged.
     pub chatgpt: Option<crate::services::chatgpt::Settings>,
+    /// The operator's custom commands (SecondBot's CustomCommandsConfig).
+    pub custom_commands: Vec<CustomCommand>,
 }
 
 impl std::fmt::Debug for Config {
@@ -87,6 +90,15 @@ impl std::fmt::Debug for Config {
             .field("discord", &self.discord)
             .field("rabbit", &self.rabbit)
             .field("chatgpt", &self.chatgpt)
+            // their steps may name reply targets: the triggers only
+            .field(
+                "custom_commands",
+                &self
+                    .custom_commands
+                    .iter()
+                    .map(|c| c.trigger.as_str())
+                    .collect::<Vec<_>>(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -465,6 +477,130 @@ fn relays() -> Result<Vec<crate::services::relays::Relay>, ConfigError> {
     Ok(out)
 }
 
+/// One custom command's settings, read under one naming.
+struct CustomNames {
+    /// What names its settings in the error messages.
+    pattern: &'static str,
+    trigger: String,
+    args: String,
+    step: Box<dyn Fn(usize) -> String>,
+}
+
+/// The custom commands: FERRO_CUSTOM_COMMAND_1_TRIGGER, _ARGS and _STEP_1, _STEP_2… for each,
+/// counted until a trigger is missing; then SecondBot's (customcommands_count, and for each
+/// customcommands_<n>_trigger, _args, _steps and _commands_<m>). SecondBot's count is 1 by
+/// default, with an "exitplease" that runs nothing; here there is none unless set. A missing step
+/// or trigger, a trigger given twice or one that is a built-in command's name, stop the bot
+/// (SecondBot fills a missing step with "Logoff").
+fn custom_commands() -> Result<Vec<CustomCommand>, ConfigError> {
+    custom_commands_from(|name| std::env::var(name).ok())
+}
+
+/// The custom commands, from the settings `get` gives.
+fn custom_commands_from(
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<Vec<CustomCommand>, ConfigError> {
+    let raw = |name: &str| get(name).filter(|v| !v.trim().is_empty());
+    let mut named = Vec::new();
+    for n in 1.. {
+        let trigger = format!("FERRO_CUSTOM_COMMAND_{n}_TRIGGER");
+        if raw(&trigger).is_none() {
+            break;
+        }
+        named.push((
+            None,
+            CustomNames {
+                pattern: "FERRO_CUSTOM_COMMAND_<n>_…",
+                trigger,
+                args: format!("FERRO_CUSTOM_COMMAND_{n}_ARGS"),
+                step: Box::new(move |m| format!("FERRO_CUSTOM_COMMAND_{n}_STEP_{m}")),
+            },
+        ));
+    }
+    let count: usize = number(
+        raw("customcommands_count").map(|v| ("customcommands_count", v.trim().to_owned())),
+        0,
+        "a number of custom commands",
+    )?;
+    for n in 1..=count {
+        let steps: usize = number(
+            raw(&format!("customcommands_{n}_steps"))
+                .map(|v| ("customcommands_<n>_steps", v.trim().to_owned())),
+            0,
+            "a number of steps",
+        )?;
+        named.push((
+            Some(steps),
+            CustomNames {
+                pattern: "customcommands_<n>_…",
+                trigger: format!("customcommands_{n}_trigger"),
+                args: format!("customcommands_{n}_args"),
+                step: Box::new(move |m| format!("customcommands_{n}_commands_{m}")),
+            },
+        ));
+    }
+    let mut out: Vec<CustomCommand> = Vec::new();
+    for (steps, names) in named {
+        let invalid = |what: String| ConfigError::Invalid(names.pattern, what);
+        let trigger = raw(&names.trigger)
+            .map(|t| t.trim().to_owned())
+            .ok_or_else(|| invalid(format!("{} is not set", names.trigger)))?;
+        if let Some(builtin) = crate::commands::known(&trigger) {
+            return Err(invalid(format!(
+                "{}: \"{trigger}\" is the built-in command {builtin}",
+                names.trigger
+            )));
+        }
+        if out.iter().any(|c| c.trigger == trigger) {
+            return Err(invalid(format!(
+                "{}: \"{trigger}\" is given twice",
+                names.trigger
+            )));
+        }
+        let args = match raw(&names.args) {
+            None => 0,
+            Some(v) => v
+                .trim()
+                .parse()
+                .map_err(|_| invalid(format!("{}: a number of arguments", names.args)))?,
+        };
+        let mut list = Vec::new();
+        for m in 1.. {
+            if steps.is_some_and(|s| m > s) {
+                break;
+            }
+            let name = (names.step)(m);
+            let Some(text) = raw(&name) else {
+                if steps.is_some() {
+                    return Err(invalid(format!("{name} is not set")));
+                }
+                break;
+            };
+            let step =
+                Step::parse(&text).ok_or_else(|| invalid(format!("{name}: names no command")))?;
+            if let Some(k) = step.placeholders().find(|k| *k > args) {
+                log::warn!(
+                    "custom command {trigger}: {name} has [C_ARG_{k}] but the command takes \
+                     {args} arguments: it stays as it is"
+                );
+            }
+            list.push(step);
+        }
+        if list.is_empty() {
+            return Err(invalid(format!(
+                "{}: \"{trigger}\" has no steps",
+                names.trigger
+            )));
+        }
+        out.push(CustomCommand {
+            trigger,
+            args,
+            steps: list,
+        });
+    }
+    Ok(out)
+}
+
 /// Homebound's settings: on with a home sim (FERRO_HOME_SIM, or SecondBot's homebound_Enabled
 /// with homebound_HomeSimSlUrl).
 fn homebound() -> Result<Option<crate::services::homebound::Settings>, ConfigError> {
@@ -679,6 +815,7 @@ impl Config {
             rabbit: rabbit()?,
             chatgpt: chatgpt()?,
             relays: relays()?,
+            custom_commands: custom_commands()?,
             allow_funds: setting_flag("FERRO_ALLOW_FUNDS", "commands_AllowFundsCommands", false)?,
             rate_limit: number(
                 var("FERRO_RATE_LIMIT").map(|v| ("FERRO_RATE_LIMIT", v)),
@@ -764,6 +901,102 @@ pub fn parse_start(s: &str) -> Option<StartLocation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn custom(settings: &[(&str, &str)]) -> Result<Vec<CustomCommand>, String> {
+        custom_commands_from(|name| {
+            settings
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| (*v).to_owned())
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn custom_commands_by_both_names() {
+        assert_eq!(custom(&[]), Ok(vec![]), "none by default");
+        let all = custom(&[
+            ("FERRO_CUSTOM_COMMAND_1_TRIGGER", "greet"),
+            ("FERRO_CUSTOM_COMMAND_1_ARGS", "1"),
+            ("FERRO_CUSTOM_COMMAND_1_STEP_1", "Say|||0~#~Hi [C_ARG_1]"),
+            ("FERRO_CUSTOM_COMMAND_1_STEP_2", "IM|||[C_ARG_1]~#~welcome"),
+            // counted until the first one missing
+            ("FERRO_CUSTOM_COMMAND_1_STEP_4", "Logoff"),
+            ("FERRO_CUSTOM_COMMAND_3_TRIGGER", "skipped"),
+            ("customcommands_count", "1"),
+            ("customcommands_1_trigger", "where"),
+            ("customcommands_1_steps", "1"),
+            ("customcommands_1_commands_1", "GetPosition#|#5"),
+            ("customcommands_1_commands_2", "Logoff"),
+        ])
+        .expect("good settings");
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            (all[0].trigger.as_str(), all[0].args, all[0].steps.len()),
+            ("greet", 1, 2)
+        );
+        assert_eq!(all[0].steps[1].args, ["[C_ARG_1]", "welcome"]);
+        assert_eq!((all[1].trigger.as_str(), all[1].args), ("where", 0));
+        assert_eq!(
+            all[1].steps,
+            vec![Step {
+                command: "GetPosition".into(),
+                args: vec![],
+                reply: Some("5".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn custom_commands_that_stop_the_bot() {
+        let error = |settings: &[(&str, &str)]| custom(settings).expect_err("refused");
+        // SecondBot would run Logoff for the missing step
+        assert!(
+            error(&[
+                ("customcommands_count", "1"),
+                ("customcommands_1_trigger", "x"),
+                ("customcommands_1_steps", "2"),
+                ("customcommands_1_commands_1", "Hello"),
+            ])
+            .contains("customcommands_1_commands_2 is not set")
+        );
+        assert!(error(&[("customcommands_count", "1")]).contains("customcommands_1_trigger"));
+        assert!(error(&[("FERRO_CUSTOM_COMMAND_1_TRIGGER", "x")]).contains("has no steps"));
+        assert!(
+            error(&[
+                ("FERRO_CUSTOM_COMMAND_1_TRIGGER", "hello"),
+                ("FERRO_CUSTOM_COMMAND_1_STEP_1", "Name"),
+            ])
+            .contains("built-in command Hello")
+        );
+        assert!(
+            error(&[
+                ("FERRO_CUSTOM_COMMAND_1_TRIGGER", "x"),
+                ("FERRO_CUSTOM_COMMAND_1_STEP_1", "Name"),
+                ("customcommands_count", "1"),
+                ("customcommands_1_trigger", "x"),
+                ("customcommands_1_steps", "1"),
+                ("customcommands_1_commands_1", "Name"),
+            ])
+            .contains("given twice")
+        );
+        assert!(
+            error(&[
+                ("FERRO_CUSTOM_COMMAND_1_TRIGGER", "x"),
+                ("FERRO_CUSTOM_COMMAND_1_ARGS", "two"),
+                ("FERRO_CUSTOM_COMMAND_1_STEP_1", "Name"),
+            ])
+            .contains("a number of arguments")
+        );
+        assert!(
+            error(&[
+                ("FERRO_CUSTOM_COMMAND_1_TRIGGER", "x"),
+                ("FERRO_CUSTOM_COMMAND_1_STEP_1", "|||nothing"),
+            ])
+            .contains("names no command")
+        );
+        assert!(error(&[("customcommands_count", "many")]).contains("customcommands_count"));
+    }
 
     #[test]
     fn masters_are_a_list_of_names() {

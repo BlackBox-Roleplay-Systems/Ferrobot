@@ -6,6 +6,7 @@ mod animation;
 mod avatars;
 mod bot;
 mod chat;
+pub mod custom;
 mod dialogs;
 mod discord;
 mod estate;
@@ -61,6 +62,18 @@ pub struct Ctx {
     pub inventory_updates: Arc<crate::inventory_updates::InventoryUpdates>,
     /// The RabbitMQ connection, when RabbitMQ is on.
     pub rabbit: Option<Arc<crate::rabbit::Rabbit>>,
+    /// The operator's custom commands (SecondBot's CustomCommandsService).
+    pub custom: Arc<custom::CustomCommands>,
+}
+
+/// Who asks for a command, for what they may run. Set by the way the command came, after it was
+/// authenticated, and kept for each step of a custom command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Caller {
+    /// Signed with the shared secret, a master, a Discord master, a master's object: any command.
+    Trusted,
+    /// An avatar on its "command" grant (crate::grants): never the commands in [`GRANTING`].
+    Granted,
 }
 
 /// The commands that change things in world: under the rate limit.
@@ -407,8 +420,56 @@ pub fn known(name: &str) -> Option<&'static str> {
         .map(|(c, _)| *c)
 }
 
-/// What CommandsService.RunCommand answers: whether the command ran, and its answer (or why not).
+/// Whether a command of this name exists: a built-in one, or a custom one.
+pub fn exists(ctx: &Ctx, name: &str) -> bool {
+    known(name).is_some() || ctx.custom.find(name).is_some()
+}
+
+/// The built-in commands asking for `name` with these arguments would run: the command itself,
+/// or a custom command's steps that name one, with the arguments in. `None` when there is no
+/// such command; empty when a custom command is given too few arguments (it runs nothing).
+pub fn reached(ctx: &Ctx, name: &str, args: &[String]) -> Option<Vec<&'static str>> {
+    if let Some(command) = known(name) {
+        return Some(vec![command]);
+    }
+    let custom = ctx.custom.find(name)?;
+    Some(
+        custom
+            .expand(args)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|s| known(&s.command))
+            .collect(),
+    )
+}
+
+/// What CommandsService.RunCommand answers, for a trusted caller.
 pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
+    run_as(ctx, Caller::Trusted, name, args).await
+}
+
+/// What CommandsService.RunCommand answers: whether the command ran, and its answer (or why not).
+/// A built-in command's name wins over a custom command's, as SecondBot looks it up first.
+pub async fn run_as(ctx: &Ctx, caller: Caller, name: &str, args: &[String]) -> (bool, String) {
+    if known(name).is_none()
+        && let Some(custom) = ctx.custom.find(name)
+    {
+        return custom::run(ctx, caller, custom, args).await;
+    }
+    builtin(ctx, caller, name, args).await
+}
+
+/// A custom command's step: a built-in command, as RunCommand runs it for CustomCommandsService
+/// (another custom command is refused).
+async fn step(ctx: &Ctx, caller: Caller, name: &str, args: &[String]) -> (bool, String) {
+    if known(name).is_none() && ctx.custom.find(name).is_some() {
+        return (false, "Custom command chaining is not allowed".into());
+    }
+    builtin(ctx, caller, name, args).await
+}
+
+/// A built-in command: its argument count, the caller's rights, the rate limit, then the command.
+async fn builtin(ctx: &Ctx, caller: Caller, name: &str, args: &[String]) -> (bool, String) {
     let client = &ctx.client;
     // command names do not depend on case
     let Some(&(command, expected)) = COMMANDS.iter().find(|(c, _)| c.eq_ignore_ascii_case(name))
@@ -425,6 +486,10 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         );
     }
     let a = |i: usize| args[i].as_str();
+    if caller == Caller::Granted && GRANTING.contains(&command) {
+        log::warn!("{command}: refused, a command grant does not reach it");
+        return (false, "A command grant does not reach this command".into());
+    }
     if CHANGING.contains(&command) && !ctx.store.admit(PATIENCE).await {
         log::warn!("{command}: too many commands, refused");
         let answer = reply::failure(command, "Too many commands [Retry later]", args);
@@ -743,6 +808,7 @@ pub fn test_ctx() -> Ctx {
         discord: None,
         inventory_updates: Arc::default(),
         rabbit: None,
+        custom: Arc::new(custom::CustomCommands::new(Vec::new())),
     }
 }
 
@@ -826,7 +892,27 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_commands_and_argument_counts() {
-        let client = test_ctx();
+        let client = Ctx {
+            custom: Arc::new(custom::CustomCommands::new(vec![
+                custom::CustomCommand {
+                    trigger: "both".into(),
+                    args: 1,
+                    steps: vec![
+                        custom::Step::parse("Hello").expect("a step"),
+                        custom::Step::parse("SetPermFlag|||[C_ARG_1]~#~command~#~true~#~true")
+                            .expect("a step"),
+                        custom::Step::parse("both").expect("a step"),
+                        custom::Step::parse("NoSuchCommand").expect("a step"),
+                    ],
+                },
+                custom::CustomCommand {
+                    trigger: "none".into(),
+                    args: 0,
+                    steps: vec![custom::Step::parse("Hello|||extra").expect("a step")],
+                },
+            ])),
+            ..test_ctx()
+        };
         assert_eq!(
             run(&client, "NoSuchCommand", &[]).await,
             (false, "Unknown command".to_owned())
@@ -842,5 +928,50 @@ mod tests {
         let (ok, answer) = run(&client, "simname", &[]).await;
         assert!(ok);
         assert!(answer.starts_with(r#"{"command":"SimName""#), "{answer}");
+
+        // a custom command: each step through the dispatcher, with the caller's rights
+        let who = "00000000-0000-0000-0000-00005eed0002";
+        let id = Uuid::parse_str(who).expect("a key");
+        let command = crate::grants::Grant::Command;
+        assert_eq!(
+            run(&client, "both", &[]).await,
+            (false, "Incorrect number of args".to_owned())
+        );
+        assert_eq!(
+            run(&client, "Both", &[who.into()]).await,
+            (false, "Unknown command".to_owned()),
+            "triggers are case-sensitive"
+        );
+        assert_eq!(
+            run_as(&client, Caller::Granted, "both", &[who.into()]).await,
+            (true, "both: ran with 1 commands issued".to_owned())
+        );
+        assert!(
+            !client.grants.has_lasting(command, id),
+            "a grant does not reach SetPermFlag through a custom command"
+        );
+        assert_eq!(
+            reached(&client, "both", &[who.into()]),
+            Some(vec!["Hello", "SetPermFlag"])
+        );
+        assert_eq!(reached(&client, "both", &[]), Some(vec![]));
+        assert_eq!(reached(&client, "nothing", &[]), None);
+        assert!(exists(&client, "both") && exists(&client, "hello"));
+        assert_eq!(
+            run(&client, "both", &[who.into(), "more".into()]).await,
+            (true, "both: ran with 2 commands issued".to_owned())
+        );
+        assert!(client.grants.has_lasting(command, id));
+        assert_eq!(
+            run(&client, "none", &[]).await,
+            (
+                false,
+                "all custom commands have failed for: none".to_owned()
+            )
+        );
+        assert_eq!(
+            step(&client, Caller::Trusted, "both", &[]).await,
+            (false, "Custom command chaining is not allowed".to_owned())
+        );
     }
 }
