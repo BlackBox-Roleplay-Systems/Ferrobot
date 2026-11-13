@@ -23,6 +23,11 @@ use reply::Answer;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// C#'s bool.TryParse: "true" or "false", whatever the case.
+pub fn cs_bool(s: &str) -> Option<bool> {
+    s.trim().to_ascii_lowercase().parse().ok()
+}
+
 /// What the commands work with.
 #[derive(Clone)]
 pub struct Ctx {
@@ -49,6 +54,8 @@ const CHANGING: &[&str] = &[
     "SendItemByPath",
     "SendFolderByPath",
     "SendItemDirect",
+    "AsyncSendItem",
+    "AsyncSendItemByPath",
     "NotecardSend",
     "NotecardDirectSend",
     "Teleport",
@@ -138,6 +145,15 @@ const COMMANDS: &[(&str, usize)] = &[
     ("SendItemByPath", 2),
     ("SendFolderByPath", 2),
     ("SendItemDirect", 4),
+    ("AsyncSendItem", 3),
+    ("AsyncSendItemByPath", 3),
+    ("AsyncInventoryContents", 2),
+    ("NearmeWithDetails", 0),
+    ("FriendsGetLocation", 1),
+    ("GetSimGlobalPos", 1),
+    ("GetSimTexture", 1),
+    ("GetMuteList", 1),
+    ("SetAway", 1),
     ("GetRealUUID", 1),
     ("CreateInventoryFolder", 2),
     ("RenameInventory", 2),
@@ -261,6 +277,15 @@ pub async fn run(ctx: &Ctx, name: &str, args: &[String]) -> (bool, String) {
         "SendItemByPath" => inventory::send_item_by_path(ctx, a(0), a(1)).await,
         "SendFolderByPath" => inventory::send_folder_by_path(ctx, a(0), a(1)).await,
         "SendItemDirect" => inventory::send_item_direct(ctx, a(0), a(1), a(2), a(3)).await,
+        "AsyncSendItem" => inventory::async_send_item(ctx, a(0), a(1), a(2)).await,
+        "AsyncSendItemByPath" => inventory::async_send_item_by_path(ctx, a(0), a(1), a(2)).await,
+        "AsyncInventoryContents" => inventory::async_contents(ctx, a(0), a(1)).await,
+        "NearmeWithDetails" => avatars::nearme_with_details(client).await,
+        "FriendsGetLocation" => world::friend_location(ctx, a(0)).await,
+        "GetSimGlobalPos" => world::sim_global_pos(ctx, a(0)).await,
+        "GetSimTexture" => world::sim_texture(ctx, a(0)).await,
+        "GetMuteList" => bot::mute_list(ctx, a(0)).await,
+        "SetAway" => bot::set_away(ctx, a(0)).await,
         "GetRealUUID" => inventory::real_uuid(ctx, a(0)).await,
         "CreateInventoryFolder" => inventory::create_folder(ctx, a(0), a(1)).await,
         "RenameInventory" => inventory::rename(ctx, a(0), a(1)).await,

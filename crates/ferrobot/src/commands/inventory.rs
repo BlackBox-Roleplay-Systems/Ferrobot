@@ -67,6 +67,11 @@ pub async fn contents(ctx: &Ctx, folder: &str) -> Answer {
     let Some(id) = key(folder) else {
         return failure(C, "Invaild folder UUID", &args);
     };
+    basic(C, &contents_json(ctx, id).await, &args)
+}
+
+/// SecondBot's MapFolderInventoryJson: the folder, then what is in it.
+async fn contents_json(ctx: &Ctx, id: uuid::Uuid) -> String {
     let mut entries = vec![MapItem {
         id: id.to_string(),
         name: ctx.client.folder_name(id).unwrap_or_default(),
@@ -84,7 +89,123 @@ pub async fn contents(ctx: &Ctx, folder: &str) -> Answer {
             typename: typename(i.inv_type).into(),
         }));
     }
-    basic(C, &json(&entries), &args)
+    json(&entries)
+}
+
+/// SecondBot's InventoryAsyncReply, its fields in their order.
+#[derive(Serialize)]
+struct AsyncReply {
+    #[serde(rename = "requestUUID")]
+    request: String,
+    status: bool,
+    message: String,
+    data: String,
+}
+
+/// The answer of an Async… command, to its reply target.
+async fn async_reply(ctx: &Ctx, target: &str, command: &str, r: AsyncReply) {
+    crate::smart_reply::send(ctx, target, &json(&r), command).await;
+}
+
+/// AsyncInventoryContents: a request id at once, the contents to the reply target.
+pub async fn async_contents(ctx: &Ctx, folder: &str, target: &str) -> Answer {
+    const C: &str = "AsyncInventoryContents";
+    let Some(id) = key(folder) else {
+        return failure(C, "Invaild folder UUID", &owned(&[folder]));
+    };
+    let request = uuid::Uuid::new_v4().to_string();
+    let (ctx2, folder2, target2, req) = (
+        ctx.clone(),
+        folder.to_owned(),
+        target.to_owned(),
+        request.clone(),
+    );
+    tokio::spawn(async move {
+        let data = contents_json(&ctx2, id).await;
+        let r = AsyncReply {
+            request: req,
+            status: true,
+            message: folder2,
+            data,
+        };
+        async_reply(&ctx2, &target2, C, r).await;
+    });
+    basic(C, &request, &owned(&[folder, target]))
+}
+
+/// AsyncSendItem: a request id at once; the item's key, or why it was not sent, to the reply
+/// target.
+pub async fn async_send_item(ctx: &Ctx, item: &str, who: &str, target: &str) -> Answer {
+    const C: &str = "AsyncSendItem";
+    let Some(to) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar uuid", &owned(&[item, who]));
+    };
+    let Some(id) = key(item) else {
+        return failure(C, "Invaild item uuid", &owned(&[item, who]));
+    };
+    let request = uuid::Uuid::new_v4().to_string();
+    let (ctx2, item2, target2, req) = (
+        ctx.clone(),
+        item.to_owned(),
+        target.to_owned(),
+        request.clone(),
+    );
+    tokio::spawn(async move {
+        let found = ctx2.client.inventory_item(id).await.ok().flatten();
+        let (status, data) = match found {
+            None => (false, "Unable to find item".to_owned()),
+            Some(i) => {
+                let t = u8::try_from(i.asset_type).unwrap_or(0);
+                match ctx2.client.give_item_as(to, i.id, &i.name, t).await {
+                    Ok(()) => (true, i.id.to_string()),
+                    Err(e) => (false, e.to_string()),
+                }
+            }
+        };
+        let r = AsyncReply {
+            request: req,
+            status,
+            message: item2,
+            data,
+        };
+        async_reply(&ctx2, &target2, C, r).await;
+    });
+    basic(C, &request, &owned(&[item, who, target]))
+}
+
+/// AsyncSendItemByPath: as AsyncSendItem, the item found by its path.
+pub async fn async_send_item_by_path(ctx: &Ctx, path: &str, who: &str, target: &str) -> Answer {
+    const C: &str = "AsyncSendItemByPath";
+    let Some(to) = avatar(&ctx.client, who).await else {
+        return failure(C, "Invaild avatar uuid", &owned(&[path, who]));
+    };
+    let request = uuid::Uuid::new_v4().to_string();
+    let (ctx2, path2, target2, req) = (
+        ctx.clone(),
+        path.to_owned(),
+        target.to_owned(),
+        request.clone(),
+    );
+    tokio::spawn(async move {
+        let (status, data) = match ctx2.client.item_by_path(&path2).await {
+            Ok(Some(i)) => {
+                let t = u8::try_from(i.asset_type).unwrap_or(0);
+                match ctx2.client.give_item_as(to, i.id, &i.name, t).await {
+                    Ok(()) => (true, i.id.to_string()),
+                    Err(e) => (false, e.to_string()),
+                }
+            }
+            _ => (false, "Unable to find item via path".to_owned()),
+        };
+        let r = AsyncReply {
+            request: req,
+            status,
+            message: path2,
+            data,
+        };
+        async_reply(&ctx2, &target2, C, r).await;
+    });
+    basic(C, &request, &owned(&[path, who, target]))
 }
 
 pub async fn send_item(ctx: &Ctx, item: &str, who: &str) -> Answer {

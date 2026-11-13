@@ -124,6 +124,9 @@ impl Network {
             st.nearby.clear();
             st.nearby_positions.clear();
             st.sitting_on = None;
+            st.avatars.clear();
+            st.mute_list = None;
+            st.away = false;
             st.inventory_root = login.inventory_root;
         }
         self.shared
@@ -194,7 +197,9 @@ struct Session<'a> {
     /// The outfit was asked to be baked this session.
     appearance_asked: bool,
     /// Region names asked of the world map (lower case), and who waits.
-    map_waits: Vec<(String, oneshot::Sender<Option<u64>>)>,
+    map_waits: Vec<(String, oneshot::Sender<Option<crate::MapRegion>>)>,
+    /// The mute list's file, being downloaded.
+    mute_xfer: Option<crate::mutes::XferDownload>,
     /// Where the region's root objects and the bot's avatar stand (the object updates).
     places: crate::objects::Places,
     /// Protected assets being downloaded (TransferRequest).
@@ -392,6 +397,18 @@ impl Session<'_> {
             Interaction::DeclineTeleportRequest { to, transaction } => {
                 self.send_im(to, dialog::LURE_DECLINED, transaction, "", Vec::new());
             }
+            Interaction::FindAgent { prey } => {
+                // LLAvatarTracker::findAgent: the region fills in the place
+                let mut m = FindAgent::default();
+                m.agent_block.hunter = agent;
+                m.agent_block.prey = prey;
+                m.location_block.push(find_agent::LocationBlock {
+                    global_x: 0.0,
+                    global_y: 0.0,
+                });
+                self.send(&m, true);
+            }
+            Interaction::RequestMuteList => self.request_mute_list(),
         }
     }
 
@@ -404,8 +421,29 @@ impl Session<'_> {
         const STOP: u32 = 0x0000_4000;
         const STAND_UP: u32 = 0x0001_0000;
         const SIT_ON_GROUND: u32 = 0x0002_0000;
+        // AGENT_CONTROL_AWAY; ANIM_AGENT_AWAY (llanimationstates.h)
+        const AWAY: u32 = 0x0200_0000;
+        const AWAY_ANIMATION: Uuid = Uuid::from_u128(0xfd037134_85d4_f241_72c6_4f42164fedee);
         let (agent, session) = (self.login.agent_id, self.login.session_id);
         match mv {
+            Move::Away(on) => {
+                // LLAgent::setAFK / clearAFK: the away animation, and the flag in every update
+                let mut m = AgentAnimation::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.animation_list.push(agent_animation::AnimationList {
+                    anim_id: AWAY_ANIMATION,
+                    start_anim: on,
+                });
+                self.send(&m, true);
+                if on {
+                    self.controls |= AWAY;
+                    self.controls_once |= STOP;
+                } else {
+                    self.controls &= !AWAY;
+                }
+                self.shared.state_mut().away = on;
+            }
             Move::Fly(on) => {
                 if on {
                     self.controls |= FLY;
@@ -477,6 +515,13 @@ impl Session<'_> {
             self.position = at;
             self.shared.state_mut().position = at;
         }
+        if placed.iter().any(|p| p.avatar) || !self.shared.state().avatars.is_empty() {
+            let avatars = self.places.avatar_positions();
+            let mut st = self.shared.state_mut();
+            if st.avatars != avatars {
+                st.avatars = avatars;
+            }
+        }
         if let Some(seat) = self.places.own_seat() {
             let mut st = self.shared.state_mut();
             if st.sitting_on != seat {
@@ -522,6 +567,46 @@ impl Session<'_> {
         let mut m = TransferAbort::default();
         m.transfer_info.transfer_id = transfer;
         m.transfer_info.channel_type = crate::transfer::ASSET_CHANNEL;
+        self.send(&m, true);
+    }
+
+    /// LLXferManager::processReceiveData for the mute list's file.
+    fn on_xfer_packet(&mut self, m: &SendXferPacket) {
+        use crate::mutes::Step;
+        let Some(x) = self.mute_xfer.as_mut() else {
+            return;
+        };
+        let step = x.packet(m.xfer_id.id, m.xfer_id.packet, &m.data_packet.data);
+        let id = x.id;
+        let confirm = |s: &mut Self, packet: u32| {
+            let mut c = ConfirmXferPacket::default();
+            c.xfer_id.id = id;
+            c.xfer_id.packet = packet;
+            s.send(&c, false);
+        };
+        match step {
+            Step::Ignore => {}
+            Step::Confirm(n) => confirm(self, n),
+            Step::Done(n, text) => {
+                confirm(self, n);
+                self.mute_xfer = None;
+                let list = crate::mutes::parse_file(&text);
+                log::info!("mute list: {} entries", list.len());
+                self.shared.state_mut().mute_list = Some(list);
+            }
+            Step::Fail(why) => {
+                log::warn!("mute list: {why}");
+                self.mute_xfer = None;
+            }
+        }
+    }
+
+    /// MuteListRequest, without a cached copy (LLMuteList::requestFromServer).
+    fn request_mute_list(&mut self) {
+        let mut m = MuteListRequest::default();
+        m.agent_data.agent_id = self.login.agent_id;
+        m.agent_data.session_id = self.login.session_id;
+        m.mute_data.mute_crc = 0;
         self.send(&m, true);
     }
 
@@ -586,6 +671,8 @@ impl Session<'_> {
             r.agent_data.agent_id = self.login.agent_id;
             r.agent_data.session_id = self.login.session_id;
             self.send(&r, true);
+            // the mute list, as the viewer asks for it once logged in (LLMuteList)
+            self.request_mute_list();
         }
     }
 
@@ -634,6 +721,7 @@ impl Session<'_> {
             let mut st = self.shared.state_mut();
             st.region = None;
             st.sitting_on = None;
+            st.avatars.clear();
         }
         self.send_use_circuit_code();
         self.start_caps(seed);
@@ -734,7 +822,7 @@ impl Session<'_> {
                     let _ = reply.send(answer);
                 });
             }
-            Request::RegionHandle { name, reply } => {
+            Request::FindRegion { name, reply } => {
                 // LLWorldMapMessage::sendNamedRegionRequest; the reply gives the grid position
                 let mut m = MapNameRequest::default();
                 m.agent_data.agent_id = self.login.agent_id;
@@ -1014,6 +1102,68 @@ impl Session<'_> {
             let m: KillObject = pkt.decode()?;
             for o in &m.object_data {
                 self.places.kill(o.id);
+            }
+            let avatars = self.places.avatar_positions();
+            self.shared.state_mut().avatars = avatars;
+        } else if id == FindAgent::ID {
+            // LLAvatarTracker::processAgentFound: the answer is the request, the place filled in;
+            // the region and the place in it, as LibreMetaverse's GlobalPosToRegionHandle
+            let m: FindAgent = pkt.decode()?;
+            if let Some(l) = m.location_block.first() {
+                let (gx, gy) = (l.global_x.max(0.0), l.global_y.max(0.0));
+                let (rx, ry) = ((gx / 256.0).floor() * 256.0, (gy / 256.0).floor() * 256.0);
+                let handle = ((rx as u64) << 32) | (ry as u64);
+                let position = Vec3::new((gx - rx) as f32, (gy - ry) as f32, 0.0);
+                self.shared.state_mut().friend_locations.insert(
+                    m.agent_block.prey,
+                    crate::state::FriendLocation {
+                        region_handle: handle,
+                        position,
+                        at: std::time::SystemTime::now(),
+                    },
+                );
+            }
+        } else if id == MuteListUpdate::ID {
+            // the file is fetched by xfer from the region that announced it
+            let m: MuteListUpdate = pkt.decode()?;
+            if m.mute_data.agent_id == self.login.agent_id {
+                let id = crate::mutes::xfer_id();
+                let mut r = RequestXfer::default();
+                r.xfer_id.id = id;
+                r.xfer_id.filename = m.mute_data.filename.clone();
+                r.xfer_id.file_path = crate::mutes::LL_PATH_CACHE;
+                r.xfer_id.delete_on_completion = true;
+                r.xfer_id.use_big_packets = false;
+                r.xfer_id.v_file_id = Uuid::nil();
+                r.xfer_id.v_file_type = -1;
+                self.send(&r, true);
+                self.mute_xfer = Some(crate::mutes::XferDownload::new(id));
+            }
+        } else if id == UseCachedMuteList::ID {
+            // the bot keeps no copy across logins: what it has is current
+            let mut st = self.shared.state_mut();
+            if st.mute_list.is_none() {
+                st.mute_list = Some(Vec::new());
+            }
+        } else if id == SendXferPacket::ID {
+            let m: SendXferPacket = pkt.decode()?;
+            self.on_xfer_packet(&m);
+        } else if id == AbortXfer::ID {
+            let m: AbortXfer = pkt.decode()?;
+            if self
+                .mute_xfer
+                .as_ref()
+                .is_some_and(|x| x.id == m.xfer_id.id)
+            {
+                log::warn!("mute list: the region gave up its download");
+                self.mute_xfer = None;
+            }
+        } else if id == GenericMessage::ID {
+            let m: GenericMessage = pkt.decode()?;
+            if field_str(&m.method_data.method) == crate::mutes::EMPTY_MUTE_LIST
+                && m.agent_data.agent_id == self.login.agent_id
+            {
+                self.shared.state_mut().mute_list = Some(Vec::new());
             }
         } else if id == AvatarSitResponse::ID {
             // process_avatar_sit_response: the region seats the bot; AgentSit when it asks
@@ -1304,12 +1454,20 @@ impl Session<'_> {
     /// name, the end-of-list block (access 255, MapSearchModule's) never one; a reply with only
     /// other names starting like it, or empty ones, means there is no such region.
     fn on_map_blocks(&mut self, m: &MapBlockReply) {
-        let names: Vec<(String, u8, u64)> = m
+        let names: Vec<(String, u8, crate::MapRegion)> = m
             .data
             .iter()
             .map(|d| {
                 let handle = ((u64::from(d.x) * 256) << 32) | (u64::from(d.y) * 256);
-                (field_str(&d.name).to_lowercase(), d.access, handle)
+                let name = field_str(&d.name);
+                let region = crate::MapRegion {
+                    name: name.clone(),
+                    x: d.x,
+                    y: d.y,
+                    handle,
+                    map_image: d.map_image_id,
+                };
+                (name.to_lowercase(), d.access, region)
             })
             .collect();
         let waits = std::mem::take(&mut self.map_waits);
@@ -1317,9 +1475,9 @@ impl Session<'_> {
             let found = names
                 .iter()
                 .find(|(n, access, _)| *access != 255 && *n == want)
-                .map(|(_, _, h)| *h);
-            if let Some(handle) = found {
-                let _ = tx.send(Some(handle));
+                .map(|(_, _, r)| r.clone());
+            if let Some(region) = found {
+                let _ = tx.send(Some(region));
             } else if names
                 .iter()
                 .all(|(n, _, _)| n.is_empty() || n.starts_with(&want))
@@ -1523,6 +1681,7 @@ async fn run(
         picker_waits: HashMap::new(),
         groups: groups::GroupWaits::default(),
         map_waits: Vec::new(),
+        mute_xfer: None,
         places: Default::default(),
         transfers: Default::default(),
         appearance_asked: false,

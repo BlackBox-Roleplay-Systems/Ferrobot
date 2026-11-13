@@ -27,6 +27,15 @@ pub struct State {
     pub nearby: Vec<Uuid>,
     /// Where they stand, as coarse as the region tells it (whole metres, heights by 4 m).
     pub nearby_positions: std::collections::HashMap<Uuid, Vec3>,
+    /// The avatars the region's object updates place, the bot left out (within its draw
+    /// distance; seated ones on their seats).
+    pub avatars: std::collections::HashMap<Uuid, Vec3>,
+    /// Where friends were last found on the map (FindAgent).
+    pub friend_locations: std::collections::HashMap<Uuid, FriendLocation>,
+    /// The mute list, once the grid has sent it.
+    pub mute_list: Option<Vec<crate::mutes::Mute>>,
+    /// Marked away (SetAway).
+    pub away: bool,
     /// The object the bot sits on (AvatarSitResponse), until it stands.
     pub sitting_on: Option<Uuid>,
     pub flying: bool,
@@ -97,4 +106,13 @@ impl State {
 /// A region handle from the region's corner on the grid, in metres.
 pub fn region_handle(x: u32, y: u32) -> u64 {
     (u64::from(x) << 32) | u64::from(y)
+}
+
+/// A friend found on the map.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FriendLocation {
+    pub region_handle: u64,
+    /// In the region.
+    pub position: Vec3,
+    pub at: std::time::SystemTime,
 }

@@ -2,12 +2,12 @@
 //!
 //! Where objects stand, from the object updates (LLViewerObject::processUpdateMessage,
 //! LLViewerObjectList::processCompressedObjectUpdate, originally LGPL 2.1). A bot draws nothing:
-//! it keeps only the place of the region's root objects and of its own avatar, so that it knows
-//! where it is, also when it sits on something.
+//! it keeps only the place of the region's root objects and of the avatars, so that it knows
+//! where it and the others are, also when seated on something.
 
 use ferro_msg::msgs::{improved_terse_object_update, object_update};
 use glam::{Quat, Vec3};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// What an update says about where an object is.
@@ -20,7 +20,12 @@ pub struct Placed {
     pub parent_id: Option<u32>,
     pub position: Vec3,
     pub rotation: Quat,
+    /// An avatar (LL_PCODE_LEGACY_AVATAR, or a terse update's avatar flag).
+    pub avatar: bool,
 }
+
+/// LL_PCODE_LEGACY_AVATAR (llprimitive/object_flags.h)
+const PCODE_AVATAR: u8 = 47;
 
 /// A little-endian reader over an update's data, as Aurora's `Dp`.
 struct Reader<'a> {
@@ -101,6 +106,7 @@ pub fn from_full(b: &object_update::ObjectData) -> Option<Placed> {
         parent_id: Some(b.parent_id),
         position: sane_vec(position),
         rotation: sane_quat(rotation),
+        avatar: b.p_code == PCODE_AVATAR,
     })
 }
 
@@ -110,7 +116,7 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
     let mut r = Reader { d: data, p: 0 };
     let full_id = r.uuid()?;
     let local_id = r.u32()?;
-    let _pcode = r.u8()?;
+    let pcode = r.u8()?;
     let _state = r.u8()?;
     let _crc = r.u32()?;
     let _material = r.u8()?;
@@ -130,6 +136,7 @@ pub fn from_compressed(data: &[u8]) -> Option<Placed> {
         parent_id: Some(parent_id),
         position: sane_vec(position),
         rotation: sane_quat(rotation),
+        avatar: pcode == PCODE_AVATAR,
     })
 }
 
@@ -138,8 +145,9 @@ pub fn from_terse(b: &improved_terse_object_update::ObjectData) -> Option<Placed
     let mut r = Reader { d: &b.data, p: 0 };
     let local_id = r.u32()?;
     let _state = r.u8()?;
-    if r.u8()? != 0 {
-        // an avatar's foot plane
+    let avatar = r.u8()? != 0;
+    if avatar {
+        // its foot plane
         r.take(16)?;
     }
     let position = r.vec3()?;
@@ -155,6 +163,7 @@ pub fn from_terse(b: &improved_terse_object_update::ObjectData) -> Option<Placed
         parent_id: None,
         position: sane_vec(position),
         rotation: sane_quat(Quat::from_xyzw(q(6), q(7), q(8), q(9))),
+        avatar,
     })
 }
 
@@ -166,10 +175,12 @@ struct Place {
     rotation: Quat,
 }
 
-/// The places the bot keeps: the region's root objects and its own avatar.
+/// The places the bot keeps: the region's root objects and the avatars.
 #[derive(Debug, Default)]
 pub struct Places {
     objects: HashMap<u32, Place>,
+    /// The avatars among them, the bot's own too.
+    avatars: HashSet<u32>,
     /// The bot's avatar in this region, once a full update has named it.
     own: Option<u32>,
 }
@@ -181,9 +192,12 @@ impl Places {
         if p.full_id == Some(agent) {
             self.own = Some(p.local_id);
         }
-        let own = self.own == Some(p.local_id);
+        if p.avatar && p.parent_id.is_some() {
+            self.avatars.insert(p.local_id);
+        }
+        let avatar = self.avatars.contains(&p.local_id);
         match p.parent_id {
-            Some(parent) if parent == 0 || own => {
+            Some(parent) if parent == 0 || avatar => {
                 self.objects.insert(
                     p.local_id,
                     Place {
@@ -210,22 +224,42 @@ impl Places {
 
     pub fn kill(&mut self, local_id: u32) {
         self.objects.remove(&local_id);
+        self.avatars.remove(&local_id);
     }
 
     pub fn clear(&mut self) {
         self.objects.clear();
+        self.avatars.clear();
         self.own = None;
     }
 
-    /// The bot's place in the region: its own, or on what it sits on (the root's place plus the
-    /// offset turned by the root's rotation, as SecondBot's AvatarPositions). None while unknown.
-    pub fn own_position(&self) -> Option<Vec3> {
-        let me = self.objects.get(&self.own?)?;
+    /// Where something kept stands in the region: its own place, or on what it sits on (the
+    /// root's place plus the offset turned by the root's rotation, as SecondBot's
+    /// AvatarPositions). None while unknown.
+    fn position_of(&self, local_id: u32) -> Option<Vec3> {
+        let me = self.objects.get(&local_id)?;
         if me.parent == 0 {
             return Some(me.position);
         }
         let root = self.objects.get(&me.parent)?;
         Some(root.position + root.rotation * me.position)
+    }
+
+    /// The bot's place in the region.
+    pub fn own_position(&self) -> Option<Vec3> {
+        self.position_of(self.own?)
+    }
+
+    /// The other avatars and where they stand (those that can be placed).
+    pub fn avatar_positions(&self) -> HashMap<Uuid, Vec3> {
+        self.avatars
+            .iter()
+            .filter(|id| Some(**id) != self.own)
+            .filter_map(|id| {
+                let key = self.objects.get(id)?.full_id?;
+                Some((key, self.position_of(*id)?))
+            })
+            .collect()
     }
 
     /// The local id of what the bot sits on, if anything.
@@ -266,6 +300,7 @@ mod tests {
             id: local_id,
             full_id,
             parent_id,
+            p_code: if avatar { PCODE_AVATAR } else { 9 },
             object_data: data,
             ..Default::default()
         };
@@ -340,6 +375,25 @@ mod tests {
         // a child prim is not kept
         places.update(&full(9, Uuid::from_u128(9), 3, false, Vec3::ONE), AGENT);
         assert!(!places.objects.contains_key(&9));
+    }
+
+    #[test]
+    fn other_avatars_standing_and_seated() {
+        let mut places = Places::default();
+        let (a, b) = (Uuid::from_u128(0xa), Uuid::from_u128(0xb));
+        places.update(&full(7, AGENT, 0, true, Vec3::new(1.0, 1.0, 1.0)), AGENT);
+        places.update(
+            &full(3, Uuid::from_u128(3), 0, false, Vec3::new(50.0, 50.0, 20.0)),
+            AGENT,
+        );
+        places.update(&full(10, a, 0, true, Vec3::new(10.0, 20.0, 30.0)), AGENT);
+        places.update(&full(11, b, 3, true, Vec3::new(0.0, 0.0, 1.0)), AGENT);
+        let at = places.avatar_positions();
+        assert_eq!(at.len(), 2, "the bot left out");
+        assert_eq!(at[&a], Vec3::new(10.0, 20.0, 30.0));
+        assert_eq!(at[&b], Vec3::new(50.0, 50.0, 21.0));
+        places.kill(10);
+        assert!(!places.avatar_positions().contains_key(&a));
     }
 
     #[test]

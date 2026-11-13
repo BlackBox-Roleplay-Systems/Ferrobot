@@ -1448,6 +1448,171 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// The smaller commands: avatars near with their places, a friend on the map, regions on the
+    /// map, the mute list, away, and the Async… inventory commands.
+    #[tokio::test]
+    async fn info_and_async_commands() {
+        use ferro_testgrid::inventory as inv;
+        let grid = grid().await;
+        let (mut bot, api) = bot_with_api(&grid, None).await;
+        arrived(&grid, &bot, 1).await;
+        bot.wait_log("capabilities").await;
+        let (some, other) = (uuid_from(0x5eed_0001), uuid_from(0x5eed_0002));
+
+        // the residents stand 30 and 40 m to the west
+        let deadline = tokio::time::Instant::now() + WAIT;
+        let near = loop {
+            let r = api.reply("NearmeWithDetails", &[]).await;
+            if r.matches("\"id\"").count() == 2 {
+                break r;
+            }
+            assert!(tokio::time::Instant::now() < deadline, "{r}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(
+            near,
+            format!(
+                r#"[{{"id":"{some}","name":"Some Resident","x":98,"y":128,"z":25,"range":30}},{{"id":"{other}","name":"Other Avatar","x":88,"y":128,"z":25,"range":40}}]"#
+            )
+        );
+
+        // a friend found on the map; someone else is no friend
+        let loc: Value =
+            serde_json::from_str(&api.reply("FriendsGetLocation", &["Some Resident"]).await)
+                .expect("json");
+        assert_eq!(loc["Name"], "Some Resident");
+        assert_eq!(
+            loc["Pos"],
+            serde_json::json!({"X": 100.5, "Y": 60.25, "Z": 0})
+        );
+        assert_eq!(
+            loc["RegionPos"],
+            serde_json::json!({"X": 1000, "Y": 1000, "Z": 10})
+        );
+        assert!((loc["time"].as_i64().expect("a time") - now()).abs() < 5);
+        assert_eq!(
+            api.failure("FriendsGetLocation", &[OTHER]).await.0,
+            "not in friends list (updating)"
+        );
+
+        // regions on the map
+        assert_eq!(
+            api.reply("GetSimGlobalPos", &["Test Region"]).await,
+            r#"{"region":"Test Region","X":"1000","Y":"1000"}"#
+        );
+        assert_eq!(
+            api.reply("GetSimTexture", &["Test Region"]).await,
+            ferro_testgrid::map_tile(1000, 1000).to_string()
+        );
+        assert_eq!(
+            api.failure("GetSimTexture", &["Nowhere"]).await.0,
+            "Unable to find region"
+        );
+
+        // the mute list, downloaded after the login
+        let deadline = tokio::time::Instant::now() + WAIT;
+        let mutes = loop {
+            let r = api.reply("GetMuteList", &["false"]).await;
+            if r != "[]" {
+                break r;
+            }
+            assert!(tokio::time::Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(
+            mutes,
+            format!(
+                r#"[{{"type":"Resident","id":"{some}","name":"Some Resident","flags":"Default"}},{{"type":"Object","id":"{}","name":"Noisy Box","flags":"TextChat, VoiceChat"}},{{"type":"ByName","id":"{}","name":"Spammer","flags":"Default"}}]"#,
+                uuid_from(0xb0c5),
+                uuid::Uuid::nil()
+            )
+        );
+        assert!(
+            grid.wait_for(WAIT, |s| *s == Seen::XferConfirmed { packet: 1 })
+                .await
+        );
+        assert_eq!(
+            api.reply("GetMuteList", &["True"]).await,
+            "Requesting mute list [Retry later]"
+        );
+        assert!(
+            grid.wait_until(WAIT, |seen| seen
+                .iter()
+                .filter(|s| **s == Seen::MuteListRequest)
+                .count()
+                == 2)
+                .await
+        );
+
+        // away: the animation and the flag
+        assert_eq!(api.reply("SetAway", &["true"]).await, "ok");
+        let away = uuid_from(0xfd037134_85d4_f241_72c6_4f42164fedee);
+        assert!(
+            grid.wait_for(WAIT, |s| *s
+                == Seen::Animation {
+                    id: away,
+                    start: true
+                })
+            .await
+        );
+        assert!(
+            grid.wait_for(
+                WAIT,
+                |s| matches!(s, Seen::Controls { flags } if flags & 0x0200_0000 != 0)
+            )
+            .await
+        );
+        assert_eq!(api.failure("SetAway", &["soon"]).await.0, "Invaild mode");
+
+        // the Async… commands: a request id now, the outcome to the reply target
+        let said = |request: String, data: String| {
+            move |s: &Seen| {
+                matches!(s, Seen::Chat { message, channel: 7, .. }
+                if message.contains(&format!(r#""requestUUID":"{request}","status":true"#))
+                    && message.contains(&data))
+            }
+        };
+        let r = api
+            .reply("AsyncSendItem", &[&inv::BOX.to_string(), OTHER, "7"])
+            .await;
+        assert!(
+            grid.wait_for(WAIT, said(r, format!(r#""data":"{}""#, inv::BOX)))
+                .await
+        );
+        let r = api
+            .reply("AsyncSendItemByPath", &["Objects/Box", OTHER, "7"])
+            .await;
+        assert!(
+            grid.wait_for(WAIT, said(r, r#""message":"Objects/Box""#.into()))
+                .await
+        );
+        let r = api
+            .reply(
+                "AsyncInventoryContents",
+                &[&inv::NOTECARDS.to_string(), "7"],
+            )
+            .await;
+        assert!(grid.wait_for(WAIT, said(r, "Welcome".into())).await);
+        assert!(
+            grid.wait_until(WAIT, |seen| seen
+                .iter()
+                .filter(|s| matches!(s, Seen::InventoryOffer { to, .. } if *to == other))
+                .count()
+                == 2)
+                .await
+        );
+        let (_, inner) = api.run("AsyncSendItem", &["nothing", OTHER, "7"]).await;
+        assert_eq!(inner["reply"], "Invaild item uuid");
+        assert_eq!(
+            inner["args"],
+            serde_json::json!(["nothing", OTHER]),
+            "as SecondBot, without the target"
+        );
+
+        assert_eq!(api.reply("Logoff", &[]).await, "ok");
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// NotecardRead: the notecard's text, downloaded, goes to the reply target.
     #[tokio::test]
     async fn notecard_read() {

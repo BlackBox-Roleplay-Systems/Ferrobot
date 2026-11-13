@@ -50,6 +50,15 @@ pub fn json<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
+/// A number as System.Text.Json writes a C# float or double: no ".0" when it is whole.
+pub fn cs_number(v: f64) -> serde_json::Value {
+    if v.fract() == 0.0 && v.abs() < 1e15 {
+        serde_json::Value::from(v as i64)
+    } else {
+        serde_json::Number::from_f64(v).map_or(serde_json::Value::Null, serde_json::Value::Number)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

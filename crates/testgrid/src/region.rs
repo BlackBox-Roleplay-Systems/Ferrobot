@@ -294,6 +294,24 @@ impl Region {
         let at = m.data.position;
         self.send(to, &m, true);
         self.avatar_update(to, at, 0);
+        // the residents, standing in a row to the west, as the coarse updates place them
+        let residents: Vec<Uuid> = self.shared.cfg.residents.iter().map(|r| r.id).collect();
+        let blocks = residents
+            .iter()
+            .enumerate()
+            .map(|(i, id)| {
+                let at = Vec3::new(98.0 - 10.0 * i as f32, 128.0, 25.0);
+                object_block(RESIDENT_LOCAL_ID + i as u32, *id, 0, LL_PCODE_AVATAR, at)
+            })
+            .collect();
+        let m = ObjectUpdate {
+            region_data: object_update::RegionData {
+                region_handle: self.shared.regions[self.index].handle(),
+                time_dilation: u16::MAX,
+            },
+            object_data: blocks,
+        };
+        self.send(to, &m, true);
     }
 
     /// An inventory asset asked for (LLTransferSourceParamsInvItem: agent, session, owner, task,
@@ -536,6 +554,56 @@ impl Region {
                     let r = g::titles_reply(&grp, bot, m.agent_data.request_id);
                     self.send(from, &r, true);
                 }
+            }
+        } else if id == AgentAnimation::ID {
+            if let Ok(m) = pkt.decode::<AgentAnimation>() {
+                for a in &m.animation_list {
+                    self.shared.saw(Seen::Animation {
+                        id: a.anim_id,
+                        start: a.start_anim,
+                    });
+                }
+            }
+        } else if id == FindAgent::ID {
+            if let Ok(mut m) = pkt.decode::<FindAgent>() {
+                let prey = m.agent_block.prey;
+                self.shared.saw(Seen::FindAgent { prey });
+                // the friend who lets the bot map them stands in this region, at 100.5, 60.25
+                if prey == MAPPABLE_FRIEND {
+                    let region = &self.shared.regions[self.index];
+                    m.location_block = vec![find_agent::LocationBlock {
+                        global_x: f64::from(region.x) + 100.5,
+                        global_y: f64::from(region.y) + 60.25,
+                    }];
+                    self.send(from, &m, true);
+                }
+            }
+        } else if id == MuteListRequest::ID {
+            self.shared.saw(Seen::MuteListRequest);
+            let mut r = MuteListUpdate::default();
+            r.mute_data.agent_id = self.shared.agent_id;
+            r.mute_data.filename = str_field("mutes.list");
+            self.send(from, &r, true);
+        } else if id == RequestXfer::ID {
+            if let Ok(m) = pkt.decode::<RequestXfer>() {
+                // the mute list's file, in two packets: its size first, the last one marked
+                let file = mute_file();
+                let (a, b) = file.split_at(file.len() / 2);
+                let mut first = (file.len() as i32).to_le_bytes().to_vec();
+                first.extend_from_slice(a);
+                for (n, data) in [(0u32, first), (1 | 0x8000_0000, b.to_vec())] {
+                    let mut p = SendXferPacket::default();
+                    p.xfer_id.id = m.xfer_id.id;
+                    p.xfer_id.packet = n;
+                    p.data_packet.data = data;
+                    self.send(from, &p, true);
+                }
+            }
+        } else if id == ConfirmXferPacket::ID {
+            if let Ok(m) = pkt.decode::<ConfirmXferPacket>() {
+                self.shared.saw(Seen::XferConfirmed {
+                    packet: m.xfer_id.packet,
+                });
             }
         } else if id == TransferRequest::ID {
             if let Ok(m) = pkt.decode::<TransferRequest>() {
@@ -825,6 +893,7 @@ impl Region {
                             y: (region.y / 256) as u16,
                             name: str_field(&region.name),
                             access: 13,
+                            map_image_id: map_tile(region.x / 256, region.y / 256),
                             ..Default::default()
                         });
                     }
@@ -1421,4 +1490,25 @@ fn object_block(
         object_data: data,
         ..Default::default()
     }
+}
+
+/// The residents' avatars' local ids, from this one on.
+const RESIDENT_LOCAL_ID: u32 = 0xb0b0;
+/// The friend whom the bot may find on the map (FindAgent).
+pub const MAPPABLE_FRIEND: Uuid = Uuid::from_u128(0x5eed_0001);
+
+/// A region's map tile, by its place on the grid.
+pub fn map_tile(x: u32, y: u32) -> Uuid {
+    Uuid::from_u128(0x7117_0000_0000 | (u128::from(x) << 16) | u128::from(y))
+}
+
+/// The bot's mute list file (LLMuteList's format: type, key, name|flags).
+pub fn mute_file() -> Vec<u8> {
+    format!(
+        "1 {} Some Resident|0\n2 {} Noisy Box|3\n0 {} Spammer|\n",
+        Uuid::from_u128(0x5eed_0001),
+        Uuid::from_u128(0xb0c5),
+        Uuid::nil()
+    )
+    .into_bytes()
 }

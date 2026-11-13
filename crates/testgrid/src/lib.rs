@@ -17,7 +17,7 @@ mod groups;
 pub mod inventory;
 
 pub use groups::{BUILDERS, OFFICERS, OWNERS, SECOND_GROUP, TEST_GROUP, THIRD_GROUP};
-pub use region::SEAT_POSITION;
+pub use region::{MAPPABLE_FRIEND, SEAT_POSITION, map_tile};
 mod http;
 mod login;
 mod region;
@@ -342,6 +342,19 @@ pub enum Seen {
     AgentSit,
     AlwaysRun {
         on: bool,
+    },
+    /// AgentAnimation: an animation started or stopped.
+    Animation {
+        id: Uuid,
+        start: bool,
+    },
+    FindAgent {
+        prey: Uuid,
+    },
+    MuteListRequest,
+    /// ConfirmXferPacket: a packet of a file the grid sent.
+    XferConfirmed {
+        packet: u32,
     },
     /// An inventory asset asked for, by its item.
     TransferRequest {

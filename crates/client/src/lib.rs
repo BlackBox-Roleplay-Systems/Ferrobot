@@ -18,6 +18,7 @@ pub use inventory_api::FolderNode;
 pub mod groups;
 pub mod inventory;
 pub mod login;
+pub mod mutes;
 pub mod names;
 mod network;
 pub mod objects;
@@ -102,9 +103,9 @@ pub(crate) enum Request {
         reply: oneshot::Sender<Result<i32, String>>,
     },
     /// A region's handle by its name (MapNameRequest); `None` when there is no such region.
-    RegionHandle {
+    FindRegion {
         name: String,
-        reply: oneshot::Sender<Option<u64>>,
+        reply: oneshot::Sender<Option<MapRegion>>,
     },
     /// Answers to offers: friendships, inventory, teleports.
     Interact {
@@ -122,8 +123,24 @@ pub(crate) enum Request {
     },
 }
 
+/// A region on the world map (MapBlockReply).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapRegion {
+    pub name: String,
+    /// Its place on the grid, in regions.
+    pub x: u16,
+    pub y: u16,
+    pub handle: u64,
+    /// Its map tile.
+    pub map_image: Uuid,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Interaction {
+    /// FindAgent: where a friend is on the map.
+    FindAgent { prey: Uuid },
+    /// MuteListRequest, without a cached copy.
+    RequestMuteList,
     /// AcceptFriendship, the calling card in the inventory's root.
     AcceptFriendship { from: Uuid, transaction: Uuid },
     /// IM_INVENTORY_ACCEPTED / DECLINED (TASK_ for an object's offer), the item to the root.
@@ -167,6 +184,8 @@ pub(crate) enum Interaction {
 /// What the bot can be asked to do with its body.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Move {
+    /// Away (or back), as the viewer's setAFK and clearAFK.
+    Away(bool),
     /// AGENT_CONTROL_FLY in every update, or not.
     Fly(bool),
     /// SetAlwaysRun.
@@ -541,9 +560,26 @@ impl Client {
     /// A region's handle by its name, from the world map (MapNameRequest); `None` when the grid
     /// has no region of that name.
     pub async fn region_handle(&self, name: &str) -> Result<Option<u64>, ClientError> {
+        Ok(self.find_region(name).await?.map(|r| r.handle))
+    }
+
+    /// A region by its name, from the world map (MapNameRequest): where it is on the grid and
+    /// its map tile.
+    pub async fn find_region(&self, name: &str) -> Result<Option<MapRegion>, ClientError> {
         let name = name.trim().to_owned();
-        self.ask(|reply| Request::RegionHandle { name, reply })
-            .await
+        self.ask(|reply| Request::FindRegion { name, reply }).await
+    }
+
+    /// Ask where a friend is, when they let the bot see them on the map (FindAgent); the answer
+    /// lands in the state's `friend_locations`.
+    pub async fn map_friend(&self, friend: Uuid) -> Result<(), ClientError> {
+        self.interact(Interaction::FindAgent { prey: friend }).await
+    }
+
+    /// Ask the grid for the mute list again (MuteListRequest); it lands in the state's
+    /// `mute_list`.
+    pub async fn request_mute_list(&self) -> Result<(), ClientError> {
+        self.interact(Interaction::RequestMuteList).await
     }
 
     /// Teleport to a place in a region given by name (LibreMetaverse's Teleport(simName, …)).

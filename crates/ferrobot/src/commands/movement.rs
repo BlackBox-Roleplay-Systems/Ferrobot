@@ -35,10 +35,7 @@ async fn turn_toward(ctx: &Ctx, c: &str, target: Vec3, args: &[String]) -> Answe
     }
 }
 
-/// C#'s bool.TryParse: "true" or "false", whatever the case.
-fn cs_bool(s: &str) -> Option<bool> {
-    s.trim().to_ascii_lowercase().parse().ok()
-}
+use super::cs_bool;
 
 async fn go(ctx: &Ctx, c: &str, m: Move, ok: &str, args: &[String]) -> Answer {
     match ctx.client.move_bot(m).await {
@@ -141,15 +138,22 @@ pub async fn rotate_to_face_vector(ctx: &Ctx, v: &str) -> Answer {
     turn_toward(ctx, C, pos, &args).await
 }
 
-/// Where the avatar stands is the region's coarse location (SecondBot reads its object update):
-/// close enough to turn toward.
+/// Where the avatar stands: its object update, as SecondBot's AvatarPositions, else the region's
+/// coarse location, close enough to turn toward.
 pub async fn rotate_to_face(ctx: &Ctx, who: &str) -> Answer {
     const C: &str = "RotateToFace";
     let args = owned(&[who]);
     let Some(id) = avatar(&ctx.client, who).await else {
         return failure(C, "Invaild avatar UUID", &args);
     };
-    let Some(pos) = ctx.client.state().nearby_positions.get(&id).copied() else {
+    let pos = {
+        let st = ctx.client.state();
+        st.avatars
+            .get(&id)
+            .or(st.nearby_positions.get(&id))
+            .copied()
+    };
+    let Some(pos) = pos else {
         return failure(C, "Unable to see avatar", &args);
     };
     turn_toward(ctx, C, pos, &args).await

@@ -94,3 +94,101 @@ pub async fn rebake(ctx: &Ctx) -> Answer {
         Err(e) => failure(C, &format!("Rebake failed: {e}"), &[]),
     }
 }
+
+/// LibreMetaverse's MuteType names, which SecondBot prints.
+fn mute_type(kind: i32) -> String {
+    match kind {
+        0 => "ByName".into(),
+        1 => "Resident".into(),
+        2 => "Object".into(),
+        3 => "Group".into(),
+        4 => "External".into(),
+        n => n.to_string(),
+    }
+}
+
+/// LibreMetaverse's MuteFlags as C# writes a [Flags] enum: "Default", "All", or the names of its
+/// bits ("TextChat, VoiceChat"); a value with other bits is its number.
+fn mute_flags(flags: u32) -> String {
+    const NAMES: [(u32, &str); 4] = [
+        (1, "TextChat"),
+        (2, "VoiceChat"),
+        (4, "Particles"),
+        (8, "ObjectSounds"),
+    ];
+    match flags {
+        0 => "Default".into(),
+        0xf => "All".into(),
+        f if f & !0xf != 0 => f.to_string(),
+        f => NAMES
+            .iter()
+            .filter(|(bit, _)| f & bit != 0)
+            .map(|(_, n)| *n)
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+#[derive(serde::Serialize)]
+struct MuteEntry {
+    #[serde(rename = "type")]
+    kind: String,
+    id: String,
+    name: String,
+    flags: String,
+}
+
+/// GetMuteList: what the grid sent (asked for at each login); "true" asks again.
+pub async fn mute_list(ctx: &Ctx, refresh: &str) -> Answer {
+    const C: &str = "GetMuteList";
+    let args = owned(&[refresh]);
+    let Some(again) = super::cs_bool(refresh) else {
+        return failure(C, "Invaild refresh value", &args);
+    };
+    if again {
+        let _ = ctx.client.request_mute_list().await;
+        return basic(C, "Requesting mute list [Retry later]", &args);
+    }
+    let list: Vec<MuteEntry> = ctx
+        .client
+        .state()
+        .mute_list
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| MuteEntry {
+            kind: mute_type(m.kind),
+            id: m.id.to_string(),
+            name: m.name,
+            flags: mute_flags(m.flags),
+        })
+        .collect();
+    basic(C, &json(&list), &args)
+}
+
+/// SetAway: away (or back), shown next to the name in the viewer.
+pub async fn set_away(ctx: &Ctx, mode: &str) -> Answer {
+    const C: &str = "SetAway";
+    let args = owned(&[mode]);
+    let Some(away) = super::cs_bool(mode) else {
+        return failure(C, "Invaild mode", &args);
+    };
+    match ctx.client.move_bot(ferro_client::Move::Away(away)).await {
+        Ok(()) => basic(C, "ok", &args),
+        Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
+#[cfg(test)]
+mod mute_tests {
+    use super::*;
+
+    #[test]
+    fn mute_flags_as_csharp_writes_them() {
+        assert_eq!(mute_flags(0), "Default");
+        assert_eq!(mute_flags(15), "All");
+        assert_eq!(mute_flags(3), "TextChat, VoiceChat");
+        assert_eq!(mute_flags(12), "Particles, ObjectSounds");
+        assert_eq!(mute_flags(16), "16");
+        assert_eq!(mute_type(1), "Resident");
+    }
+}

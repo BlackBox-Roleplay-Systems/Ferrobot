@@ -5,7 +5,7 @@
 //! off by default too). Deliberate difference: Key2Name gives the avatar's name (SecondBot's
 //! looks up the nil key).
 
-use super::reply::{Answer, basic, failure, json};
+use super::reply::{Answer, basic, cs_number, failure, json};
 use super::{Ctx, avatar, key, owned};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -257,5 +257,118 @@ pub async fn pay_object(ctx: &Ctx, object: &str, name: &str, amount: &str) -> An
     match ctx.client.pay(id, value, Some(name)).await {
         Ok(()) => basic(C, "ok", &args),
         Err(e) => failure(C, &e.to_string(), &args),
+    }
+}
+
+/// How long FriendsGetLocation waits for a first answer from the map.
+const FRIEND_MAP_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// FriendsGetLocation: where a friend who lets the bot map them was found, as SecondBot's
+/// FriendLocations `{Name, Pos, RegionPos, time}` (Pos in the region, RegionPos the region on the
+/// grid with a z of 10). Each call asks again; the first one waits a little for the answer
+/// (SecondBot fails it, "no map access or updating", and answers the next).
+pub async fn friend_location(ctx: &Ctx, who: &str) -> Answer {
+    const C: &str = "FriendsGetLocation";
+    let args = owned(&[who]);
+    let Some(id) = avatar(&ctx.client, who).await else {
+        return failure(C, "avatar lookup", &args);
+    };
+    if !ctx.client.state().friends.contains(&id) {
+        return failure(C, "not in friends list (updating)", &args);
+    }
+    let _ = ctx.client.map_friend(id).await;
+    let deadline = tokio::time::Instant::now() + FRIEND_MAP_WAIT;
+    let found = loop {
+        if let Some(l) = ctx.client.state().friend_locations.get(&id).cloned() {
+            break l;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return failure(C, "no map access or updating", &args);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    let name = ctx
+        .client
+        .names(&[id])
+        .await
+        .ok()
+        .and_then(|n| n.get(&id).cloned())
+        .unwrap_or_default();
+    let v3 = |x: f64, y: f64, z: f64| Vector3 {
+        x: cs_number(x),
+        y: cs_number(y),
+        z: cs_number(z),
+    };
+    let (gx, gy) = (found.region_handle >> 32, found.region_handle & 0xffff_ffff);
+    let time = found
+        .at
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let p = found.position;
+    let value = FriendLocations {
+        name,
+        pos: v3(f64::from(p.x), f64::from(p.y), f64::from(p.z)),
+        region_pos: v3((gx / 256) as f64, (gy / 256) as f64, 10.0),
+        time,
+    };
+    basic(C, &json(&value), &args)
+}
+
+/// LibreMetaverse's Vector3, as System.Text.Json writes its fields.
+#[derive(Serialize)]
+struct Vector3 {
+    #[serde(rename = "X")]
+    x: serde_json::Value,
+    #[serde(rename = "Y")]
+    y: serde_json::Value,
+    #[serde(rename = "Z")]
+    z: serde_json::Value,
+}
+
+/// SecondBot's FriendLocations, its fields in their order.
+#[derive(Serialize)]
+struct FriendLocations {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "Pos")]
+    pos: Vector3,
+    #[serde(rename = "RegionPos")]
+    region_pos: Vector3,
+    time: u64,
+}
+
+/// GetSimGlobalPos's answer, in the order SecondBot's dictionary keeps.
+#[derive(Serialize)]
+struct SimGlobalPos {
+    region: String,
+    #[serde(rename = "X")]
+    x: String,
+    #[serde(rename = "Y")]
+    y: String,
+}
+
+/// GetSimGlobalPos: the region's place on the grid, `{region, X, Y}` (in regions, as text).
+pub async fn sim_global_pos(ctx: &Ctx, name: &str) -> Answer {
+    const C: &str = "GetSimGlobalPos";
+    match ctx.client.find_region(name).await {
+        Ok(Some(r)) => {
+            let value = SimGlobalPos {
+                region: name.to_owned(),
+                x: r.x.to_string(),
+                y: r.y.to_string(),
+            };
+            basic(C, &json(&value), &[])
+        }
+        _ => failure(C, "Unable to find region", &owned(&[name])),
+    }
+}
+
+/// GetSimTexture: the region's map tile.
+pub async fn sim_texture(ctx: &Ctx, name: &str) -> Answer {
+    const C: &str = "GetSimTexture";
+    let args = owned(&[name]);
+    match ctx.client.find_region(name).await {
+        Ok(Some(r)) => basic(C, &r.map_image.to_string(), &args),
+        _ => failure(C, "Unable to find region", &args),
     }
 }

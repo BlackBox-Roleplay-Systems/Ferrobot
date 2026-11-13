@@ -174,7 +174,9 @@ baking: the bot says so and goes on.
   per part, exact names, as its FindObjectByPath), SendItemDirect (its AssetType names, and the
   viewer's short ones its hints give); tested on the test grid. Deliberate difference: empty parts
   of a path are skipped ("/Stuff/Sub/" is "Stuff/Sub")
-- ⬜ Inventory: the Async… variants (smart replies), rezzing, attaching, outfits
+- 🟡 AsyncSendItem, AsyncSendItemByPath, AsyncInventoryContents: a request id at once, SecondBot's
+  InventoryAsyncReply to the reply target; tested on the test grid
+- ⬜ Inventory: rezzing, attaching, outfits, AsyncRez…, transfers to objects
 - 🟡 Notecards: created (CreateInventoryItem, UpdateNotecardAgentInventory's uploader, the
   "Linden text version 2" asset, as Aurora) and sent; SecondBot's NotecardAdd, NotecardClear,
   NotecardSend, NotecardDirectSend; tested on the test grid
@@ -203,6 +205,12 @@ baking: the bot says so and goes on.
   offset, as SecondBot's AvatarPositions). Tried on NGC: flying, landing and the autopilot moved
   it, and GetPosition matched the region's own position
 - ⬜ Movement: walking by keys (forward, back, turn) and following an avatar
+- 🟡 SecondBot's NearmeWithDetails (the avatars' object updates, seated ones on their seats; every
+  avatar's place is kept now), FriendsGetLocation (FindAgent, as LLAvatarTracker::findAgent),
+  GetSimGlobalPos and GetSimTexture (the world map), GetMuteList (asked at each login, downloaded
+  by xfer as Aurora's session_social.rs), SetAway (the viewer's setAFK: the away animation and
+  AGENT_CONTROL_AWAY); tested on the test grid. Deliberate difference: FriendsGetLocation waits up
+  to 3 s for the map's first answer (SecondBot fails the first call and answers the next)
 - ⬜ Profiles, animations and gestures, parcels, estate
 
 ## Phase 8 - Running it for real
