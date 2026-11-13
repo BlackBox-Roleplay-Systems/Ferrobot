@@ -419,8 +419,20 @@ baking: the bot says so and goes on.
   upload). To verify on the grid (human)
 - ⬜ UploadMediaWave from a WAV file: would need a Vorbis encoder in the container (an audio
   library, ruled out for now)
-- 🔧 Custom commands (SecondBot's CustomCommandsService): operator-defined commands made of
-  existing commands, with the caller's arguments put in
+- 🟡 Custom commands (commands/custom.rs, SecondBot's CustomCommandsService and
+  CustomCommandsConfig): FERRO_CUSTOM_COMMAND_<n>_TRIGGER, _ARGS, _STEP_<m>, or SecondBot's
+  customcommands_*; a trigger asked for by the API, IM or Discord runs its steps (SignedCommand's
+  text or JSON form) with `[C_ARG_n]` replaced, each through the dispatcher with its own argument
+  count, rate limit and the caller's rights (commands::Caller: a command grant never reaches a
+  granting command through one); SecondBot's replies ("Incorrect number of args", "<trigger>: ran
+  with N commands issued", "all custom commands have failed for: …", "Custom command chaining is
+  not allowed"), a step's own reply target; tested on the test grid. Deliberate differences: an
+  argument fills one field of a step read at start-up (SecondBot substitutes into the text, so
+  `~#~` or `#|#` in an argument added arguments or a reply target, and `[C_ARG_2]` in the first
+  argument was replaced again); a missing trigger or step, a duplicate or built-in trigger stop
+  the bot (SecondBot runs `Logoff` for a missing step); no default "exitplease"; the answer's Key
+  is true when a step ran (SecondBot's is always false); the caller's reply target gets the
+  summary
 
 ## Phase 8 - Running it for real
 

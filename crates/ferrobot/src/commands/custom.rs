@@ -21,8 +21,9 @@
 //! and one holding `[C_ARG_2]` was replaced in turn by the second argument; here none of them do.
 //! Also: a step that is missing, a trigger that is missing or given twice, or one that is a
 //! built-in command's name, stop the bot at start-up (SecondBot runs `Logoff` for a missing step
-//! and names a missing trigger "exitplease"); and the answer's `Key` is true when a step ran
-//! (SecondBot answers false whatever happened).
+//! and names a missing trigger "exitplease"); the answer's `Key` is true when a step ran
+//! (SecondBot answers false whatever happened); and a reply target given with the custom command
+//! itself gets this answer, as for any command (SecondBot's RunCommand returns before it replies).
 
 use super::{Caller, Ctx};
 use crate::api::signing;

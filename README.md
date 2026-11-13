@@ -68,6 +68,7 @@ All settings come from environment variables.
 | `FERRO_CHATGPT_GROUP`, `…_GROUP_KEY`, `…_GROUP_COOLDOWN` | `false`, (none), `3` | Answer one group's chat (its key); seconds between two questions there |
 | `FERRO_CHATGPT_TYPING` | `true` | Wait 1 to 3 s before replying, with the typing animation in local chat |
 | `FERRO_CHATGPT_DEBUG` | `false` | Log what is asked and answered at `info` (else `debug`) |
+| `FERRO_CUSTOM_COMMAND_1_TRIGGER`, `…_1_ARGS`, `…_1_STEP_1`, `…_1_STEP_2`… | (none), `0` | A custom command: its name, the arguments it takes, its steps (see "Custom commands" below); `FERRO_CUSTOM_COMMAND_2_…` for the next |
 | `FERRO_ALLOW_FUNDS` | `false` | The money commands (Balance, PayAvatar, PayObject, ParcelBuy, GroupCreate, and UploadMediaWave unless the grid's sounds are free) |
 | `FERRO_HEALTH_FILE` | `/tmp/ferrobot-health` | Where the bot writes its health, for `ferrobot healthcheck` |
 | `RUST_LOG` | `info` | Log detail: `debug` shows every event, `trace` more |
@@ -98,7 +99,9 @@ SecondBot's names work too, so that a SecondBot container's settings can stay as
 `chatgpt_ShowDebug`, and the relays:
 `relay_count`, `relay_UseShortEncoder`, `relay_<n>_enabled`, `relay_<n>_extended`,
 `relay_<n>_source_type`, `relay_<n>_source_option`, `relay_<n>_target_type`,
-`relay_<n>_target_option`, `relay_<n>_RelayConfig`.
+`relay_<n>_target_option`, `relay_<n>_RelayConfig`; and the custom commands: `customcommands_count`,
+`customcommands_<n>_trigger`, `customcommands_<n>_args`, `customcommands_<n>_steps`,
+`customcommands_<n>_commands_<m>`.
 
 ### Discord
 
@@ -183,6 +186,34 @@ a shared secret the queues are not read at all. Each message is taken once, neve
 
 The broker may be down: the bot logs in and works as ever, publishing fails at once ("Connection
 is not open"), and it connects again, waiting longer each time (up to a minute).
+
+### Custom commands
+
+Commands of your own, made of the bot's commands (SecondBot's custom commands). Each step is a
+command in the text form of commands by IM, `Command|||arg~#~arg`, optionally with a reply target
+for its answer (`#|#7`, an avatar, an http(s) address), or in the JSON form; `[C_ARG_1]`,
+`[C_ARG_2]`… stand for the caller's arguments, anywhere in a step:
+
+```
+FERRO_CUSTOM_COMMAND_1_TRIGGER=welcome
+FERRO_CUSTOM_COMMAND_1_ARGS=1
+FERRO_CUSTOM_COMMAND_1_STEP_1=GroupInvite|||<group key>~#~[C_ARG_1]~#~everyone
+FERRO_CUSTOM_COMMAND_1_STEP_2=IM|||[C_ARG_1]~#~Welcome to the group!
+```
+
+`welcome` is then asked for like any command, by the HTTP API (signed with its own name and
+arguments), by IM, on Discord, with at least `ARGS` arguments ("Incorrect number of args"); its
+name is matched as written, case included, and a built-in command's name cannot be taken. The steps
+run one after the other, each as if it had been asked for on its own, by the same caller: its
+argument count, its rate limit, and the caller's rights (an avatar with a `command` grant still
+cannot reach `SetPermFlag`, `AcceptNext` or `AddToAllowAnimations` through one). A step cannot run
+another custom command. The answer is `welcome: ran with 2 commands issued` (steps that failed are
+not counted), or `all custom commands have failed for: welcome`; each step's answer is in the log
+and the command history. An argument is put in as plain text: one holding `~#~` or `#|#` is still
+one argument, never more arguments or a reply target. With SecondBot's names (`customcommands_count`
+commands, `customcommands_<n>_steps` steps each), the same commands; a missing trigger or step, a
+trigger given twice or a built-in name stop the bot at start-up rather than running `Logoff` as
+SecondBot does.
 
 ### SecondBot's HTTP API
 

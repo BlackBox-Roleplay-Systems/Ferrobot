@@ -44,7 +44,9 @@ crates/
     src/main.rs            settings, signals, the login / relog loop, exit codes
     src/config.rs          FERRO_* environment variables
     src/api/               SecondBot's HTTP API: POST /api/Run and /json, signatures (axum)
-    src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat, movement…)
+    src/commands/          SecondBot's commands, one module per area (info, avatars, groups, chat, movement…);
+                           custom.rs: the operator's custom commands, their steps run through the
+                           dispatcher with the caller's rights (commands::Caller)
     src/masters.rs         who the masters are, by name or by key
     src/grants.rs          what avatars were granted beyond the settings: AcceptNext, SetPermFlag
     src/dialogs.rs         script dialogs: kept, relayed, answered (SecondBot's DialogService)
