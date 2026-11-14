@@ -34,7 +34,8 @@ All settings come from environment variables.
 | `FERRO_INTERACTION_EVENTS` | `false` | Each offer told as SecondBot's interaction JSON (accepted or not, why), and the items that come in |
 | `FERRO_INTERACTION_EVENTS_TARGET` | (none) | Where those events go, as a command's reply target: a channel, an avatar (key or name), an http(s) address (a form POST of `reply`, `command=interactions`), an e-mail address (with `FERRO_SMTP_REPLY_TARGET`) |
 | `FERRO_EVENTS` | `false` | SecondBot's events service (see "Events" below) |
-| `FERRO_EVENTS_CHANNEL`, `FERRO_EVENTS_AVATAR`, `FERRO_EVENTS_HTTP` | (none) | Where the events go: a channel (0 or more), an avatar's key, an http(s) address (a signed POST to `<address>/Event/Service`) |
+| `FERRO_EVENTS_CHANNEL`, `FERRO_EVENTS_AVATAR`, `FERRO_EVENTS_HTTP` | (none) | Where the events go: a channel (0 or more), an avatar's key, http(s) addresses separated by spaces (a signed POST to each `<address>/Event/Service`) |
+| `FERRO_EVENTS_GROUPS` | (none) | Ferrobot's own: the groups whose members are followed besides `FERRO_EVENTS_GROUP`, `all` (every group the bot is in) or keys separated by commas; their `GroupMembership` events carry the group's key as `group` |
 | `FERRO_EVENTS_SECRET` | SecondBot's | What signs each event's `Hash` (a secret, never logged). Set your own |
 | `FERRO_EVENTS_GROUP` | (none) | The group whose members joining and leaving are told |
 | `FERRO_EVENTS_GROUP_JOINS`, `FERRO_EVENTS_GROUP_LEAVES` | `true` | Each of them |
@@ -233,7 +234,9 @@ What happens around the bot, as SecondBot's events service tells it: a JSON obje
 `Hash` = sha1(BotUUID + EventName + each value of Data in order + Unixtime +
 `FERRO_EVENTS_SECRET`). The events and their Data:
 
-- `GroupMembership`: `uuid`, `name`, `action` (`join`, `leave`), for `FERRO_EVENTS_GROUP`;
+- `GroupMembership`: `uuid`, `name`, `action` (`join`, `leave`), for `FERRO_EVENTS_GROUP`; and for
+  the groups of `FERRO_EVENTS_GROUPS`, with a fourth value `group` (the group's key), so one bot
+  can tell several websites (each ignores the groups it does not know);
 - `GuestTracking`: `uuid`, `name`, `action` (`enter`, `exit`), the avatars of the region while the
   bot stands on the parcel named;
 - `ChangedSim`: `lastsim`, `newsim`; `ChangedParcel`: `oldparcel`, `newparcel` (the first parcel
