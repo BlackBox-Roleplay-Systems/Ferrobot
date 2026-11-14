@@ -5103,6 +5103,72 @@ mod api {
         assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
     }
 
+    /// Ferrobot's own FERRO_EVENTS_GROUPS: the members of every group the bot is in, each event
+    /// naming its group, posted to each of several addresses (one bot serving several websites).
+    #[tokio::test]
+    async fn events_for_every_group() {
+        let grid = grid().await;
+        let (first, first_post) = serve_a_post("204 No Content", String::new()).await;
+        let (second, second_post) = serve_a_post("204 No Content", String::new()).await;
+        let addresses = format!("{first} {second}");
+        let (mut bot, _api) = bot_with_settings(
+            &grid,
+            &[
+                ("FERRO_EVENTS", "true"),
+                ("FERRO_EVENTS_CHANNEL", "7"),
+                ("FERRO_EVENTS_HTTP", &addresses),
+                ("FERRO_EVENTS_GROUPS", "all"),
+                ("FERRO_EVENTS_GROUP_CHECK", "1"),
+                ("FERRO_EVENTS_STATUS", "false"),
+                ("FERRO_EVENTS_MONEY", "false"),
+                ("FERRO_EVENTS_CHANGE_PARCEL", "false"),
+            ],
+        )
+        .await;
+        bot.wait_log("events: 3 members in the group").await;
+        grid.join_group(
+            ferro_testgrid::SECOND_GROUP,
+            uuid::Uuid::from_u128(0x5eed_0002),
+        );
+        let found = grid
+            .wait_for(WAIT, |s| {
+                event_on(
+                    s,
+                    7,
+                    "GroupMembership",
+                    &[
+                        ("uuid", OTHER),
+                        ("action", "join"),
+                        ("group", &ferro_testgrid::SECOND_GROUP.to_string()),
+                    ],
+                )
+            })
+            .await;
+        assert!(
+            found,
+            "no join in the second group: {:?}\n{}",
+            grid.seen(),
+            bot.log()
+        );
+        // the same event, signed, at both addresses
+        for posted in [first_post, second_post] {
+            let (path, body) = tokio::time::timeout(WAIT, posted)
+                .await
+                .expect("a POST")
+                .expect("the server");
+            assert_eq!(path, "/Event/Service");
+            let event = form_field(&body, "event").expect("the event");
+            let v: Value = serde_json::from_str(&event).expect("JSON");
+            assert_eq!(v["EventName"], "GroupMembership");
+            assert_eq!(
+                v["Data"]["group"],
+                ferro_testgrid::SECOND_GROUP.to_string().as_str()
+            );
+        }
+        bot.terminate();
+        assert_eq!(bot.exit_code().await, 0, "{}", bot.log());
+    }
+
     /// SecondBot's TriggerOnEventService: commands run on an avatar's IM (what the IM says never
     /// adds an argument or a reply target), with a lockout; on an alert, the balance, a group's new
     /// member, avatars coming and going, the clock and a change of region; in Ferrobot's settings

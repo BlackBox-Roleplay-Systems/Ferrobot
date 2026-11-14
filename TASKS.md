@@ -505,6 +505,10 @@ baking: the bot says so and goes on.
   read (SecondBot keeps anything); names in any case; DialogService's start sets the relay
   targets from the settings (SecondBot reads them once); a command by IM is logged by its name
   alone (its arguments may hold a value)
+- 🟡 Events for several websites (services/events.rs, Ferrobot's own): `FERRO_EVENTS_GROUPS`
+  (`all` or group keys) follows the members of many groups, each `GroupMembership` naming its
+  `group`; `FERRO_EVENTS_HTTP` takes several addresses. For Black Box, whose sims share one bot.
+  Tested on the test grid (a join in a second group, posted to two addresses)
 - ⬜ Service control for the services still to come (EventsService, TriggerOnEventService,
   RLVService, ChatGptService, SmtpService, RabbitService…): a `spec()` each, registered in main.rs
 

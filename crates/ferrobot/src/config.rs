@@ -866,6 +866,15 @@ fn events(s: &Source) -> Result<Option<crate::services::events::Settings>, Confi
     }
     Ok(Some(crate::services::events::Settings {
         group: key("FERRO_EVENTS_GROUP", "events_GroupMemberEventsGroupUUID"),
+        groups: match s.var("FERRO_EVENTS_GROUPS") {
+            None => crate::services::events::Groups::None,
+            Some(v) => crate::services::events::Groups::parse(&v).ok_or_else(|| {
+                ConfigError::Invalid(
+                    "FERRO_EVENTS_GROUPS",
+                    "`all`, or group keys separated by commas".to_owned(),
+                )
+            })?,
+        },
         group_joins: s.setting_flag("FERRO_EVENTS_GROUP_JOINS", "events_GroupMemberJoins", true)?,
         group_leaves: s.setting_flag(
             "FERRO_EVENTS_GROUP_LEAVES",
@@ -904,10 +913,16 @@ fn events(s: &Source) -> Result<Option<crate::services::events::Settings>, Confi
         change_parcel: s.setting_flag("FERRO_EVENTS_CHANGE_PARCEL", "events_ChangeParcel", true)?,
         channel: (channel >= 0).then_some(channel),
         avatar: key("FERRO_EVENTS_AVATAR", "events_OutputIMuuid"),
-        url: s
+        // several addresses, separated by spaces (Ferrobot's own; SecondBot takes one)
+        urls: s
             .setting("FERRO_EVENTS_HTTP", "events_OutputHttpURL")
-            .map(|(_, v)| v)
-            .filter(|v| v.starts_with("http")),
+            .map(|(_, v)| {
+                v.split_whitespace()
+                    .filter(|u| u.starts_with("http"))
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
         secret: secret.unwrap_or_else(|| "donttellanyone".to_owned()),
     }))
 }
