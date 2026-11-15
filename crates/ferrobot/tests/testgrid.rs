@@ -4471,6 +4471,35 @@ mod api {
         );
         assert_eq!(api.reply("GetGroupBanList", &[&group]).await, "[]");
 
+        // the grid's other answers to a ban: 200 with an empty body, and an error though the
+        // change was made - the list read after says it went through
+        grid.ban_replies(ferro_testgrid::BanReply::Empty);
+        assert_eq!(
+            api.reply("GroupBan", &[&group, OTHER, "true"]).await,
+            format!("Accepted Ban for {OTHER}")
+        );
+        assert_eq!(
+            api.reply("GetGroupBanList", &[&group]).await,
+            format!(r#"["{OTHER}"]"#)
+        );
+        grid.ban_replies(ferro_testgrid::BanReply::ErrorAfterApplying);
+        assert_eq!(
+            api.reply("GroupBan", &[&group, OTHER, "false"]).await,
+            format!("Accepted Unban for {OTHER}")
+        );
+        assert_eq!(api.reply("GetGroupBanList", &[&group]).await, "[]");
+        grid.ban_replies(ferro_testgrid::BanReply::Llsd);
+        // no ban power in the second group: the grid's 403
+        let second = ferro_testgrid::SECOND_GROUP.to_string();
+        assert_eq!(
+            api.failure("GroupBan", &[&second, OTHER, "true"]).await.0,
+            "Missing group GroupBanAccess power"
+        );
+        assert_eq!(
+            api.failure("GetGroupBanList", &[&second]).await.0,
+            "Ban list request failed [Does the bot have the GroupBanAccess power?]"
+        );
+
         // titles and the active group
         let titles: Value =
             serde_json::from_str(&api.reply("GetGroupTitles", &[&group]).await).expect("map");

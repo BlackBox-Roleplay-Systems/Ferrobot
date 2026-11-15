@@ -579,6 +579,8 @@ struct State {
     active_group: Option<Uuid>,
     /// The banned avatars, by group.
     bans: HashMap<Uuid, Vec<Uuid>>,
+    /// How the ban POSTs answer (BanReply::Llsd unless a test says otherwise).
+    ban_reply: BanReply,
     /// The bot's inventory.
     inventory: inventory::Inventory,
     /// The bot's L$.
@@ -588,6 +590,18 @@ struct State {
     /// Uploads offered by NewFileAgentInventory and not yet sent: their request, by the id in
     /// their uploader's address.
     asset_uploads: HashMap<Uuid, Llsd>,
+}
+
+/// How GroupAPIv1 answers a ban POST (TestGrid::ban_replies). The change is made every time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BanReply {
+    /// An LLSD map, as the viewer expects.
+    #[default]
+    Llsd,
+    /// 200 with an empty body - not LLSD.
+    Empty,
+    /// An error status, though the ban list changed.
+    ErrorAfterApplying,
 }
 
 /// The picks of the avatars the grid knows: Some Resident has two, the others none. `None` for an
@@ -808,6 +822,7 @@ impl TestGrid {
                 lures: HashSet::new(),
                 inventory_offers: HashMap::new(),
                 fail_teleport: None,
+                ban_reply: BanReply::Llsd,
                 groups,
                 parcel: parcels::GridParcel::default(),
                 parcel_bans: Vec::new(),
@@ -1125,6 +1140,11 @@ impl TestGrid {
     /// The bot's agent id.
     pub fn agent_id(&self) -> Uuid {
         self.shared.agent_id
+    }
+
+    /// How GroupAPIv1 answers ban POSTs from now on - the grid's answers seen in practice.
+    pub fn ban_replies(&self, reply: BanReply) {
+        self.shared.state().ban_reply = reply;
     }
 
     /// The next teleport fails (TeleportFailed on the event queue) with this reason.

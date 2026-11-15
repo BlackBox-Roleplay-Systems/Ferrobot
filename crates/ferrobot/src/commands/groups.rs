@@ -301,11 +301,12 @@ pub async fn get_group_ban_list(client: &Client, group: &str) -> Answer {
             basic(C, &json(&ids), &args)
         }
         Err(ClientError::Timeout) => failure(C, "No reply from the grid [Retry later]", &args),
-        Err(_) => failure(
+        Err(e) if e.to_string().contains("status 403") => failure(
             C,
             "Ban list request failed [Does the bot have the GroupBanAccess power?]",
             &args,
         ),
+        Err(e) => failure(C, &format!("Ban list request failed: {e}"), &args),
     }
 }
 
@@ -326,12 +327,43 @@ pub async fn group_ban(client: &Client, group: &str, who: &str, state: &str) -> 
     if ban && client.is_group_member(gid, id).await == Ok(true) {
         let _ = client.group_eject(gid, id).await;
     }
+    let action = if ban { "Ban" } else { "Unban" };
     match client.group_ban(gid, &[id], ban).await {
         Ok(_) => {
-            let action = if ban { "Ban" } else { "Unban" };
+            log::info!("GroupBan: {action} of {id} in group {gid} done");
             basic(C, &format!("Accepted {action} for {id}"), &[])
         }
-        Err(_) => failure(C, "Missing group GroupBanAccess power", &args),
+        // Out of time: no second wait, BB's own runs out next - it tries again later.
+        Err(ClientError::Timeout) => {
+            log::warn!(
+                "GroupBan: {action} of {id} in group {gid}: no answer from the grid in time"
+            );
+            failure(C, "No reply from the grid [Retry later]", &args)
+        }
+        Err(e) => {
+            // The grid can make the change and still answer an error (an avatar already on the
+            // list, a busy service): the list says.
+            match client.group_bans(gid).await {
+                Ok(list) if list.contains(&id) == ban => {
+                    log::warn!(
+                        "GroupBan: {action} of {id} in group {gid}: the grid answered \"{e}\", but the ban list shows it done"
+                    );
+                    return basic(C, &format!("Accepted {action} for {id}"), &[]);
+                }
+                Ok(_) => log::warn!(
+                    "GroupBan: {action} of {id} in group {gid} failed: {e}; the ban list does not have it"
+                ),
+                Err(list) => log::warn!(
+                    "GroupBan: {action} of {id} in group {gid} failed: {e}; the ban list could not be read either: {list}"
+                ),
+            }
+            let why = e.to_string();
+            if why.contains("status 403") {
+                failure(C, "Missing group GroupBanAccess power", &args)
+            } else {
+                failure(C, &format!("Ban request failed: {why}"), &args)
+            }
+        }
     }
 }
 

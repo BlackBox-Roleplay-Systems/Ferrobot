@@ -16,6 +16,11 @@ pub const MEMBERS_MAX_AGE: Duration = Duration::from_secs(60);
 const MEMBERS_TIMEOUT: Duration = Duration::from_secs(30);
 /// SecondBot's GroupCreate waits this long for CreateGroupReply.
 const CREATE_TIMEOUT: Duration = Duration::from_secs(15);
+/// GroupAPIv1 (bans) is an HTTP service of the grid's, slower than the region's messages: a ban
+/// and the list read after it can take longer than REQUEST_TIMEOUT, and giving up early leaves a
+/// ban that lands anyway reported as failed. Below BB's 30 s for the whole command, with the
+/// eject before it.
+pub const BAN_TIMEOUT: Duration = Duration::from_secs(18);
 
 impl Client {
     fn check_group(&self, group: Uuid) -> Result<(), ClientError> {
@@ -319,7 +324,7 @@ impl Client {
     /// The avatars banned from the group (GroupAPIv1; needs the ban power).
     pub async fn group_bans(&self, group: Uuid) -> Result<Vec<Uuid>, ClientError> {
         self.check_group(group)?;
-        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Bans {
+        self.group_ask(BAN_TIMEOUT, |reply| GroupRequest::Bans {
             group,
             action: None,
             ids: Vec::new(),
@@ -329,7 +334,8 @@ impl Client {
         .map_err(ClientError::Refused)
     }
 
-    /// Ban (or unban) avatars from the group; answers the ban list after.
+    /// Ban (or unban) avatars from the group; answers the ban list after. Waits BAN_TIMEOUT: the
+    /// grid's group service can take longer than REQUEST_TIMEOUT for the change and the list.
     pub async fn group_ban(
         &self,
         group: Uuid,
@@ -343,7 +349,7 @@ impl Client {
             crate::groups::ban::DELETE
         };
         let ids = ids.to_vec();
-        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Bans {
+        self.group_ask(BAN_TIMEOUT, |reply| GroupRequest::Bans {
             group,
             action: Some(action),
             ids,

@@ -460,10 +460,14 @@ pub fn ban_body(action: i32, ids: &[Uuid]) -> Llsd {
 }
 
 /// processGroupBanRequest: the group and its banned residents with the date of each ban (Unix
-/// time, 0 when not given).
+/// time, 0 when not given). A map without `ban_list` is a group with no bans, as the viewer reads
+/// it; anything else is not an answer.
 pub fn ban_list(v: &Llsd) -> Option<(Uuid, Vec<(Uuid, f64)>)> {
+    v.as_map()?;
     let group = v["group_id"].as_uuid();
-    let list = v["ban_list"].as_map()?;
+    let Some(list) = v["ban_list"].as_map() else {
+        return Some((group, Vec::new()));
+    };
     let bans = list
         .iter()
         .filter_map(|(id, entry)| Some((Uuid::parse_str(id).ok()?, entry["ban_date"].as_f64())))
