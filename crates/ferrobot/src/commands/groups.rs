@@ -329,15 +329,33 @@ pub async fn group_ban(client: &Client, group: &str, who: &str, state: &str) -> 
     }
     let action = if ban { "Ban" } else { "Unban" };
     match client.group_ban(gid, &[id], ban).await {
-        Ok(_) => basic(C, &format!("Accepted {action} for {id}"), &[]),
+        Ok(_) => {
+            log::info!("GroupBan: {action} of {id} in group {gid} done");
+            basic(C, &format!("Accepted {action} for {id}"), &[])
+        }
         // Out of time: no second wait, BB's own runs out next - it tries again later.
-        Err(ClientError::Timeout) => failure(C, "No reply from the grid [Retry later]", &args),
+        Err(ClientError::Timeout) => {
+            log::warn!(
+                "GroupBan: {action} of {id} in group {gid}: no answer from the grid in time"
+            );
+            failure(C, "No reply from the grid [Retry later]", &args)
+        }
         Err(e) => {
-            // The grid can make the change and still answer an error: the list says.
-            if let Ok(list) = client.group_bans(gid).await
-                && list.contains(&id) == ban
-            {
-                return basic(C, &format!("Accepted {action} for {id}"), &[]);
+            // The grid can make the change and still answer an error (an avatar already on the
+            // list, a busy service): the list says.
+            match client.group_bans(gid).await {
+                Ok(list) if list.contains(&id) == ban => {
+                    log::warn!(
+                        "GroupBan: {action} of {id} in group {gid}: the grid answered \"{e}\", but the ban list shows it done"
+                    );
+                    return basic(C, &format!("Accepted {action} for {id}"), &[]);
+                }
+                Ok(_) => log::warn!(
+                    "GroupBan: {action} of {id} in group {gid} failed: {e}; the ban list does not have it"
+                ),
+                Err(list) => log::warn!(
+                    "GroupBan: {action} of {id} in group {gid} failed: {e}; the ban list could not be read either: {list}"
+                ),
             }
             let why = e.to_string();
             if why.contains("status 403") {

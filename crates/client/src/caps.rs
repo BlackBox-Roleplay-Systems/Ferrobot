@@ -61,6 +61,48 @@ pub async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd) -> Result
     from_xml(&bytes).map_err(|_| CapsError::Malformed)
 }
 
+/// A POST whose answer is kept as it came: the status and the body, unparsed, for a caller that
+/// reads only the status (as the viewer does for some services) and logs what the grid said
+/// when it refused. Network errors drop the URL, which is a capability.
+pub async fn post_llsd_raw(
+    http: &reqwest::Client,
+    url: &str,
+    body: &Llsd,
+) -> Result<(u16, Vec<u8>), CapsError> {
+    let resp = http
+        .post(url)
+        .header("Content-Type", "application/llsd+xml")
+        .header("Accept", "application/llsd+xml")
+        .body(to_xml(body))
+        .send()
+        .await
+        .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
+    let status = resp.status().as_u16();
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| CapsError::Http(e.without_url().to_string()))?;
+    Ok((status, bytes.to_vec()))
+}
+
+/// The start of a reply body for a log line: text only, whitespace folded, at most `max`
+/// characters.
+pub fn body_snippet(body: &[u8], max: usize) -> String {
+    let text = String::from_utf8_lossy(body);
+    let folded: String = text
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    if folded.chars().count() > max {
+        format!("{}…", folded.chars().take(max).collect::<String>())
+    } else {
+        folded
+    }
+}
+
 pub async fn get_llsd(http: &reqwest::Client, url: &str) -> Result<Llsd, CapsError> {
     let resp = http
         .get(url)
@@ -254,6 +296,20 @@ pub async fn event_queue_loop(
 
 #[cfg(test)]
 mod tests {
+    use super::body_snippet;
+
+    #[test]
+    fn a_body_snippet_folds_whitespace_drops_controls_and_stops_at_max() {
+        let body = b"<llsd>\n  <map><key>error</key>\t<string>no power</string></map>\r\n</llsd>";
+        assert_eq!(
+            body_snippet(body, 200),
+            "<llsd> <map><key>error</key> <string>no power</string></map> </llsd>"
+        );
+        assert_eq!(body_snippet(b"abcdef", 3), "abc\u{2026}");
+        assert_eq!(body_snippet(b"", 10), "");
+        assert_eq!(body_snippet(&[0xff, b'o', b'k'], 10), "\u{fffd}ok");
+    }
+
     use super::*;
 
     const HELD: Duration = Duration::from_secs(30);

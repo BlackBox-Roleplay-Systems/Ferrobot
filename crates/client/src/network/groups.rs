@@ -479,10 +479,42 @@ impl Session<'_> {
         tokio::spawn(async move {
             // postGroupBanRequestCoro reads only the status: a 2xx whose body is not LLSD (an
             // empty one) still made the change - the list read next says what the group has.
+            // A refusal is logged with what the grid answered, for the bot's operator.
             if let Some(action) = action {
-                match crate::caps::post_llsd(&http, &url, &groups::ban_body(action, &ids)).await {
-                    Ok(_) | Err(crate::caps::CapsError::Malformed) => {}
+                let what = if action == groups::ban::CREATE {
+                    "ban"
+                } else {
+                    "unban"
+                };
+                match crate::caps::post_llsd_raw(&http, &url, &groups::ban_body(action, &ids)).await
+                {
+                    Ok((status, body)) if (200..300).contains(&status) => {
+                        if ferro_llsd::from_xml(&body).is_err() {
+                            log::debug!(
+                                "group {group}: the {what} answer is not LLSD ({} bytes), reading the list",
+                                body.len()
+                            );
+                        }
+                    }
+                    Ok((status, body)) => {
+                        let said = crate::caps::body_snippet(&body, 200);
+                        log::warn!(
+                            "group {group}: {what} of {} avatar(s) refused, status {status}{}",
+                            ids.len(),
+                            if said.is_empty() {
+                                String::new()
+                            } else {
+                                format!(": {said}")
+                            }
+                        );
+                        let _ = reply.send(Err(format!("GroupAPIv1: status {status}")));
+                        return;
+                    }
                     Err(e) => {
+                        log::warn!(
+                            "group {group}: {what} of {} avatar(s) not sent: {e}",
+                            ids.len()
+                        );
                         let _ = reply.send(Err(format!("GroupAPIv1: {e}")));
                         return;
                     }
@@ -494,6 +526,9 @@ impl Session<'_> {
                     .ok_or_else(|| "GroupAPIv1: no ban list".to_owned()),
                 Err(e) => Err(format!("GroupAPIv1: {e}")),
             };
+            if let Err(e) = &answer {
+                log::warn!("group {group}: the ban list could not be read: {e}");
+            }
             let _ = reply.send(answer);
         });
     }
