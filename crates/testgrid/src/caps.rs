@@ -559,9 +559,14 @@ fn group_api(shared: &Arc<Shared>, method: &str, query: &str, body: &[u8]) -> Re
                 list.push(*id);
             }
         }
+        let reply = st.ban_reply;
         drop(st);
         shared.saw(Seen::GroupBanChange { group, ids, ban });
-        return llsd_reply(&Llsd::Map(Map::new()));
+        return match reply {
+            crate::BanReply::Llsd => llsd_reply(&Llsd::Map(Map::new())),
+            crate::BanReply::Empty => Response::new(200, "text/html", Vec::new()),
+            crate::BanReply::ErrorAfterApplying => Response::status(502),
+        };
     }
     let mut list = Map::new();
     for id in st.bans.get(&group).into_iter().flatten() {

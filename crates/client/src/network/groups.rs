@@ -477,12 +477,16 @@ impl Session<'_> {
         let url = format!("{cap}?group_id={group}");
         let http = self.http.clone();
         tokio::spawn(async move {
-            if let Some(action) = action
-                && let Err(e) =
-                    crate::caps::post_llsd(&http, &url, &groups::ban_body(action, &ids)).await
-            {
-                let _ = reply.send(Err(format!("GroupAPIv1: {e}")));
-                return;
+            // postGroupBanRequestCoro reads only the status: a 2xx whose body is not LLSD (an
+            // empty one) still made the change - the list read next says what the group has.
+            if let Some(action) = action {
+                match crate::caps::post_llsd(&http, &url, &groups::ban_body(action, &ids)).await {
+                    Ok(_) | Err(crate::caps::CapsError::Malformed) => {}
+                    Err(e) => {
+                        let _ = reply.send(Err(format!("GroupAPIv1: {e}")));
+                        return;
+                    }
+                }
             }
             let answer = match crate::caps::get_llsd(&http, &url).await {
                 Ok(v) => groups::ban_list(&v)

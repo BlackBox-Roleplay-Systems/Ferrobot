@@ -119,6 +119,13 @@ baking: the bot says so and goes on.
   GroupBan (GroupAPIv1), GetGroupTitles, GroupActiveTitle, GroupActiveGroup, GroupJoin,
   GroupLeave, GetGroupMemberRoles, ForceLoadGroups; tested through the API on the test grid.
   GroupCreate: see phase 7
+- 🟡 GroupBan / GetGroupBanList against the grid's real answers: a ban whose POST answers 200 with
+  a body that isn't LLSD, or an error though the list changed, read the list after and report
+  what it says (the viewer's postGroupBanRequestCoro reads only the status); a reply without
+  `ban_list` is an empty list; 18 s for GroupAPIv1 (BAN_TIMEOUT) instead of 10 s; "Missing group
+  GroupBanAccess power" only for the grid's 403, other failures say what went wrong. Seen on the
+  grid: bans landed while the bot answered "Missing group GroupBanAccess power". Test grid:
+  BanReply::Empty / ErrorAfterApplying
 - 🟡 SecondBot's Hello, Version, UnixTimeNow, GetPosition, GoHome, Logoff, GetLastCommands,
   ReadKeyValue, SetKeyValue, ClearKeyValue. Deliberate differences: SetKeyValue and ClearKeyValue
   work (SecondBot's check is inverted), GetLastCommands gives the newest five
