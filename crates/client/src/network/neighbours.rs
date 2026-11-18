@@ -9,10 +9,13 @@
 //! test of crossings and child agents needs.
 //!
 //! A neighbour's circuit only stays up: acks, pings both ways, the handshake answered. What the
-//! neighbour sends about its objects and avatars is acknowledged and left aside, and its seed and
-//! event queue are not opened (Aurora opens them, for the objects it draws across the border).
+//! neighbour sends about its objects and avatars is acknowledged and left aside. Its seed and
+//! event queue are opened when the region gives them (EstablishAgentCommunication on the main
+//! region's queue, LLViewerRegion::setSeedCapability), and the region left keeps the ones it had,
+//! as the viewer polls every region's queue: what comes on them is drained and left aside.
 
 use super::{CACHE_EMPTY, PING_INTERVAL, SEND_ALL_CACHEABLE, SUPPORTS_SELF_APPEARANCE};
+use crate::caps::{self, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::LoginResponse;
 use ferro_msg::msgs::*;
@@ -21,6 +24,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 /// What a region's RegionHandshake told about it, kept for when the bot moves in: the region
@@ -52,6 +57,64 @@ pub(super) struct Neighbour {
     pub ucc_seq: u32,
     pub handshake: Option<Handshake>,
     last_ping: Instant,
+    /// Its event queue, polled while it is a neighbour.
+    queue: Option<Queue>,
+}
+
+/// A neighbour's seed and event queue being polled; dropped, the polling stops (the bot moves in
+/// and polls it as the main region's, or the neighbour is gone).
+pub(super) struct Queue(JoinHandle<()>);
+
+impl Drop for Queue {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl Queue {
+    /// Ask the seed for the event queue, then poll it, logging what comes.
+    pub(super) fn start(
+        http: reqwest::Client,
+        seed: String,
+        name: String,
+        max_errors: u32,
+    ) -> Queue {
+        Queue(tokio::spawn(async move {
+            let url = match caps::resolve_seed(&http, &seed).await {
+                Ok(caps) => match caps.get("EventQueueGet") {
+                    Some(url) => url.clone(),
+                    None => {
+                        log::info!("neighbour {name}: no event queue");
+                        return;
+                    }
+                },
+                Err(e) => {
+                    log::info!("neighbour {name}: seed capability failed: {e}");
+                    return;
+                }
+            };
+            log::info!("neighbour {name}: event queue open");
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let drain = async {
+                while let Some(m) = rx.recv().await {
+                    match m {
+                        EqMessage::Event(e) => {
+                            log::debug!("neighbour {name}: event {}", e.message)
+                        }
+                        EqMessage::Lost => {
+                            log::info!("neighbour {name}: event queue lost");
+                            return;
+                        }
+                        EqMessage::Caps(_) => {}
+                    }
+                }
+            };
+            tokio::select! {
+                _ = caps::event_queue_loop(http.clone(), url, tx, max_errors) => {}
+                _ = drain => {}
+            }
+        }))
+    }
 }
 
 /// What a region's packet told, beyond the circuit's own business.
@@ -76,7 +139,18 @@ impl Neighbour {
             ucc_seq,
             handshake: Some(handshake),
             last_ping: Instant::now(),
+            queue: None,
         }
+    }
+
+    /// Poll its event queue from now on (the one it had stops).
+    pub(super) fn poll(&mut self, queue: Queue) {
+        self.queue = Some(queue);
+    }
+
+    /// Whether its event queue is polled.
+    pub(super) fn polled(&self) -> bool {
+        self.queue.as_ref().is_some_and(|q| !q.0.is_finished())
     }
 
     /// The region's name, or its handle while its handshake has not come.
@@ -239,12 +313,17 @@ impl Neighbours {
                 ucc_seq,
                 handshake: None,
                 last_ping: Instant::now(),
+                queue: None,
             },
         );
         true
     }
 
     /// The circuit the bot moves into, out of the neighbours.
+    pub(super) fn get_mut(&mut self, addr: &SocketAddr) -> Option<&mut Neighbour> {
+        self.map.get_mut(addr)
+    }
+
     pub(super) fn take(&mut self, addr: &SocketAddr) -> Option<Neighbour> {
         self.map.remove(addr)
     }

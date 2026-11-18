@@ -1251,8 +1251,9 @@ impl TestGrid {
     }
 
     /// The other region (the bot's neighbour) is told to keep a child agent for the latest
-    /// session, and the bot is told of it with EnableSimulator on the event queue, as a simulator
-    /// does once the agent arrived (OpenSim's EntityTransferModule.InformClientOfNeighbourAsync).
+    /// session, and the bot is told of it with EnableSimulator on the event queue, then of the
+    /// child agent's seed with EstablishAgentCommunication, as a simulator does once the agent
+    /// arrived (OpenSim's EntityTransferModule.InformClientOfNeighbourAsync).
     pub fn enable_neighbour(&self) {
         let mut st = self.shared.state();
         let Some(s) = latest(&mut st) else {
@@ -1276,6 +1277,19 @@ impl TestGrid {
         body.insert("SimulatorInfo".into(), Llsd::Array(vec![Llsd::Map(info)]));
         self.shared
             .queue_event(n, "EnableSimulator", Llsd::Map(body));
+        // then the child agent's seed, as the grid sends it once the child is made
+        let mut body = Map::new();
+        body.insert("agent-id".into(), self.shared.agent_id.into());
+        body.insert(
+            "sim-ip-and-port".into(),
+            format!("{}:{}", region.addr.ip(), region.addr.port()).into(),
+        );
+        body.insert(
+            "seed-capability".into(),
+            self.shared.seed_url(n, other).into(),
+        );
+        self.shared
+            .queue_event(n, "EstablishAgentCommunication", Llsd::Map(body));
     }
 
     /// The latest session's agent walks over the border into the other region, arriving at

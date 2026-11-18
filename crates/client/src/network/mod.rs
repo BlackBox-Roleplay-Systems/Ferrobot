@@ -931,6 +931,15 @@ impl Session<'_> {
         if let Some(p) = self.previous.take() {
             let mut n = p.n;
             n.circuit.flush_acks(&self.sock);
+            if self.neighbours.on {
+                // the viewer goes on polling the region's queue
+                n.poll(neighbours::Queue::start(
+                    self.http.clone(),
+                    p.seed,
+                    n.name(),
+                    self.timeouts.event_queue_errors,
+                ));
+            }
             if !self.neighbours.keep(n) {
                 log::debug!("the region left let go");
             }
@@ -1110,6 +1119,34 @@ impl Session<'_> {
             {
                 self.publish_neighbours();
             }
+        }
+    }
+
+    /// EstablishAgentCommunication (event queue): a neighbour's seed capability; its event queue
+    /// is polled, as the viewer does (LLViewerRegion::setSeedCapability via
+    /// LLEstablishAgentCommunication). Taken for a region the bot keeps a circuit to.
+    fn on_establish(&mut self, body: &Llsd) {
+        let seed = body["seed-capability"].as_str();
+        let Ok(addr) = body["sim-ip-and-port"].as_str().parse::<SocketAddr>() else {
+            log::warn!("EstablishAgentCommunication without a region address");
+            return;
+        };
+        if seed.is_empty() || addr == self.addr() {
+            return;
+        }
+        let (http, max_errors) = (self.http.clone(), self.timeouts.event_queue_errors);
+        match self.neighbours.get_mut(&addr) {
+            Some(n) if !n.polled() => {
+                let name = n.name();
+                n.poll(neighbours::Queue::start(
+                    http,
+                    seed.to_owned(),
+                    name,
+                    max_errors,
+                ));
+            }
+            Some(_) => {}
+            None => log::debug!("EstablishAgentCommunication for {addr}: no circuit to it"),
         }
     }
 
@@ -2145,6 +2182,7 @@ impl Session<'_> {
             // EnableSimulator is UDPBlackListed in the message template: the viewer takes it only
             // from the event queue (process_enable_simulator via LLEnableSimulatorViewerNode)
             "EnableSimulator" => self.on_enable_simulator(&e.body),
+            "EstablishAgentCommunication" => self.on_establish(&e.body),
             "DisableSimulator" if self.previous.is_some() && !self.arrived => {
                 self.go_back("the new region closed the connection".into());
             }

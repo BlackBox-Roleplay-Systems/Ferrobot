@@ -992,3 +992,46 @@ async fn a_move_never_confirmed_goes_back_when_the_wait_expires() {
     );
     assert!(matches!(r.logout().await, End::LoggedOut));
 }
+
+fn polls_of(grid: &TestGrid, region: usize) -> usize {
+    grid.count(|s| matches!(s, Seen::EventQueuePoll { region: r, .. } if *r == region))
+}
+
+/// As a viewer: a neighbour's event queue is polled once the region gives its seed
+/// (EstablishAgentCommunication), and the region left by a crossing goes on being polled.
+#[tokio::test]
+async fn neighbours_event_queues_are_polled() {
+    let r = connect_with(GridConfig::default(), true).await;
+    let (first, second) = (ferro_testgrid::FIRST_REGION, ferro_testgrid::SECOND_REGION);
+    r.grid.enable_neighbour();
+    assert!(
+        r.grid
+            .wait_for(
+                WAIT,
+                |s| matches!(s, Seen::EventQueuePoll { region, .. } if *region == second)
+            )
+            .await,
+        "the neighbour's queue is polled"
+    );
+    let mut events = r.client.subscribe();
+    r.grid.cross(Vec3::new(3.0, 128.0, 25.0));
+    arrival_in(&mut events).await;
+    let before = polls_of(&r.grid, first);
+    assert!(
+        r.grid
+            .wait_until(WAIT, |_| polls_of(&r.grid, first) > before)
+            .await,
+        "the region left is polled as a neighbour"
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+/// Without neighbours, EstablishAgentCommunication opens nothing.
+#[tokio::test]
+async fn without_neighbours_no_neighbour_queue_is_polled() {
+    let r = connect().await;
+    r.grid.enable_neighbour();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(polls_of(&r.grid, ferro_testgrid::SECOND_REGION), 0);
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
