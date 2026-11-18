@@ -77,8 +77,19 @@ baking: the bot says so and goes on.
   (add_sim/remove_sim/switch_region). Tested on the test grid (child agents, crossings,
   `TestGrid::enable_neighbour`, `cross`, `close_neighbour`) and on four NGC regions with
   ferro-probe (2026-11-18)
-- ⬜ Neighbours' seed capabilities and event queues (EstablishAgentCommunication): not opened yet;
-  Aurora opens them for the objects it draws across the border
+- 🟡 Neighbours' seed capabilities and event queues (EstablishAgentCommunication, with neighbours
+  on): polled as the viewer polls every region's, the region left by a move too; what they carry is
+  drained and left aside. Tested on the test grid and on four NGC regions (2026-11-18)
+- 🟡 A teleport or crossing the new region never confirms (unreachable, failing) goes back to the
+  region left instead of ending the session: its circuit is kept until the arrival, and its
+  TeleportFailed (OpenSim's EntityTransferModule.Fail, about 30 s on Tranquillity), a
+  DisableSimulator from the new region, or 60 s without arrival (`Timeouts::transit`) moves the bot
+  back, its seed and event queue polled again. Tested on the test grid and on four NGC regions
+  (2026-11-18, five bots)
+- 🟡 Objects: a new box (`Client::add_box`, ObjectAdd), a move with its linkset
+  (`Client::move_object`, MultipleObjectUpdate: past the edge, into the next region with whoever
+  sits on it), a delete to the trash (`Client::delete_object`), as Aurora's build_cmds.rs; tested on
+  the test grid and with ferro-probe's `sit-cross` on four NGC regions (2026-11-18)
 - 🟡 Region restarts: notices read as Aurora's region_restart.rs (Second Life's named alerts,
   OpenSim's `/RESTART_X_…` texts, the cancellation); the bot goes home at once when home is in
   another region (services/restart.rs), else logs in again after the restart
@@ -544,16 +555,26 @@ Ferrobot as a test platform for regions: what the Tranquillity teleport rig did 
 LibreMetaverse client, in Rust, on the same client as the bot.
 
 - 🟡 `crates/probe` (ferro-probe): scenarios of teleports and crossings (local, near, far, cross,
-  bounce, lost-crossing, unreachable), one fresh login a round, each step judged by where the
+  bounce, lost-crossing, unreachable, restart, sit-cross), one fresh login a round, each step judged by where the
   avatar ends up (the rig's rules: right region, within 2 m, still there 1.5 s later, no jump back
   toward the start), JSON lines and a table. Run on four NGC regions (2026-11-18): every step of
   `all` right; on Tranquillity's develop build it shows the snap back after a local teleport
   while falling, and the avatar stuck at the border after a lost CrossedRegion
 - 🟡 Faults (`ferro-client` feature `faults`, `Client::faults`): the next events or UDP messages
   of a name dropped, as a network that loses them; tested on the test grid
-- ⬜ A teleport to a region whose address does not answer ends the whole session ("the region
-  never acknowledged UseCircuitCode"): check what the viewer does, and report a failed teleport
-  instead if it keeps the old region
-- ⬜ More scenarios: the region's restart while the bot is in it, a crossing while sitting, a
-  teleport while a crossing is under way, many bots at once
-- ⬜ Run the probe in CI against a Tranquillity region
+- 🟡 `unreachable`: the teleport fails and the bot stays where it was, online (the client goes back
+  to the region left, see Regions)
+- 🟡 `restart` (OpenSim's RemoteAdmin, `--remote-admin-password-file`): the neighbour's circuit
+  closes and opens again; the home region's notice, the end of the session ("The simulator is going
+  down."), a new login once it is back. Run on four NGC regions (2026-11-18)
+- 🟡 `sit-cross`: a box moved over the border and back with the bot sitting on it. Run on four NGC
+  regions (2026-11-18, five bots)
+- 🟡 `--bots N` (accounts made through RemoteAdmin), `--stagger`: five bots on four NGC regions
+  (2026-11-18). Found on Tranquillity's develop: logins at the same moment fail ("Error generating
+  Login Response": `UserAccountService.MakeUserAccount`, KeyNotFoundException 'Created', SQLite
+  standalone); LogoutReply often lost (queued in the Task throttle, then the agent closed:
+  `LLUDPClient.Shutdown` clears the queues)
+- ⬜ More scenarios: a teleport while a crossing is under way, a seated crossing into a region
+  that refuses the object
+- ⬜ Run the probe in CI against a Tranquillity region: build the region server, four regions on
+  localhost with RemoteAdmin, the probe against them

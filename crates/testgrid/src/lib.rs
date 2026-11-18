@@ -736,6 +736,11 @@ enum RegionCommand {
     Kick {
         reason: String,
     },
+    /// TeleportFailed (UDP) after a TeleportFinish or CrossedRegion: the region takes the agent
+    /// back, as OpenSim does when the destination never confirms (EntityTransferModule.Fail).
+    TakeBack {
+        reason: String,
+    },
     /// DisableSimulator to a child agent's circuit: the circuit closes, the session goes on.
     CloseChild,
     DisableSimulator,
@@ -1246,8 +1251,9 @@ impl TestGrid {
     }
 
     /// The other region (the bot's neighbour) is told to keep a child agent for the latest
-    /// session, and the bot is told of it with EnableSimulator on the event queue, as a simulator
-    /// does once the agent arrived (OpenSim's EntityTransferModule.InformClientOfNeighbourAsync).
+    /// session, and the bot is told of it with EnableSimulator on the event queue, then of the
+    /// child agent's seed with EstablishAgentCommunication, as a simulator does once the agent
+    /// arrived (OpenSim's EntityTransferModule.InformClientOfNeighbourAsync).
     pub fn enable_neighbour(&self) {
         let mut st = self.shared.state();
         let Some(s) = latest(&mut st) else {
@@ -1271,6 +1277,19 @@ impl TestGrid {
         body.insert("SimulatorInfo".into(), Llsd::Array(vec![Llsd::Map(info)]));
         self.shared
             .queue_event(n, "EnableSimulator", Llsd::Map(body));
+        // then the child agent's seed, as the grid sends it once the child is made
+        let mut body = Map::new();
+        body.insert("agent-id".into(), self.shared.agent_id.into());
+        body.insert(
+            "sim-ip-and-port".into(),
+            format!("{}:{}", region.addr.ip(), region.addr.port()).into(),
+        );
+        body.insert(
+            "seed-capability".into(),
+            self.shared.seed_url(n, other).into(),
+        );
+        self.shared
+            .queue_event(n, "EstablishAgentCommunication", Llsd::Map(body));
     }
 
     /// The latest session's agent walks over the border into the other region, arriving at
@@ -1308,6 +1327,50 @@ impl TestGrid {
 
     /// The neighbour region closes its child agent's circuit (DisableSimulator), as a region does
     /// when the agent went too far away; the session goes on.
+    /// CrossedRegion to a region at `addr`, which the grid does not run: one that never answers,
+    /// unless the test does. The session stays here; [`TestGrid::take_back`] says it failed.
+    pub fn cross_to(&self, addr: SocketAddr) {
+        let mut st = self.shared.state();
+        let Some(s) = latest(&mut st) else {
+            return;
+        };
+        let to = other_region(s.region);
+        let n = s.n;
+        drop(st);
+        let mut data = Map::new();
+        // the other region's handle and seed, the address of nowhere
+        data.insert(
+            "RegionHandle".into(),
+            self.shared.regions[to]
+                .handle()
+                .to_be_bytes()
+                .to_vec()
+                .into(),
+        );
+        data.insert("SimIP".into(), region_ip(addr).into());
+        data.insert("SimPort".into(), i32::from(addr.port()).into());
+        data.insert("SeedCapability".into(), self.shared.seed_url(n, to).into());
+        data.insert("RegionSizeX".into(), 256.into());
+        data.insert("RegionSizeY".into(), 256.into());
+        let mut agent = Map::new();
+        agent.insert("AgentID".into(), self.shared.agent_id.into());
+        let mut body = Map::new();
+        body.insert("RegionData".into(), Llsd::Array(vec![Llsd::Map(data)]));
+        body.insert("AgentData".into(), Llsd::Array(vec![Llsd::Map(agent)]));
+        self.shared.queue_event(n, "CrossedRegion", Llsd::Map(body));
+    }
+
+    /// The region the bot is in takes it back after a move that did not arrive: TeleportFailed
+    /// over its circuit, as OpenSim's EntityTransferModule.Fail.
+    pub fn take_back(&self, reason: &str) {
+        if let Some(s) = latest(&mut self.shared.state()) {
+            s.expected = None;
+        }
+        self.command(RegionCommand::TakeBack {
+            reason: reason.into(),
+        });
+    }
+
     pub fn close_neighbour(&self) {
         let mut st = self.shared.state();
         let Some(s) = latest(&mut st) else {

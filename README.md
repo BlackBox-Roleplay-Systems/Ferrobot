@@ -554,15 +554,20 @@ prints the settings to log the bot in to it (its own test account, not a Second 
 
 ## Testing regions: ferro-probe
 
-`ferro-probe` logs a test account in to real regions, a local OpenSim grid, and runs scenarios of
+`ferro-probe` logs test accounts in to real regions, a local OpenSim grid, and runs scenarios of
 teleports and crossings. It judges each step by where the avatar ends up: in the right region,
 within 2 m of the target, and still there 1.5 s later, with no jump back toward the start on the
-way. It keeps circuits to the neighbour regions as a viewer does, and can drop messages on purpose
-(a lost CrossedRegion). It prints one JSON line per step, then a table.
+way. It keeps circuits and event queues to the neighbour regions as a viewer does, can drop
+messages on purpose (a lost CrossedRegion), restart regions through OpenSim's RemoteAdmin, and run
+several bots at once. It prints one JSON line per step, then a table.
 
 ```bash
 cargo run -p ferro-probe -- --login-uri http://127.0.0.1:9000/ --user "Test User" \
     --password-file .scratch/password --scenarios all,bounce,lost-crossing --rounds 3
+# five bots at once, their accounts created through RemoteAdmin when missing
+cargo run -p ferro-probe -- --login-uri http://127.0.0.1:9000/ --user "Test User" \
+    --password-file .scratch/password --remote-admin-password-file .scratch/remoteadmin \
+    --bots 5 --scenarios all,bounce,sit-cross,unreachable
 ```
 
 | Scenario | What it does |
@@ -573,12 +578,18 @@ cargo run -p ferro-probe -- --login-uri http://127.0.0.1:9000/ --user "Test User
 | `cross` | flies over the border to the neighbour and back |
 | `bounce` | local teleports while standing, walking, flying and falling: does the avatar snap back? |
 | `lost-crossing` | a crossing whose CrossedRegion the bot drops, then a local teleport, to the neighbour and back |
-| `unreachable` | a teleport to a region whose address the bot cannot reach, then the same |
+| `unreachable` | a teleport to a region whose address the bot cannot reach: right when it fails and the bot is still where it was; then the same |
+| `sit-cross` | sits on a box it makes near the border, moves the box into the neighbour and back (a vehicle's crossing), stands up, deletes the box |
+| `restart` | restarts the neighbour (its circuit closes, then opens again), then the home region with the bot in it (the notice, the end of the session, a new login once it is back); needs `--remote-admin-password-file`, one bot |
 
 `all` is `local,near,far,cross`. The regions are `--home`, `--near` (east of home), `--far` and
 `--unreachable` (Alpha, Beta, Gamma and Delta by default). Each round logs in afresh. Exit code 0
-when every step went right, 1 otherwise. `--help` lists the options. The password is read from a
-file, never from the command line.
+when every step went right, 1 otherwise; a logout the region never answered counts as wrong.
+`--bots N` runs N bots at once: `--user`, then the same name with 2, 3… after the last name, the
+same password; `--stagger` sets the time between their logins (250 ms, 0 for all at once).
+`--help` lists the options. The passwords are read from files, never from the command line.
+RemoteAdmin is for a local test grid only: on OpenSim it is the `[RemoteAdmin]` section, with
+`access_ip_addresses = 127.0.0.1`.
 
 ## Plan and contributing
 

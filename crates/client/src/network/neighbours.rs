@@ -9,10 +9,13 @@
 //! test of crossings and child agents needs.
 //!
 //! A neighbour's circuit only stays up: acks, pings both ways, the handshake answered. What the
-//! neighbour sends about its objects and avatars is acknowledged and left aside, and its seed and
-//! event queue are not opened (Aurora opens them, for the objects it draws across the border).
+//! neighbour sends about its objects and avatars is acknowledged and left aside. Its seed and
+//! event queue are opened when the region gives them (EstablishAgentCommunication on the main
+//! region's queue, LLViewerRegion::setSeedCapability), and the region left keeps the ones it had,
+//! as the viewer polls every region's queue: what comes on them is drained and left aside.
 
 use super::{CACHE_EMPTY, PING_INTERVAL, SEND_ALL_CACHEABLE, SUPPORTS_SELF_APPEARANCE};
+use crate::caps::{self, EqMessage};
 use crate::circuit::{Circuit, Resend};
 use crate::login::LoginResponse;
 use ferro_msg::msgs::*;
@@ -21,6 +24,8 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 /// What a region's RegionHandshake told about it, kept for when the bot moves in: the region
@@ -52,6 +57,168 @@ pub(super) struct Neighbour {
     pub ucc_seq: u32,
     pub handshake: Option<Handshake>,
     last_ping: Instant,
+    /// Its event queue, polled while it is a neighbour.
+    queue: Option<Queue>,
+}
+
+/// A neighbour's seed and event queue being polled; dropped, the polling stops (the bot moves in
+/// and polls it as the main region's, or the neighbour is gone).
+pub(super) struct Queue(JoinHandle<()>);
+
+impl Drop for Queue {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl Queue {
+    /// Ask the seed for the event queue, then poll it, logging what comes.
+    pub(super) fn start(
+        http: reqwest::Client,
+        seed: String,
+        name: String,
+        max_errors: u32,
+    ) -> Queue {
+        Queue(tokio::spawn(async move {
+            let url = match caps::resolve_seed(&http, &seed).await {
+                Ok(caps) => match caps.get("EventQueueGet") {
+                    Some(url) => url.clone(),
+                    None => {
+                        log::info!("neighbour {name}: no event queue");
+                        return;
+                    }
+                },
+                Err(e) => {
+                    log::info!("neighbour {name}: seed capability failed: {e}");
+                    return;
+                }
+            };
+            log::info!("neighbour {name}: event queue open");
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let drain = async {
+                while let Some(m) = rx.recv().await {
+                    match m {
+                        EqMessage::Event(e) => {
+                            log::debug!("neighbour {name}: event {}", e.message)
+                        }
+                        EqMessage::Lost => {
+                            log::info!("neighbour {name}: event queue lost");
+                            return;
+                        }
+                        EqMessage::Caps(_) => {}
+                    }
+                }
+            };
+            tokio::select! {
+                _ = caps::event_queue_loop(http.clone(), url, tx, max_errors) => {}
+                _ = drain => {}
+            }
+        }))
+    }
+}
+
+/// What a region's packet told, beyond the circuit's own business.
+#[derive(Debug, PartialEq)]
+pub(super) enum Heard {
+    Nothing,
+    /// Its RegionHandshake: it has a name now.
+    Handshake,
+    /// DisableSimulator: it closed the circuit.
+    Closed,
+    /// TeleportFailed: the region the bot left took the agent back (OpenSim's
+    /// EntityTransferModule.Fail, after TeleportFinish).
+    TeleportFailed(String),
+}
+
+impl Neighbour {
+    /// The circuit of a region the bot was in: it is up already, its handshake known.
+    pub(super) fn kept(circuit: Circuit, ucc_seq: u32, handle: u64, handshake: Handshake) -> Self {
+        Neighbour {
+            circuit,
+            handle,
+            ucc_seq,
+            handshake: Some(handshake),
+            last_ping: Instant::now(),
+            queue: None,
+        }
+    }
+
+    /// Poll its event queue from now on (the one it had stops).
+    pub(super) fn poll(&mut self, queue: Queue) {
+        self.queue = Some(queue);
+    }
+
+    /// Whether its event queue is polled.
+    pub(super) fn polled(&self) -> bool {
+        self.queue.as_ref().is_some_and(|q| !q.0.is_finished())
+    }
+
+    /// The region's name, or its handle while its handshake has not come.
+    pub(super) fn name(&self) -> String {
+        match &self.handshake {
+            Some(h) if !h.name.is_empty() => h.name.clone(),
+            _ => format!("{:x}", self.handle),
+        }
+    }
+
+    /// A packet from this region: acked, and answered when it asks.
+    pub(super) fn on_datagram(
+        &mut self,
+        sock: &UdpSocket,
+        login: &LoginResponse,
+        data: &[u8],
+    ) -> Heard {
+        let from = self.circuit.addr;
+        let pkt = match parse_packet(data) {
+            Ok(pkt) => pkt,
+            Err(e) => {
+                log::debug!("bad packet from {from}: {e}");
+                return Heard::Nothing;
+            }
+        };
+        if !self.circuit.on_receive(pkt.flags, pkt.sequence, &pkt.acks) {
+            return Heard::Nothing;
+        }
+        match dispatch(self, sock, login, &pkt) {
+            Ok(heard) => {
+                self.circuit.accept(pkt.flags, pkt.sequence);
+                if heard == Heard::Closed {
+                    self.circuit.flush_acks(sock);
+                }
+                heard
+            }
+            Err(e) => {
+                let name = ferro_msg::message_info(pkt.id).map_or("?", |i| i.name);
+                log::warn!("failed to decode {name} from {from}: {e}");
+                Heard::Nothing
+            }
+        }
+    }
+
+    /// Resends and pings. Why the circuit is to be given up, when it is.
+    pub(super) fn tick(
+        &mut self,
+        sock: &UdpSocket,
+        now: Instant,
+        silence: Duration,
+    ) -> Option<&'static str> {
+        self.circuit.tick(sock);
+        if self.ucc_seq != 0 && self.circuit.take_dropped().contains(&self.ucc_seq) {
+            return Some("it never acknowledged UseCircuitCode");
+        }
+        if now.duration_since(self.circuit.last_recv) > silence {
+            return Some("nothing from it for too long");
+        }
+        if now.duration_since(self.last_ping) >= PING_INTERVAL {
+            self.last_ping = now;
+            let (id, oldest) = self.circuit.next_ping();
+            let mut m = StartPingCheck::default();
+            m.ping_id.ping_id = id;
+            m.ping_id.oldest_unacked = oldest;
+            self.circuit.send(sock, &m, false);
+        }
+        None
+    }
 }
 
 /// RegionHandshakeReply, as the main circuit sends it (LLViewerRegion::unpackRegionHandshake).
@@ -146,41 +313,29 @@ impl Neighbours {
                 ucc_seq,
                 handshake: None,
                 last_ping: Instant::now(),
+                queue: None,
             },
         );
         true
     }
 
     /// The circuit the bot moves into, out of the neighbours.
+    pub(super) fn get_mut(&mut self, addr: &SocketAddr) -> Option<&mut Neighbour> {
+        self.map.get_mut(addr)
+    }
+
     pub(super) fn take(&mut self, addr: &SocketAddr) -> Option<Neighbour> {
         self.map.remove(addr)
     }
 
     /// The circuit of the region the bot left, kept as a neighbour. False when neighbours are
     /// off: the caller lets it go.
-    pub(super) fn keep(&mut self, circuit: Circuit, handle: u64, handshake: Handshake) -> bool {
+    pub(super) fn keep(&mut self, n: Neighbour) -> bool {
         if !self.on {
             return false;
         }
-        log::info!(
-            "region {} kept as a neighbour",
-            if handshake.name.is_empty() {
-                format!("{handle:x}")
-            } else {
-                handshake.name.clone()
-            }
-        );
-        let addr = circuit.addr;
-        self.map.insert(
-            addr,
-            Neighbour {
-                circuit,
-                handle,
-                ucc_seq: 0,
-                handshake: Some(handshake),
-                last_ping: Instant::now(),
-            },
-        );
+        log::info!("region {} kept as a neighbour", n.name());
+        self.map.insert(n.circuit.addr, n);
         true
     }
 
@@ -212,57 +367,22 @@ impl Neighbours {
         let Some(n) = self.map.get_mut(&from) else {
             return false;
         };
-        let pkt = match parse_packet(data) {
-            Ok(pkt) => pkt,
-            Err(e) => {
-                log::debug!("bad packet from neighbour {from}: {e}");
-                return false;
-            }
-        };
-        if !n.circuit.on_receive(pkt.flags, pkt.sequence, &pkt.acks) {
-            return false;
-        }
-        match dispatch(n, sock, login, &pkt) {
-            Ok(closed) => {
-                n.circuit.accept(pkt.flags, pkt.sequence);
-                if closed {
-                    n.circuit.flush_acks(sock);
-                    self.close(&from, "DisableSimulator");
-                    return true;
-                }
-                pkt.id == RegionHandshake::ID
-            }
-            Err(e) => {
-                let name = ferro_msg::message_info(pkt.id).map_or("?", |i| i.name);
-                log::warn!("failed to decode {name} from neighbour {from}: {e}");
-                false
-            }
+        match n.on_datagram(sock, login, data) {
+            Heard::Closed => self.close(&from, "DisableSimulator"),
+            Heard::Handshake => true,
+            // a teleport long over, or one this bot did not make
+            Heard::Nothing | Heard::TeleportFailed(_) => false,
         }
     }
 
     /// Resends, acks and pings; neighbours that never answered or went silent are dropped. True
     /// when one was.
     pub(super) fn tick(&mut self, sock: &UdpSocket, now: Instant, silence: Duration) -> bool {
-        let mut gone = Vec::new();
-        for (addr, n) in &mut self.map {
-            n.circuit.tick(sock);
-            if n.ucc_seq != 0 && n.circuit.take_dropped().contains(&n.ucc_seq) {
-                gone.push((*addr, "it never acknowledged UseCircuitCode"));
-                continue;
-            }
-            if now.duration_since(n.circuit.last_recv) > silence {
-                gone.push((*addr, "nothing from it for too long"));
-                continue;
-            }
-            if now.duration_since(n.last_ping) >= PING_INTERVAL {
-                n.last_ping = now;
-                let (id, oldest) = n.circuit.next_ping();
-                let mut m = StartPingCheck::default();
-                m.ping_id.ping_id = id;
-                m.ping_id.oldest_unacked = oldest;
-                n.circuit.send(sock, &m, false);
-            }
-        }
+        let gone: Vec<(SocketAddr, &str)> = self
+            .map
+            .iter_mut()
+            .filter_map(|(addr, n)| n.tick(sock, now, silence).map(|why| (*addr, why)))
+            .collect();
         for (addr, why) in &gone {
             self.close(addr, why);
         }
@@ -270,13 +390,13 @@ impl Neighbours {
     }
 }
 
-/// A neighbour's message. True when it closed the circuit (DisableSimulator).
+/// A neighbour's message.
 fn dispatch(
     n: &mut Neighbour,
     sock: &UdpSocket,
     login: &LoginResponse,
     pkt: &IncomingPacket,
-) -> Result<bool, ferro_msg::DecodeError> {
+) -> Result<Heard, ferro_msg::DecodeError> {
     let id: MsgId = pkt.id;
     if id == PacketAck::ID {
         let m: PacketAck = pkt.decode()?;
@@ -295,10 +415,14 @@ fn dispatch(
         log::info!("neighbour region handshake: {}", h.name);
         n.handshake = Some(h);
         n.circuit.send(sock, &handshake_reply(login), true);
+        return Ok(Heard::Handshake);
     } else if id == DisableSimulator::ID {
-        return Ok(true);
+        return Ok(Heard::Closed);
+    } else if id == TeleportFailed::ID {
+        let m: TeleportFailed = pkt.decode()?;
+        return Ok(Heard::TeleportFailed(field_str(&m.info.reason)));
     }
-    Ok(false)
+    Ok(Heard::Nothing)
 }
 
 #[cfg(test)]
@@ -317,7 +441,12 @@ mod tests {
         let mut n = Neighbours::new(false);
         assert!(!n.enable(&sock, &login(), main, other, 5));
         assert!(!n.contains(&other));
-        assert!(!n.keep(Circuit::new(other), 5, Handshake::default()));
+        assert!(!n.keep(Neighbour::kept(
+            Circuit::new(other),
+            0,
+            5,
+            Handshake::default()
+        )));
     }
 
     #[tokio::test]

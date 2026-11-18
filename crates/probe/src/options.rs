@@ -12,8 +12,14 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --user NAME           the test account: \"First Last\" or a username
   --password-file FILE  a file holding its password
   --scenarios LIST      comma-separated: all (local, near, far, cross), local, near, far, cross,
-                        bounce, lost-crossing, unreachable (all)
+                        bounce, lost-crossing, unreachable, restart, sit-cross (all)
   --rounds N            rounds, each a fresh login (1)
+  --bots N              bots at once, each running the scenarios (1): the first is --user, the
+                        others the same name with 2, 3… after the last name, the same password
+  --stagger MS          milliseconds between the bots' logins (250); 0 logs them in at once
+  --remote-admin-password-file FILE
+                        the grid's RemoteAdmin password (OpenSim, at the login address): creates
+                        the other bots' accounts, restarts regions (the restart scenario)
   --home REGION         where the bot starts and comes back to (Alpha)
   --near REGION         the home region's neighbour to the east (Beta)
   --far REGION          a region far from home (Gamma)
@@ -35,6 +41,9 @@ pub struct Options {
     pub unreachable: String,
     pub neighbours: bool,
     pub json: Option<PathBuf>,
+    pub bots: u32,
+    pub stagger: u64,
+    pub admin_password_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +62,10 @@ pub enum Scenario {
     LostCrossing,
     /// A teleport to a region the bot cannot reach, then what still works.
     Unreachable,
+    /// The neighbour region restarts, then the home region with the bot in it (RemoteAdmin).
+    Restart,
+    /// Sitting on a box moved over the border and back, as on a vehicle.
+    SitCross,
 }
 
 impl Scenario {
@@ -71,6 +84,8 @@ impl Scenario {
             "bounce" => vec![Scenario::Bounce],
             "lost-crossing" => vec![Scenario::LostCrossing],
             "unreachable" => vec![Scenario::Unreachable],
+            "restart" => vec![Scenario::Restart],
+            "sit-cross" => vec![Scenario::SitCross],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }
@@ -90,6 +105,9 @@ impl Options {
             unreachable: "Delta".into(),
             neighbours: true,
             json: None,
+            bots: 1,
+            stagger: 250,
+            admin_password_file: None,
         };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -120,6 +138,19 @@ impl Options {
                 "--near" => o.near = value()?,
                 "--far" => o.far = value()?,
                 "--unreachable" => o.unreachable = value()?,
+                "--bots" => {
+                    o.bots = value()?
+                        .parse()
+                        .ok()
+                        .filter(|n| (1..=100).contains(n))
+                        .ok_or("--bots: a number from 1 to 100")?
+                }
+                "--stagger" => {
+                    o.stagger = value()?
+                        .parse()
+                        .map_err(|_| "--stagger: a number of milliseconds")?
+                }
+                "--remote-admin-password-file" => o.admin_password_file = Some(value()?.into()),
                 "--no-neighbours" => o.neighbours = false,
                 "--json" => o.json = Some(value()?.into()),
                 "-h" | "--help" => return Err(String::new()),
@@ -134,6 +165,12 @@ impl Options {
         }
         if o.scenarios.is_empty() {
             return Err("--scenarios: none given".into());
+        }
+        if o.scenarios.contains(&Scenario::Restart) && o.admin_password_file.is_none() {
+            return Err("--scenarios restart needs --remote-admin-password-file".into());
+        }
+        if o.bots > 1 && o.scenarios.contains(&Scenario::Restart) {
+            return Err("--scenarios restart runs with one bot".into());
         }
         Ok(o)
     }
@@ -192,6 +229,49 @@ mod tests {
             ]
         );
         assert_eq!((o.rounds, o.neighbours), (3, false));
+    }
+
+    #[test]
+    fn bots_and_restarts() {
+        let o = parse(&[
+            "--user",
+            "u",
+            "--password-file",
+            "pw",
+            "--bots",
+            "4",
+            "--remote-admin-password-file",
+            "ra",
+        ])
+        .expect("options");
+        assert_eq!(o.bots, 4);
+        assert_eq!(o.admin_password_file, Some(PathBuf::from("ra")));
+        let base = ["--user", "u", "--password-file", "pw"];
+        let with = |more: &[&str]| parse(&[&base[..], more].concat());
+        assert!(with(&["--bots", "0"]).is_err());
+        assert!(with(&["--bots", "101"]).is_err());
+        assert!(with(&["--scenarios", "restart"]).is_err(), "no RemoteAdmin");
+        assert!(
+            with(&[
+                "--scenarios",
+                "restart",
+                "--remote-admin-password-file",
+                "ra",
+                "--bots",
+                "2"
+            ])
+            .is_err(),
+            "restarts with one bot"
+        );
+        assert!(
+            with(&[
+                "--scenarios",
+                "restart",
+                "--remote-admin-password-file",
+                "ra"
+            ])
+            .is_ok()
+        );
     }
 
     #[test]

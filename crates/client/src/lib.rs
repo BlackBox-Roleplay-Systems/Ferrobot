@@ -979,6 +979,32 @@ impl Client {
         .await
     }
 
+    /// A new box at a place of the bot's region, as the build tool makes one (ObjectAdd); it
+    /// comes in the object updates, owned by the bot.
+    pub async fn add_box(&self, at: glam::Vec3, size: glam::Vec3) -> Result<(), ClientError> {
+        self.ask(|reply| Request::Object(network::ObjectRequest::AddBox { at, size, reply }))
+            .await
+    }
+
+    /// Move an object the bot may edit, with its linkset (MultipleObjectUpdate). A place outside
+    /// the region moves it into the next one, with whoever sits on it.
+    pub async fn move_object(&self, local_id: u32, to: glam::Vec3) -> Result<(), ClientError> {
+        self.ask(|reply| {
+            Request::Object(network::ObjectRequest::Move {
+                local_id,
+                to,
+                reply,
+            })
+        })
+        .await
+    }
+
+    /// Delete an object of the bot's, to its trash (DeRezObject).
+    pub async fn delete_object(&self, local_id: u32) -> Result<(), ClientError> {
+        self.ask(|reply| Request::Object(network::ObjectRequest::Delete { local_id, reply }))
+            .await
+    }
+
     /// Put an item of the bot's into an object (a script, running or not).
     pub async fn give_to_object(
         &self,

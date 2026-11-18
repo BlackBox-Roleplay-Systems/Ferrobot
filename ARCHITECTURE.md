@@ -19,7 +19,9 @@ crates/
     src/network/mod.rs     one session in one region: connect sequence, keep-alive, incoming
                            messages, requests, teleports, logout
     src/network/neighbours.rs  circuits to neighbour regions (child agents), when asked for:
-                           EnableSimulator, crossings over an open circuit (from Aurora's session)
+                           EnableSimulator, their event queues, crossings over an open circuit
+                           (from Aurora's session); the region a move left, kept until the arrival
+                           to go back to when the new region never confirms it
     src/network/groups.rs  group requests and replies (from Aurora's session_groups.rs)
     src/groups.rs          group data: roles, members, pairs, titles (from Aurora's groups.rs)
     src/group_api.rs       the client's group requests, the member list cache
@@ -70,9 +72,11 @@ crates/
     src/services/control.rs  the services that can be stopped, started and changed by name (SecondBot's service control)
     tests/testgrid.rs      the real bot, run as a process against the test grid
   probe/      ferro-probe  the test platform: teleports and crossings against real regions
-    src/main.rs            the rounds, the exit code
+    src/main.rs            the bots and their rounds, the exit code
     src/options.rs         the command line
-    src/scenarios.rs       the scenarios: login, teleports, crossings, faults put in
+    src/scenarios.rs       the scenarios: login, teleports, crossings, faults put in, restarts,
+                           a seated crossing
+    src/admin.rs           OpenSim's RemoteAdmin: accounts for the bots, region restarts
     src/judge.rs           a teleport's verdict, from where the avatar is afterwards
     src/report.rs          one JSON line per step, the table
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
