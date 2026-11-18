@@ -43,6 +43,10 @@ pub struct State {
     pub parcel: Option<crate::parcels::ParcelInfo>,
     /// Every parcel of the region, once asked for (UpdateListOfParcels).
     pub region_parcels: Option<crate::parcels::RegionParcels>,
+    /// The region's ground, as far as its LayerData patches have come.
+    pub terrain: crate::land::Terrain,
+    /// The region's parcel overlay (ParcelOverlay), sent on arrival and after every change.
+    pub overlay: crate::land::Overlay,
     /// The animations the region says the bot plays (AvatarAnimation).
     pub animations: Vec<Uuid>,
     /// Marked away (SetAway).

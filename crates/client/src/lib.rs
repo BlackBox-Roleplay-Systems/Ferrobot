@@ -21,6 +21,7 @@ mod inventory_api;
 pub use inventory_api::FolderNode;
 pub mod groups;
 pub mod inventory;
+pub mod land;
 pub mod login;
 pub mod mutes;
 pub mod names;
@@ -891,10 +892,17 @@ impl Client {
             .await
     }
 
-    /// Eject, freeze, change an access list, return objects, deed, abandon, buy, reclaim.
+    /// Eject, freeze, change an access list, return objects, deed, abandon, buy, reclaim;
+    /// subdivide, join, terraform.
     pub async fn parcel_act(&self, action: network::ParcelAction) -> Result<(), ClientError> {
         self.ask(|reply| Request::Parcel(network::ParcelRequest::Act { action, reply }))
             .await
+    }
+
+    /// The ground's height at a point of the bot's region, as the region's LayerData patches
+    /// have it (`None` until that patch has come).
+    pub fn ground_height(&self, x: f32, y: f32) -> Option<f32> {
+        self.shared.state().terrain.height(x, y)
     }
 
     /// Change a parcel: `parcel` is what it should be, from a ParcelInfo the region sent.

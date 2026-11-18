@@ -893,6 +893,42 @@ impl Region {
                     self.shared.state().parcel_bans = ids;
                 }
             }
+        } else if id == ParcelDivide::ID {
+            if let Ok(m) = pkt.decode::<ParcelDivide>() {
+                let d = &m.parcel_data;
+                self.shared.saw(Seen::Parcel {
+                    what: format!("divide {} {} {} {}", d.west, d.south, d.east, d.north),
+                });
+            }
+        } else if id == ParcelJoin::ID {
+            if let Ok(m) = pkt.decode::<ParcelJoin>() {
+                let d = &m.parcel_data;
+                self.shared.saw(Seen::Parcel {
+                    what: format!("join {} {} {} {}", d.west, d.south, d.east, d.north),
+                });
+            }
+        } else if id == ModifyLand::ID {
+            if let Ok(m) = pkt.decode::<ModifyLand>() {
+                let b = &m.modify_block;
+                let size = m.modify_block_extended.first().map(|e| e.brush_size);
+                for d in &m.parcel_data {
+                    self.shared.saw(Seen::Parcel {
+                        what: format!(
+                            "modify-land {} brush {} {:?} seconds {} height {} parcel {} at {} {} {} {}",
+                            b.action,
+                            b.brush_size,
+                            size,
+                            b.seconds,
+                            b.height,
+                            d.local_id,
+                            d.west,
+                            d.south,
+                            d.east,
+                            d.north
+                        ),
+                    });
+                }
+            }
         } else if id == ParcelObjectOwnersRequest::ID {
             // two owners with objects on the parcel
             let data = [
@@ -2200,6 +2236,18 @@ impl Region {
                 m.data.object_name = str_field("Dance Ball");
                 m.data.object_owner = str_field(&owner);
                 m.data.questions = questions;
+                self.send(to, &m, true);
+            }
+            RegionCommand::Ground { layer } => {
+                let mut m = LayerData::default();
+                m.layer_id.type_ = b'L';
+                m.layer_data.data = layer;
+                self.send(to, &m, true);
+            }
+            RegionCommand::Overlay { sequence, cells } => {
+                let mut m = ParcelOverlay::default();
+                m.parcel_data.sequence_id = sequence;
+                m.parcel_data.data = cells;
                 self.send(to, &m, true);
             }
             RegionCommand::TakeBack { reason } => {

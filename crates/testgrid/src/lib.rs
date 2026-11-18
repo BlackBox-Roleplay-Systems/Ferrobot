@@ -441,7 +441,9 @@ pub enum Seen {
         start: i32,
     },
     /// Something done to a parcel or on it, in words: "eject <key> <flags>", "freeze …",
-    /// "return <type> <owners>", "deed <local id> <group>", "release", "buy", "reclaim".
+    /// "return <type> <owners>", "deed <local id> <group>", "release", "buy", "reclaim",
+    /// "divide <w> <s> <e> <n>", "join …", "modify-land <action> brush <index> <size> seconds …
+    /// parcel <local id> at <w> <s> <e> <n>".
     Parcel {
         what: String,
     },
@@ -740,6 +742,15 @@ enum RegionCommand {
     /// back, as OpenSim does when the destination never confirms (EntityTransferModule.Fail).
     TakeBack {
         reason: String,
+    },
+    /// LayerData: a land layer, as encoded.
+    Ground {
+        layer: Vec<u8>,
+    },
+    /// ParcelOverlay: one part of the overlay.
+    Overlay {
+        sequence: i32,
+        cells: Vec<u8>,
     },
     /// DisableSimulator to a child agent's circuit: the circuit closes, the session goes on.
     CloseChild,
@@ -1369,6 +1380,17 @@ impl TestGrid {
         self.command(RegionCommand::TakeBack {
             reason: reason.into(),
         });
+    }
+
+    /// The region sends ground patches (LayerData): a land layer as `encoded`
+    /// (ferro_client::land::encode_flat_layer makes one).
+    pub fn send_ground(&self, encoded: Vec<u8>) {
+        self.command(RegionCommand::Ground { layer: encoded });
+    }
+
+    /// The region sends a part of its parcel overlay (ParcelOverlay).
+    pub fn send_overlay(&self, sequence: i32, cells: Vec<u8>) {
+        self.command(RegionCommand::Overlay { sequence, cells });
     }
 
     pub fn close_neighbour(&self) {

@@ -57,6 +57,34 @@ pub enum ParcelAction {
     Reclaim {
         local_id: i32,
     },
+    /// ParcelDivide: the land selected (region metres, on the 4 m grid) becomes a parcel of its
+    /// own (LLViewerParcelMgr::subdivideParcel, the land tools' Subdivide).
+    Divide {
+        west: f32,
+        south: f32,
+        east: f32,
+        north: f32,
+    },
+    /// ParcelJoin: the parcels the selection touches become one (LLViewerParcelMgr::joinParcel).
+    Join {
+        west: f32,
+        south: f32,
+        east: f32,
+        north: f32,
+    },
+    /// ModifyLand: the land tools. A brush at a point (west = east, south = north), or a whole
+    /// selection; `local_id` -1 as the viewer sends it, else the parcel the change is kept to.
+    ModifyLand {
+        action: u8,
+        brush_size: f32,
+        seconds: f32,
+        height: f32,
+        local_id: i32,
+        west: f32,
+        south: f32,
+        east: f32,
+        north: f32,
+    },
 }
 
 /// One row of ParcelObjectOwnersReply.
@@ -505,7 +533,83 @@ impl Session<'_> {
                 m.data.local_id = local_id;
                 self.send(&m, true);
             }
+            ParcelAction::Divide {
+                west,
+                south,
+                east,
+                north,
+            } => {
+                let mut m = ParcelDivide::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.parcel_data.west = west;
+                m.parcel_data.south = south;
+                m.parcel_data.east = east;
+                m.parcel_data.north = north;
+                self.send(&m, true);
+            }
+            ParcelAction::Join {
+                west,
+                south,
+                east,
+                north,
+            } => {
+                let mut m = ParcelJoin::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.parcel_data.west = west;
+                m.parcel_data.south = south;
+                m.parcel_data.east = east;
+                m.parcel_data.north = north;
+                self.send(&m, true);
+            }
+            ParcelAction::ModifyLand {
+                action,
+                brush_size,
+                seconds,
+                height,
+                local_id,
+                west,
+                south,
+                east,
+                north,
+            } => {
+                // LLToolBrushLand::modifyLandAtPointGlobal / modifyLandInSelectionGlobal: the old
+                // brush index and the real size in ModifyBlockExtended
+                let mut m = ModifyLand::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.modify_block.action = action;
+                m.modify_block.brush_size = crate::land::brush_index(brush_size);
+                m.modify_block.seconds = seconds;
+                m.modify_block.height = height;
+                m.parcel_data = vec![modify_land::ParcelData {
+                    local_id,
+                    west,
+                    south,
+                    east,
+                    north,
+                }];
+                m.modify_block_extended = vec![modify_land::ModifyBlockExtended { brush_size }];
+                self.send(&m, true);
+            }
         }
+    }
+
+    /// LayerData: the ground's patches (land layers only; wind and clouds are left aside).
+    pub(super) fn on_layer_data(&mut self, m: &LayerData) {
+        let patches = crate::land::decode_land_layer(m.layer_id.type_, &m.layer_data.data);
+        if !patches.is_empty() {
+            self.shared.state_mut().terrain.add(patches);
+        }
+    }
+
+    /// ParcelOverlay: a part of the region's parcel map.
+    pub(super) fn on_parcel_overlay(&mut self, m: &ParcelOverlay) {
+        self.shared
+            .state_mut()
+            .overlay
+            .add(m.parcel_data.sequence_id, &m.parcel_data.data);
     }
 
     /// DirLandReply: the search's answer, by its query id.
