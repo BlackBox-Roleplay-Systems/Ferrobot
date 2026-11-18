@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 /// One step: a login, a teleport, a crossing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {
+    /// The bot's name, when several run at once.
+    pub bot: String,
     /// The step's kind and round: `near-tp-to-Beta#2`.
     pub what: String,
     pub ok: bool,
@@ -24,6 +26,7 @@ pub struct Record {
 impl Record {
     pub fn json(&self) -> String {
         serde_json::json!({
+            "bot": self.bot,
             "what": self.what,
             "ok": self.ok,
             "ms": self.ms,
@@ -76,6 +79,7 @@ mod tests {
 
     fn rec(what: &str, ok: bool, ms: u64) -> Record {
         Record {
+            bot: "Test User".into(),
             what: what.into(),
             ok,
             ms,
@@ -91,6 +95,7 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&rec("local-tp#1", true, 14).json()).expect("json");
         assert_eq!(v["what"], "local-tp#1");
+        assert_eq!(v["bot"], "Test User");
         assert_eq!(v["ok"], true);
         assert_eq!(v["ms"], 14);
         assert_eq!(v["region"], "Alpha");
