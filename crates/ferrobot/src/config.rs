@@ -1154,6 +1154,7 @@ fn timeouts(s: &Source) -> Result<ferro_client::Timeouts, ConfigError> {
             default.event_queue_errors,
             "a number of errors",
         )?,
+        transit: default.transit,
     })
 }
 

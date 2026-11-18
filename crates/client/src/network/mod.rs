@@ -9,8 +9,12 @@
 //! Teleports and region crossings move the session to another region: on TeleportFinish or
 //! CrossedRegion (event queue), a circuit to the new region (UseCircuitCode, then
 //! CompleteAgentMovement once acked) and its own seed and event queue, as Aurora's switch_region.
-//! The old region is left behind: like LibreMetaverse's bots (AgentSettings.MultipleSims = false),
-//! the bot keeps no circuits to neighbour regions.
+//! The old region's circuit is kept until the bot has arrived in the new one: when the new region
+//! never confirms it (unreachable, or failing), the region left takes the agent back and says so
+//! with TeleportFailed (OpenSim's EntityTransferModule, "Returning avatar to source region"), and
+//! the bot goes back to it, where ending the session would leave the agent on the grid. Once
+//! arrived, the old region is let go: like LibreMetaverse's bots (AgentSettings.MultipleSims =
+//! false), the bot keeps no circuits to neighbour regions, unless they are turned on.
 
 mod estate;
 mod groups;
@@ -63,6 +67,9 @@ pub struct Timeouts {
     /// Fast event queue failures in a row before the queue is lost and the session ends (15,
     /// with 1 s + 3 s per error between them).
     pub event_queue_errors: u32,
+    /// A teleport or crossing the new region does not confirm in this long goes back to the
+    /// region left (60 s).
+    pub transit: Duration,
 }
 
 impl Default for Timeouts {
@@ -70,6 +77,7 @@ impl Default for Timeouts {
         Timeouts {
             region_silence: REGION_TIMEOUT,
             event_queue_errors: caps::MAX_ERRORS,
+            transit: TRANSIT_EXPIRY,
         }
     }
 }
@@ -81,6 +89,11 @@ const LOGOUT_WAIT: Duration = Duration::from_secs(10);
 /// No AgentMovementComplete this long after CompleteAgentMovement: the arrival failed
 /// (STATE_AGENT_WAIT_TIMEOUT, llstartup.cpp; Aurora's LOGIN_ARRIVAL_TIMEOUT).
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
+/// How long a teleport or crossing waits for the new region to confirm the arrival before the bot
+/// goes back to the region it left. Longer than OpenSim waits for the destination's callback
+/// (EntityTransferStateMachine.WaitForAgentArrivedAtDestination: 400 × 100 ms), so that the
+/// region left, which knows, says first.
+const TRANSIT_EXPIRY: Duration = Duration::from_secs(60);
 /// Ids per UUIDNameRequest (Aurora's RequestNames).
 const NAMES_PER_REQUEST: usize = 64;
 /// TELEPORT_FLAGS_VIA_LURE (lltelepostflags.h); LibreMetaverse's TeleportLureRespond sends it.
@@ -208,6 +221,15 @@ impl Network {
 
 type TeleportReply = oneshot::Sender<Result<String, String>>;
 
+/// The region a teleport or crossing left, and what the bot knew of it: enough to go back.
+struct Previous {
+    n: neighbours::Neighbour,
+    seed: String,
+    region: Region,
+    position: Vec3,
+    left_at: Instant,
+}
+
 struct Session<'a> {
     login: &'a LoginResponse,
     shared: &'a Shared,
@@ -227,6 +249,14 @@ struct Session<'a> {
     circuit: Circuit,
     /// Circuits to the regions around (off unless asked for).
     neighbours: neighbours::Neighbours,
+    /// The region a teleport or crossing under way left: kept until the arrival.
+    previous: Option<Previous>,
+    /// The current region's seed capability (a secret of the session, never logged).
+    seed: String,
+    /// The current region never acknowledged UseCircuitCode: waiting for the region left.
+    unreachable: bool,
+    /// The bot went back to the region it left: the TeleportFailed that region sends is expected.
+    went_back: bool,
     ucc_seq: u32,
     movement_sent: Option<Instant>,
     arrived: bool,
@@ -897,6 +927,15 @@ impl Session<'_> {
         });
         self.send_agent_update();
         self.appearance_once();
+        // the region left is no longer needed to go back to
+        if let Some(p) = self.previous.take() {
+            let mut n = p.n;
+            n.circuit.flush_acks(&self.sock);
+            if !self.neighbours.keep(n) {
+                log::debug!("the region left let go");
+            }
+            self.publish_neighbours();
+        }
         if let Some(waiting) = self.teleport.take() {
             log::info!("teleported to {}", self.region_name);
             if let Some(reply) = waiting {
@@ -923,6 +962,7 @@ impl Session<'_> {
         if let Some(old) = self.caps_task.take() {
             old.abort();
         }
+        self.seed = seed.clone();
         let (tx, rx) = mpsc::unbounded_channel();
         self.eq_rx = rx;
         self.eq_open = true;
@@ -952,8 +992,9 @@ impl Session<'_> {
     /// CompleteAgentMovement once it is up, and its capabilities (Aurora's switch_region,
     /// LibreMetaverse's TeleportFinishEventHandler). With neighbours on, a region whose circuit
     /// is open already is moved into over that circuit, as the viewer does after a crossing
-    /// (LLWorld keeps the region; only CompleteAgentMovement goes out), and the region left is
-    /// kept as a neighbour until it closes the circuit.
+    /// (LLWorld keeps the region; only CompleteAgentMovement goes out). The region left is kept
+    /// until the arrival, to go back to if the new one fails ([`Session::go_back`]); then, with
+    /// neighbours on, as a neighbour until it closes the circuit.
     fn switch_region(&mut self, addr: SocketAddr, region_handle: u64, seed: String) {
         log::info!("moving to region {:x} at {addr}", region_handle);
         self.circuit.flush_acks(&self.sock);
@@ -961,11 +1002,36 @@ impl Session<'_> {
         let open = if left.addr == addr {
             None
         } else {
-            let left_handle = self.shared.state().region.as_ref().map_or(0, |r| r.handle);
             let open = self.neighbours.take(&addr);
-            self.neighbours.keep(left, left_handle, self.handshake());
+            // a second move before the first arrived: the region before is let go as on arrival
+            if let Some(p) = self.previous.take()
+                && p.n.circuit.addr != addr
+            {
+                self.neighbours.keep(p.n);
+            }
+            let region = self.shared.state().region.clone();
+            match region {
+                Some(region) if self.arrived => {
+                    self.previous = Some(Previous {
+                        n: neighbours::Neighbour::kept(
+                            left,
+                            self.ucc_seq,
+                            region.handle,
+                            self.handshake(),
+                        ),
+                        seed: std::mem::take(&mut self.seed),
+                        region,
+                        position: self.position,
+                        left_at: Instant::now(),
+                    });
+                }
+                // not arrived there (a move during the login's): nothing to go back to
+                _ => {}
+            }
             open
         };
+        self.unreachable = false;
+        self.went_back = false;
         self.arrived = false;
         self.movement_sent = None;
         self.caps.clear();
@@ -1052,7 +1118,43 @@ impl Session<'_> {
         self.shared.state_mut().neighbours = self.neighbours.list();
     }
 
+    /// The new region never confirmed the arrival: back to the region left, whose circuit, seed
+    /// and agent are still there (OpenSim takes the agent back: EntityTransferModule.Fail). The
+    /// teleport fails; the session goes on where it was.
+    fn go_back(&mut self, why: String) {
+        let Some(p) = self.previous.take() else {
+            return;
+        };
+        log::warn!("back to {}: {why}", p.region.name);
+        // the failed region's circuit goes; it never had the agent
+        self.circuit.flush_acks(&self.sock);
+        self.circuit = p.n.circuit;
+        self.ucc_seq = p.n.ucc_seq;
+        if let Some(h) = p.n.handshake {
+            self.set_handshake(h);
+        }
+        self.position = p.position;
+        self.arrived = true;
+        self.movement_sent = Some(Instant::now());
+        self.unreachable = false;
+        self.went_back = true;
+        {
+            let mut st = self.shared.state_mut();
+            st.region = Some(p.region);
+            st.position = p.position;
+        }
+        self.start_caps(p.seed);
+        self.publish_neighbours();
+        self.send_agent_update();
+        self.teleport_failed(why);
+    }
+
     fn teleport_failed(&mut self, reason: String) {
+        if self.teleport.is_none() && std::mem::take(&mut self.went_back) {
+            // the region left says what the bot found out already
+            log::info!("the region confirms the teleport failed: {reason}");
+            return;
+        }
         log::warn!("teleport failed: {reason}");
         if let Some(Some(reply)) = self.teleport.take() {
             let _ = reply.send(Err(reason.clone()));
@@ -1067,6 +1169,7 @@ impl Session<'_> {
         }
         // SecondBot cancels the autopilot before a teleport
         self.end_walks();
+        self.went_back = false;
         let (agent_id, session_id) = (self.login.agent_id, self.login.session_id);
         match to {
             TeleportTo::Lure(lure) => {
@@ -1283,16 +1386,39 @@ impl Session<'_> {
         {
             self.publish_neighbours();
         }
+        if let Some(p) = &mut self.previous
+            && let Some(why) = p.n.tick(&self.sock, now, self.timeouts.region_silence)
+        {
+            log::warn!("the region left is gone: {why}");
+            self.previous = None;
+        }
         for transfer in self.transfers.expire() {
             self.abort_transfer(transfer);
         }
         self.tick_terrain_upload(now);
         if self.circuit.take_dropped().contains(&self.ucc_seq) {
-            return Some(End::Lost(
-                "the region never acknowledged UseCircuitCode".into(),
+            if self.previous.is_none() {
+                return Some(End::Lost(
+                    "the region never acknowledged UseCircuitCode".into(),
+                ));
+            }
+            // the region left will take the agent back (TeleportFailed), or the wait expires
+            log::warn!("the new region never acknowledged UseCircuitCode");
+            self.unreachable = true;
+        }
+        if let Some(p) = &self.previous
+            && !self.arrived
+            && now.duration_since(p.left_at) > self.timeouts.transit
+        {
+            self.go_back(format!(
+                "the new region did not confirm the arrival in {} s",
+                self.timeouts.transit.as_secs()
             ));
         }
-        if self.movement_sent.is_none() && !self.circuit.is_unacked(self.ucc_seq) {
+        if self.movement_sent.is_none()
+            && !self.unreachable
+            && !self.circuit.is_unacked(self.ucc_seq)
+        {
             log::info!("circuit to {} up", self.addr());
             self.send_complete_agent_movement();
         }
@@ -1342,7 +1468,9 @@ impl Session<'_> {
         self.estate_waits.retain_open();
         self.profile_waits.retain_open();
         self.created.retain(|_, tx| !tx.is_closed());
-        if now.duration_since(self.circuit.last_recv) > self.timeouts.region_silence {
+        if now.duration_since(self.circuit.last_recv) > self.timeouts.region_silence
+            && self.previous.is_none()
+        {
             return Some(End::Lost(format!(
                 "nothing from the region for {} s",
                 self.timeouts.region_silence.as_secs()
@@ -1352,6 +1480,19 @@ impl Session<'_> {
     }
 
     fn on_datagram(&mut self, data: &[u8], from: SocketAddr) -> Option<End> {
+        if let Some(p) = &mut self.previous
+            && from == p.n.circuit.addr
+        {
+            match p.n.on_datagram(&self.sock, self.login, data) {
+                neighbours::Heard::TeleportFailed(reason) => self.go_back(reason),
+                neighbours::Heard::Closed => {
+                    log::info!("the region left closed its circuit");
+                    self.previous = None;
+                }
+                neighbours::Heard::Nothing | neighbours::Heard::Handshake => {}
+            }
+            return None;
+        }
         if from != self.addr() {
             if self
                 .neighbours
@@ -1863,6 +2004,11 @@ impl Session<'_> {
         } else if id == LogoutReply::ID {
             return Ok(Some(End::LoggedOut));
         } else if id == DisableSimulator::ID {
+            if self.previous.is_some() && !self.arrived {
+                // the region left took the agent back and closed it here (EntityTransferModule.Fail)
+                self.go_back("the new region closed the connection".into());
+                return Ok(None);
+            }
             return Ok(Some(End::Lost("the region closed the connection".into())));
         }
         Ok(None)
@@ -1999,6 +2145,9 @@ impl Session<'_> {
             // EnableSimulator is UDPBlackListed in the message template: the viewer takes it only
             // from the event queue (process_enable_simulator via LLEnableSimulatorViewerNode)
             "EnableSimulator" => self.on_enable_simulator(&e.body),
+            "DisableSimulator" if self.previous.is_some() && !self.arrived => {
+                self.go_back("the new region closed the connection".into());
+            }
             "DisableSimulator" => {
                 return Some(End::Lost(
                     "the region closed the connection (event queue)".into(),
@@ -2188,6 +2337,10 @@ async fn run(
         sock,
         circuit: Circuit::new(addr),
         neighbours: neighbours::Neighbours::new(neighbours),
+        previous: None,
+        seed: String::new(),
+        unreachable: false,
+        went_back: false,
         ucc_seq: 0,
         movement_sent: None,
         arrived: false,
@@ -2268,7 +2421,12 @@ async fn run(
                 }
                 // Without the region's event queue, IM sessions, group chat and teleports fail
                 // and nothing gets better before a new login (LLEventPollImpl, Aurora's
-                // on_eq_lost): end the session so that the bot logs in again.
+                // on_eq_lost): end the session so that the bot logs in again. Not while a move is
+                // under way: the new region's queue fails with it, and the bot goes back to the
+                // region left, whose queue it polls again (Session::go_back).
+                Some(EqMessage::Lost) if s.previous.is_some() && !s.arrived => {
+                    log::warn!("the new region's event queue failed: waiting for the region left");
+                }
                 Some(EqMessage::Lost) => break End::Lost("the region's event queue was lost".into()),
                 None => s.eq_open = false,
             },

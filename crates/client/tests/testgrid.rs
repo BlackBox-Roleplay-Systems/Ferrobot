@@ -868,3 +868,127 @@ async fn a_neighbour_that_closes_its_circuit_is_dropped_and_the_session_goes_on(
     assert_eq!(st.region.expect("a region").name, "Test Region");
     assert!(matches!(r.logout().await, End::LoggedOut));
 }
+
+/// A region that never answers, as a region whose address the bot cannot reach: UseCircuitCode
+/// goes out to it and is never acked.
+async fn nowhere() -> tokio::net::UdpSocket {
+    tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("a socket")
+}
+
+async fn teleport_failed_in(events: &mut tokio::sync::broadcast::Receiver<Event>) -> String {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if let Ok(Event::TeleportFailed { reason }) = events.recv().await {
+                return reason;
+            }
+        }
+    })
+    .await
+    .expect("TeleportFailed")
+}
+
+/// After TeleportFinish or CrossedRegion to a region the bot cannot reach, the region left takes
+/// the agent back (OpenSim: TeleportFailed over its circuit) and the bot goes back to it: the
+/// session goes on where it was, with or without neighbours.
+#[tokio::test]
+async fn a_move_to_a_region_that_never_answers_goes_back_when_the_region_left_says_so() {
+    for neighbours in [false, true] {
+        let r = connect_with(GridConfig::default(), neighbours).await;
+        let first = r.grid.region_handle(ferro_testgrid::FIRST_REGION);
+        let dead = nowhere().await;
+        let mut events = r.client.subscribe();
+        r.grid.cross_to(dead.local_addr().expect("addr"));
+        // the bot tries the new region
+        let mut buf = [0u8; 1500];
+        tokio::time::timeout(WAIT, dead.recv_from(&mut buf))
+            .await
+            .expect("UseCircuitCode to the new region")
+            .expect("recv");
+        assert!(state_until(&r.client, |st| st.region.is_none()).await);
+        r.grid
+            .take_back("Destination region did not signal teleport completion.");
+        let reason = teleport_failed_in(&mut events).await;
+        assert!(reason.contains("did not signal"), "{reason}");
+        let st = r.client.state();
+        assert!(st.online);
+        let region = st.region.expect("back in a region");
+        assert_eq!(
+            (region.name.as_str(), region.handle),
+            ("Test Region", first)
+        );
+        assert_eq!(st.position, Vec3::new(128.0, 128.0, 25.0));
+
+        // and it works there: chat comes in, a teleport goes through, the logout is answered
+        r.grid.say("Someone", "welcome back");
+        assert!(
+            tokio::time::timeout(WAIT, async {
+                loop {
+                    if let Ok(Event::Chat(c)) = events.recv().await
+                        && c.message == "welcome back"
+                    {
+                        return;
+                    }
+                }
+            })
+            .await
+            .is_ok(),
+            "neighbours {neighbours}"
+        );
+        r.client
+            .teleport_to(first, Vec3::new(100.0, 100.0, 25.0))
+            .await
+            .expect("a local teleport after going back");
+        assert!(matches!(r.logout().await, End::LoggedOut));
+    }
+}
+
+/// A region left that never says: the bot goes back once the wait for the arrival expires.
+#[tokio::test]
+async fn a_move_never_confirmed_goes_back_when_the_wait_expires() {
+    let grid = TestGrid::start(GridConfig::default())
+        .await
+        .expect("the test grid starts");
+    let http = reqwest::Client::new();
+    let (client, mut network) = Client::new(http.clone());
+    network.set_timeouts(ferro_client::Timeouts {
+        transit: Duration::from_secs(2),
+        ..Default::default()
+    });
+    let mut events = client.subscribe();
+    let req = LoginRequest {
+        login_uri: grid.login_uri(),
+        username: grid.username(),
+        password: grid.password().into(),
+        start: StartLocation::Last,
+    };
+    let resp = login::login(&http, &req).await.expect("login");
+    let (stop, stop_rx) = watch::channel(false);
+    let session = tokio::spawn(async move { network.session(&resp, stop_rx).await });
+    arrival_in(&mut events).await;
+    let r = Running {
+        grid,
+        client,
+        stop,
+        session,
+    };
+    let dead = nowhere().await;
+    r.grid.cross_to(dead.local_addr().expect("addr"));
+    let reason = teleport_failed_in(&mut events).await;
+    assert!(reason.contains("did not confirm"), "{reason}");
+    assert_eq!(
+        r.client.state().region.map(|r| r.name),
+        Some("Test Region".into())
+    );
+    // the region's late TeleportFailed is taken quietly: no second event
+    r.grid
+        .take_back("Destination region did not signal teleport completion.");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !std::iter::from_fn(|| events.try_recv().ok())
+            .any(|e| matches!(e, Event::TeleportFailed { .. })),
+        "one TeleportFailed only"
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}

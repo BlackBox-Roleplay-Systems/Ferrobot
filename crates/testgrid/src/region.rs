@@ -2160,6 +2160,12 @@ impl Region {
                 m.data.questions = questions;
                 self.send(to, &m, true);
             }
+            RegionCommand::TakeBack { reason } => {
+                let mut m = TeleportFailed::default();
+                m.info.agent_id = self.shared.agent_id;
+                m.info.reason = str_field(&reason);
+                self.send(to, &m, true);
+            }
             RegionCommand::CloseChild => {
                 self.send(to, &DisableSimulator::default(), false);
                 // the circuit only: the session goes on in the other region
