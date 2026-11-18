@@ -542,6 +542,8 @@ docker run --rm -e FERRO_USERNAME='Bot Name' -e FERRO_PASSWORD='…' ferrobot
 - `crates/msg` - the UDP message system, generated from `message_template.msg` (from Aurora Viewer)
 - `crates/testgrid` - a fake grid on localhost (login server, region, event queue) that the tests
   run the bot against
+- `crates/probe` - `ferro-probe`, the test platform: teleports and crossings against real regions
+  (not in the Docker image)
 
 See `NOTICE.md` for what comes from where.
 
@@ -549,6 +551,34 @@ See `NOTICE.md` for what comes from where.
 
 `cargo run -p ferro-testgrid --example serve` starts the test grid, a fake grid on localhost, and
 prints the settings to log the bot in to it (its own test account, not a Second Life one).
+
+## Testing regions: ferro-probe
+
+`ferro-probe` logs a test account in to real regions, a local OpenSim grid, and runs scenarios of
+teleports and crossings. It judges each step by where the avatar ends up: in the right region,
+within 2 m of the target, and still there 1.5 s later, with no jump back toward the start on the
+way. It keeps circuits to the neighbour regions as a viewer does, and can drop messages on purpose
+(a lost CrossedRegion). It prints one JSON line per step, then a table.
+
+```bash
+cargo run -p ferro-probe -- --login-uri http://127.0.0.1:9000/ --user "Test User" \
+    --password-file .scratch/password --scenarios all,bounce,lost-crossing --rounds 3
+```
+
+| Scenario | What it does |
+|---|---|
+| `local` | two teleports within the home region |
+| `near` | to the neighbour region and back |
+| `far` | to a region far away and back |
+| `cross` | flies over the border to the neighbour and back |
+| `bounce` | local teleports while standing, walking, flying and falling: does the avatar snap back? |
+| `lost-crossing` | a crossing whose CrossedRegion the bot drops, then a local teleport, to the neighbour and back |
+| `unreachable` | a teleport to a region whose address the bot cannot reach, then the same |
+
+`all` is `local,near,far,cross`. The regions are `--home`, `--near` (east of home), `--far` and
+`--unreachable` (Alpha, Beta, Gamma and Delta by default). Each round logs in afresh. Exit code 0
+when every step went right, 1 otherwise. `--help` lists the options. The password is read from a
+file, never from the command line.
 
 ## Plan and contributing
 

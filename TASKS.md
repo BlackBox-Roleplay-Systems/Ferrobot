@@ -75,7 +75,8 @@ baking: the bot says so and goes on.
   kept; the region left is kept as a neighbour until DisableSimulator or silence; the
   neighbours in `State::neighbours`. As the viewer's LLWorld and Aurora's session
   (add_sim/remove_sim/switch_region). Tested on the test grid (child agents, crossings,
-  `TestGrid::enable_neighbour`, `cross`, `close_neighbour`) and on NGC regions
+  `TestGrid::enable_neighbour`, `cross`, `close_neighbour`) and on four NGC regions with
+  ferro-probe (2026-11-18)
 - ⬜ Neighbours' seed capabilities and event queues (EstablishAgentCommunication): not opened yet;
   Aurora opens them for the objects it draws across the border
 - 🟡 Region restarts: notices read as Aurora's region_restart.rs (Second Life's named alerts,
@@ -536,3 +537,23 @@ baking: the bot says so and goes on.
 - 🟡 Rate limit on the commands that change things (FERRO_RATE_LIMIT, 60 a minute, bursts of 20;
   they wait their turn up to a minute, then "Too many commands [Retry later]")
 - 🟡 Published image with versioned tags (done in phase 1, see there)
+
+## Test platform
+
+Ferrobot as a test platform for regions: what the Tranquillity teleport rig did with a
+LibreMetaverse client, in Rust, on the same client as the bot.
+
+- 🟡 `crates/probe` (ferro-probe): scenarios of teleports and crossings (local, near, far, cross,
+  bounce, lost-crossing, unreachable), one fresh login a round, each step judged by where the
+  avatar ends up (the rig's rules: right region, within 2 m, still there 1.5 s later, no jump back
+  toward the start), JSON lines and a table. Run on four NGC regions (2026-11-18): every step of
+  `all` right; on Tranquillity's develop build it shows the snap back after a local teleport
+  while falling, and the avatar stuck at the border after a lost CrossedRegion
+- 🟡 Faults (`ferro-client` feature `faults`, `Client::faults`): the next events or UDP messages
+  of a name dropped, as a network that loses them; tested on the test grid
+- ⬜ A teleport to a region whose address does not answer ends the whole session ("the region
+  never acknowledged UseCircuitCode"): check what the viewer does, and report a failed teleport
+  instead if it keeps the old region
+- ⬜ More scenarios: the region's restart while the bot is in it, a crossing while sitting, a
+  teleport while a crossing is under way, many bots at once
+- ⬜ Run the probe in CI against a Tranquillity region
