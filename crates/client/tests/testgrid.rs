@@ -25,12 +25,18 @@ async fn connect() -> Running {
 }
 
 async fn connect_to(cfg: GridConfig) -> Running {
+    connect_with(cfg, false).await
+}
+
+/// Log in with the circuits to neighbour regions kept, or not.
+async fn connect_with(cfg: GridConfig, neighbours: bool) -> Running {
     let grid = TestGrid::start(cfg).await.expect("the test grid starts");
     let http = reqwest::Client::builder()
         .redirect(login::redirect_policy())
         .build()
         .expect("http client");
     let (client, mut network) = Client::new(http.clone());
+    network.set_neighbours(neighbours);
     let mut events = client.subscribe();
     let req = LoginRequest {
         login_uri: grid.login_uri(),
@@ -739,4 +745,126 @@ mod groups {
         assert!(!r.client.state().group_chats.contains(&TEST_GROUP));
         assert!(matches!(r.logout().await, End::LoggedOut));
     }
+}
+
+/// Waits for the client's state to satisfy `done`.
+async fn state_until(client: &Client, done: impl Fn(&ferro_client::State) -> bool) -> bool {
+    tokio::time::timeout(WAIT, async {
+        while !done(&client.state()) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+async fn arrival_in(events: &mut tokio::sync::broadcast::Receiver<Event>) -> (String, Vec3) {
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if let Ok(Event::Arrived { region, position }) = events.recv().await {
+                return (region, position);
+            }
+        }
+    })
+    .await
+    .expect("an arrival")
+}
+
+fn circuits_to(grid: &TestGrid, region: usize) -> usize {
+    grid.count(|s| matches!(s, Seen::UseCircuitCode { region: r, .. } if *r == region))
+}
+
+#[tokio::test]
+async fn without_neighbours_enable_simulator_opens_nothing() {
+    let r = connect().await;
+    r.grid.enable_neighbour();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(circuits_to(&r.grid, ferro_testgrid::SECOND_REGION), 0);
+    assert!(r.client.state().neighbours.is_empty());
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+#[tokio::test]
+async fn without_neighbours_a_crossing_opens_a_circuit_to_the_new_region() {
+    let r = connect().await;
+    let mut events = r.client.subscribe();
+    r.grid.cross(Vec3::new(3.0, 128.0, 25.0));
+    assert_eq!(
+        arrival_in(&mut events).await,
+        ("Second Region".into(), Vec3::new(3.0, 128.0, 25.0))
+    );
+    assert_eq!(circuits_to(&r.grid, ferro_testgrid::SECOND_REGION), 1);
+    assert!(r.client.state().neighbours.is_empty());
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+/// As a viewer: EnableSimulator opens a circuit to the neighbour (UseCircuitCode, the handshake
+/// answered, no CompleteAgentMovement), a crossing moves in over it with CompleteAgentMovement
+/// alone, and the region left is kept as a neighbour.
+#[tokio::test]
+async fn a_crossing_moves_in_over_the_neighbours_circuit() {
+    let r = connect_with(GridConfig::default(), true).await;
+    let second = r.grid.region_handle(ferro_testgrid::SECOND_REGION);
+    let first = r.grid.region_handle(ferro_testgrid::FIRST_REGION);
+    r.grid.enable_neighbour();
+    assert!(
+        state_until(&r.client, |st| st.neighbours
+            == vec![(second, "Second Region".into())])
+        .await,
+        "the neighbour's circuit and handshake: {:?}",
+        r.client.state().neighbours
+    );
+    assert_eq!(circuits_to(&r.grid, ferro_testgrid::SECOND_REGION), 1);
+    assert_eq!(
+        r.grid.count(|s| matches!(s, Seen::CompleteAgentMovement { region, .. } if *region == ferro_testgrid::SECOND_REGION)),
+        0,
+        "a child agent is not moved into"
+    );
+
+    let mut events = r.client.subscribe();
+    r.grid.cross(Vec3::new(3.0, 128.0, 25.0));
+    assert_eq!(
+        arrival_in(&mut events).await,
+        ("Second Region".into(), Vec3::new(3.0, 128.0, 25.0))
+    );
+    // no second UseCircuitCode: the circuit was open
+    assert_eq!(circuits_to(&r.grid, ferro_testgrid::SECOND_REGION), 1);
+    let st = r.client.state();
+    let region = st.region.expect("a region");
+    assert_eq!(
+        (region.name.as_str(), region.handle),
+        ("Second Region", second)
+    );
+    assert_eq!(st.neighbours, vec![(first, "Test Region".into())]);
+
+    // and it keeps working there
+    r.grid.say("Someone", "hello across the border");
+    assert!(
+        tokio::time::timeout(WAIT, async {
+            loop {
+                if let Ok(Event::Chat(c)) = events.recv().await
+                    && c.message == "hello across the border"
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .is_ok()
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+#[tokio::test]
+async fn a_neighbour_that_closes_its_circuit_is_dropped_and_the_session_goes_on() {
+    let r = connect_with(GridConfig::default(), true).await;
+    r.grid.enable_neighbour();
+    assert!(state_until(&r.client, |st| st.neighbours.len() == 1).await);
+    r.grid.close_neighbour();
+    assert!(state_until(&r.client, |st| st.neighbours.is_empty()).await);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let st = r.client.state();
+    assert!(st.online);
+    assert_eq!(st.region.expect("a region").name, "Test Region");
+    assert!(matches!(r.logout().await, End::LoggedOut));
 }

@@ -13,6 +13,8 @@ mod caps;
 mod circuit;
 pub mod estate;
 pub mod events;
+#[cfg(feature = "faults")]
+pub mod faults;
 pub mod gesture;
 mod group_api;
 mod inventory_api;
@@ -273,6 +275,8 @@ pub(crate) struct Shared {
     seen_items: Mutex<std::collections::HashSet<Uuid>>,
     /// Group member lists and when they were fetched.
     group_members: Mutex<HashMap<Uuid, (Vec<groups::GroupMember>, std::time::Instant)>>,
+    #[cfg(feature = "faults")]
+    faults: faults::Faults,
 }
 
 impl Shared {
@@ -317,6 +321,8 @@ impl Client {
             group_members: Mutex::new(HashMap::new()),
             folder_names: Mutex::new(HashMap::new()),
             seen_items: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(feature = "faults")]
+            faults: faults::Faults::default(),
         });
         let (tx, rx) = mpsc::channel(REQUEST_BUFFER);
         (
@@ -326,6 +332,12 @@ impl Client {
             },
             Network::new(http, rx, shared),
         )
+    }
+
+    /// The faults a test puts into this client (the `faults` feature).
+    #[cfg(feature = "faults")]
+    pub fn faults(&self) -> &faults::Faults {
+        &self.shared.faults
     }
 
     /// Everything the client reports from now on.

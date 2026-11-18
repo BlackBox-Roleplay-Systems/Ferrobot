@@ -15,6 +15,7 @@
 mod estate;
 mod groups;
 mod inventory;
+mod neighbours;
 mod objects;
 mod parcels;
 mod profile;
@@ -123,6 +124,7 @@ pub struct Network {
     requests: mpsc::Receiver<Request>,
     shared: Arc<Shared>,
     timeouts: Timeouts,
+    neighbours: bool,
 }
 
 impl Network {
@@ -136,7 +138,14 @@ impl Network {
             requests,
             shared,
             timeouts: Timeouts::default(),
+            neighbours: false,
         }
+    }
+
+    /// From the next session on: keep circuits to the neighbour regions, as a viewer does
+    /// (network/neighbours.rs). Off by default.
+    pub fn set_neighbours(&mut self, on: bool) {
+        self.neighbours = on;
     }
 
     /// From the next session on.
@@ -180,6 +189,7 @@ impl Network {
             &mut self.requests,
             &self.shared,
             self.timeouts,
+            self.neighbours,
         )
         .await;
         {
@@ -187,6 +197,7 @@ impl Network {
             st.online = false;
             st.region = None;
             st.online_since = None;
+            st.neighbours.clear();
         }
         self.shared.emit(Event::Disconnected {
             reason: end.to_string(),
@@ -214,6 +225,8 @@ struct Session<'a> {
     teleport: Option<Option<TeleportReply>>,
     sock: UdpSocket,
     circuit: Circuit,
+    /// Circuits to the regions around (off unless asked for).
+    neighbours: neighbours::Neighbours,
     ucc_seq: u32,
     movement_sent: Option<Instant>,
     arrived: bool,
@@ -280,10 +293,7 @@ impl Session<'_> {
     }
 
     fn send_use_circuit_code(&mut self) {
-        let mut m = UseCircuitCode::default();
-        m.circuit_code.code = self.login.circuit_code;
-        m.circuit_code.session_id = self.login.session_id;
-        m.circuit_code.id = self.login.agent_id;
+        let m = neighbours::use_circuit_code(self.login);
         self.ucc_seq =
             self.circuit
                 .send_reliable_with(&self.sock, &m, Resend::LOGIN_USE_CIRCUIT_CODE);
@@ -940,14 +950,24 @@ impl Session<'_> {
 
     /// TeleportFinish, CrossedRegion: the agent is now in the region at `addr`. A circuit to it,
     /// CompleteAgentMovement once it is up, and its capabilities (Aurora's switch_region,
-    /// LibreMetaverse's TeleportFinishEventHandler).
+    /// LibreMetaverse's TeleportFinishEventHandler). With neighbours on, a region whose circuit
+    /// is open already is moved into over that circuit, as the viewer does after a crossing
+    /// (LLWorld keeps the region; only CompleteAgentMovement goes out), and the region left is
+    /// kept as a neighbour until it closes the circuit.
     fn switch_region(&mut self, addr: SocketAddr, region_handle: u64, seed: String) {
         log::info!("moving to region {:x} at {addr}", region_handle);
         self.circuit.flush_acks(&self.sock);
-        self.circuit = Circuit::new(addr);
+        let left = std::mem::replace(&mut self.circuit, Circuit::new(addr));
+        let open = if left.addr == addr {
+            None
+        } else {
+            let left_handle = self.shared.state().region.as_ref().map_or(0, |r| r.handle);
+            let open = self.neighbours.take(&addr);
+            self.neighbours.keep(left, left_handle, self.handshake());
+            open
+        };
         self.arrived = false;
         self.movement_sent = None;
-        self.region_name.clear();
         self.caps.clear();
         self.places.clear();
         self.property_asks.clear();
@@ -964,12 +984,72 @@ impl Session<'_> {
             st.parcel = None;
             st.region_parcels = None;
         }
-        self.send_use_circuit_code();
+        match open {
+            Some(n) => {
+                log::info!("the circuit to it is open already");
+                self.circuit = n.circuit;
+                self.ucc_seq = n.ucc_seq;
+                // the region sent its handshake when the circuit opened, and won't again
+                self.set_handshake(n.handshake.unwrap_or_default());
+                if !self.circuit.is_unacked(self.ucc_seq) {
+                    self.send_complete_agent_movement();
+                }
+            }
+            None => {
+                self.set_handshake(neighbours::Handshake::default());
+                self.send_use_circuit_code();
+            }
+        }
+        self.publish_neighbours();
         self.start_caps(seed);
         // a crossing has no request behind it, but it is under way all the same
         if self.teleport.is_none() {
             self.teleport = Some(None);
         }
+    }
+
+    /// What the current region's RegionHandshake said.
+    fn handshake(&self) -> neighbours::Handshake {
+        neighbours::Handshake {
+            name: self.region_name.clone(),
+            id: self.region_id,
+            estate_manager: self.estate_manager,
+            product: self.region_product.clone(),
+        }
+    }
+
+    fn set_handshake(&mut self, h: neighbours::Handshake) {
+        self.region_name = h.name;
+        self.region_id = h.id;
+        self.estate_manager = h.estate_manager;
+        self.region_product = h.product;
+    }
+
+    /// EnableSimulator (event queue): a circuit to a neighbour region, when they are on.
+    fn on_enable_simulator(&mut self, body: &Llsd) {
+        for info in body["SimulatorInfo"].as_array() {
+            let Some(ip) = ip_from_llsd(&info["IP"]) else {
+                log::warn!("EnableSimulator without a region address");
+                continue;
+            };
+            let Ok(port) = u16::try_from(info["Port"].as_i32()) else {
+                log::warn!("EnableSimulator with a wrong port");
+                continue;
+            };
+            let addr = SocketAddr::from((ip, port));
+            let handle = info["Handle"].as_u64();
+            if self
+                .neighbours
+                .enable(&self.sock, self.login, self.addr(), addr, handle)
+            {
+                self.publish_neighbours();
+            }
+        }
+    }
+
+    /// The neighbours, in the state.
+    fn publish_neighbours(&self) {
+        self.shared.state_mut().neighbours = self.neighbours.list();
     }
 
     fn teleport_failed(&mut self, reason: String) {
@@ -1197,6 +1277,12 @@ impl Session<'_> {
     fn tick(&mut self) -> Option<End> {
         let now = Instant::now();
         self.circuit.tick(&self.sock);
+        if self
+            .neighbours
+            .tick(&self.sock, now, self.timeouts.region_silence)
+        {
+            self.publish_neighbours();
+        }
         for transfer in self.transfers.expire() {
             self.abort_transfer(transfer);
         }
@@ -1267,6 +1353,12 @@ impl Session<'_> {
 
     fn on_datagram(&mut self, data: &[u8], from: SocketAddr) -> Option<End> {
         if from != self.addr() {
+            if self
+                .neighbours
+                .on_datagram(&self.sock, self.login, data, from)
+            {
+                self.publish_neighbours();
+            }
             return None;
         }
         let pkt = match parse_packet(data) {
@@ -1276,6 +1368,13 @@ impl Session<'_> {
                 return None;
             }
         };
+        #[cfg(feature = "faults")]
+        if let Some(info) = ferro_msg::message_info(pkt.id)
+            && self.shared.faults.take_message(info.name)
+        {
+            log::warn!("fault: {} dropped", info.name);
+            return None;
+        }
         if !self.circuit.on_receive(pkt.flags, pkt.sequence, &pkt.acks) {
             return None;
         }
@@ -1313,17 +1412,9 @@ impl Session<'_> {
             }
         } else if id == RegionHandshake::ID {
             let m: RegionHandshake = pkt.decode()?;
-            self.region_name = field_str(&m.region_info.sim_name);
-            self.region_id = m.region_info2.region_id;
-            self.estate_manager = m.region_info.is_estate_manager;
-            self.region_product = field_str(&m.region_info3.product_name);
+            self.set_handshake(neighbours::Handshake::read(&m));
             log::info!("region handshake: {}", self.region_name);
-            let mut reply = RegionHandshakeReply::default();
-            reply.agent_data.agent_id = self.login.agent_id;
-            reply.agent_data.session_id = self.login.session_id;
-            // send everything cacheable, the bot keeps no object cache, and it bakes its own
-            // appearance (Aurora's object_cache.rs, LibreMetaverse's NetworkManager both send these)
-            reply.region_info.flags = SEND_ALL_CACHEABLE | CACHE_EMPTY | SUPPORTS_SELF_APPEARANCE;
+            let reply = neighbours::handshake_reply(self.login);
             self.send(&reply, true);
         } else if id == AgentMovementComplete::ID {
             let m: AgentMovementComplete = pkt.decode()?;
@@ -1899,7 +1990,15 @@ impl Session<'_> {
             .map(|m| m.keys().map(String::as_str).collect())
             .unwrap_or_default();
         log::debug!("event: {} {fields:?}", e.message);
+        #[cfg(feature = "faults")]
+        if self.shared.faults.take_event(&e.message) {
+            log::warn!("fault: {} dropped", e.message);
+            return None;
+        }
         match e.message.as_str() {
+            // EnableSimulator is UDPBlackListed in the message template: the viewer takes it only
+            // from the event queue (process_enable_simulator via LLEnableSimulatorViewerNode)
+            "EnableSimulator" => self.on_enable_simulator(&e.body),
             "DisableSimulator" => {
                 return Some(End::Lost(
                     "the region closed the connection (event queue)".into(),
@@ -2062,6 +2161,7 @@ async fn run(
     requests: &mut mpsc::Receiver<Request>,
     shared: &Shared,
     timeouts: Timeouts,
+    neighbours: bool,
 ) -> End {
     let addr = SocketAddr::from((login.sim_ip, login.sim_port));
     let sock = match UdpSocket::bind("0.0.0.0:0").await {
@@ -2087,6 +2187,7 @@ async fn run(
         teleport: None,
         sock,
         circuit: Circuit::new(addr),
+        neighbours: neighbours::Neighbours::new(neighbours),
         ucc_seq: 0,
         movement_sent: None,
         arrived: false,
@@ -2181,6 +2282,7 @@ async fn run(
         }
     };
     s.circuit.flush_acks(&s.sock);
+    s.neighbours.close_all(&s.sock);
     if let Some(task) = s.caps_task.take() {
         task.abort();
     }
@@ -2200,7 +2302,7 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
-    fn login(sim_port: u16, seed: String) -> LoginResponse {
+    pub(super) fn login(sim_port: u16, seed: String) -> LoginResponse {
         LoginResponse {
             agent_id: uuid::Uuid::from_u128(1),
             session_id: uuid::Uuid::from_u128(2),

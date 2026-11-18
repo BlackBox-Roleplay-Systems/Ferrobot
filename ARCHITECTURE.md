@@ -18,12 +18,15 @@ crates/
     src/caps.rs            the seed capability and the EventQueueGet long poll
     src/network/mod.rs     one session in one region: connect sequence, keep-alive, incoming
                            messages, requests, teleports, logout
+    src/network/neighbours.rs  circuits to neighbour regions (child agents), when asked for:
+                           EnableSimulator, crossings over an open circuit (from Aurora's session)
     src/network/groups.rs  group requests and replies (from Aurora's session_groups.rs)
     src/groups.rs          group data: roles, members, pairs, titles (from Aurora's groups.rs)
     src/group_api.rs       the client's group requests, the member list cache
     src/inventory.rs       inventory data, fetch bodies and answers (from Aurora's inventory.rs)
     src/inventory_api.rs   folders, items, gifts, moves; network/inventory.rs sends them
     src/events.rs          what the client reports (Event, chat, IMs)
+    src/faults.rs          messages dropped on purpose, for tests (the `faults` feature)
     src/state.rs           what it keeps: who and where the bot is, its groups, its health
     src/names.rs           key <-> name cache
     src/region_restart.rs  region restart notices (from Aurora)
@@ -66,6 +69,12 @@ crates/
                            alert and login mails (SecondBot's SmtpService)
     src/services/control.rs  the services that can be stopped, started and changed by name (SecondBot's service control)
     tests/testgrid.rs      the real bot, run as a process against the test grid
+  probe/      ferro-probe  the test platform: teleports and crossings against real regions
+    src/main.rs            the rounds, the exit code
+    src/options.rs         the command line
+    src/scenarios.rs       the scenarios: login, teleports, crossings, faults put in
+    src/judge.rs           a teleport's verdict, from where the avatar is afterwards
+    src/report.rs          one JSON line per step, the table
   testgrid/   ferro-testgrid  a fake grid on localhost, for tests (ROADMAP phase 1)
     src/lib.rs             TestGrid: start, what the bot was seen doing, what the grid does to it
     src/login.rs           login_to_simulator, answered or refused as the grid does

@@ -31,7 +31,7 @@ pub mod smtp;
 pub mod sound;
 mod xmlrpc;
 
-use ferro_llsd::Llsd;
+use ferro_llsd::{Llsd, Map};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -542,6 +542,9 @@ struct Session {
     expected: Option<usize>,
     /// Where the agent arrives in the next region (AgentMovementComplete).
     arrival: glam::Vec3,
+    /// The regions that hold a child agent for it: told to the bot by EnableSimulator, they take
+    /// its UseCircuitCode without the agent moving in ([`TestGrid::enable_neighbour`]).
+    children: HashSet<usize>,
     /// Events waiting for the next poll of the current region's queue.
     events: VecDeque<(String, Llsd)>,
     /// The next poll answers 404, as a region does when it closes the queue.
@@ -733,6 +736,8 @@ enum RegionCommand {
     Kick {
         reason: String,
     },
+    /// DisableSimulator to a child agent's circuit: the circuit closes, the session goes on.
+    CloseChild,
     DisableSimulator,
     /// A script asks the bot for permissions.
     ScriptQuestion {
@@ -1240,6 +1245,80 @@ impl TestGrid {
         self.command(RegionCommand::DisableSimulator);
     }
 
+    /// The other region (the bot's neighbour) is told to keep a child agent for the latest
+    /// session, and the bot is told of it with EnableSimulator on the event queue, as a simulator
+    /// does once the agent arrived (OpenSim's EntityTransferModule.InformClientOfNeighbourAsync).
+    pub fn enable_neighbour(&self) {
+        let mut st = self.shared.state();
+        let Some(s) = latest(&mut st) else {
+            return;
+        };
+        let other = other_region(s.region);
+        s.children.insert(other);
+        let n = s.n;
+        drop(st);
+        let region = &self.shared.regions[other];
+        let mut info = Map::new();
+        info.insert(
+            "Handle".into(),
+            region.handle().to_be_bytes().to_vec().into(),
+        );
+        info.insert("IP".into(), region_ip(region.addr).into());
+        info.insert("Port".into(), i32::from(region.addr.port()).into());
+        info.insert("RegionSizeX".into(), 256.into());
+        info.insert("RegionSizeY".into(), 256.into());
+        let mut body = Map::new();
+        body.insert("SimulatorInfo".into(), Llsd::Array(vec![Llsd::Map(info)]));
+        self.shared
+            .queue_event(n, "EnableSimulator", Llsd::Map(body));
+    }
+
+    /// The latest session's agent walks over the border into the other region, arriving at
+    /// `at`: CrossedRegion on the event queue of the region it leaves, which keeps a child
+    /// agent, as OpenSim's CrossAgentIntoNewRegionMain. The bot moves in by CompleteAgentMovement
+    /// on the circuit it has, or opens one.
+    pub fn cross(&self, at: glam::Vec3) {
+        let mut st = self.shared.state();
+        let Some(s) = latest(&mut st) else {
+            return;
+        };
+        let to = other_region(s.region);
+        s.expected = Some(to);
+        s.arrival = at;
+        let n = s.n;
+        drop(st);
+        let region = &self.shared.regions[to];
+        let mut data = Map::new();
+        data.insert(
+            "RegionHandle".into(),
+            region.handle().to_be_bytes().to_vec().into(),
+        );
+        data.insert("SimIP".into(), region_ip(region.addr).into());
+        data.insert("SimPort".into(), i32::from(region.addr.port()).into());
+        data.insert("SeedCapability".into(), self.shared.seed_url(n, to).into());
+        data.insert("RegionSizeX".into(), 256.into());
+        data.insert("RegionSizeY".into(), 256.into());
+        let mut agent = Map::new();
+        agent.insert("AgentID".into(), self.shared.agent_id.into());
+        let mut body = Map::new();
+        body.insert("RegionData".into(), Llsd::Array(vec![Llsd::Map(data)]));
+        body.insert("AgentData".into(), Llsd::Array(vec![Llsd::Map(agent)]));
+        self.shared.queue_event(n, "CrossedRegion", Llsd::Map(body));
+    }
+
+    /// The neighbour region closes its child agent's circuit (DisableSimulator), as a region does
+    /// when the agent went too far away; the session goes on.
+    pub fn close_neighbour(&self) {
+        let mut st = self.shared.state();
+        let Some(s) = latest(&mut st) else {
+            return;
+        };
+        let other = other_region(s.region);
+        s.children.remove(&other);
+        drop(st);
+        let _ = self.regions[other].send(RegionCommand::CloseChild);
+    }
+
     /// Queue an event on the latest session's event queue.
     pub fn queue_event(&self, message: &str, body: Llsd) {
         let n = latest(&mut self.shared.state()).map(|s| s.n);
@@ -1282,6 +1361,23 @@ impl TestGrid {
         let region = latest(&mut self.shared.state()).map_or(FIRST_REGION, |s| s.region);
         // the region tasks only end when the grid is dropped
         let _ = self.regions[region].send(c);
+    }
+}
+
+/// The test grid's other region.
+fn other_region(region: usize) -> usize {
+    if region == FIRST_REGION {
+        SECOND_REGION
+    } else {
+        FIRST_REGION
+    }
+}
+
+/// A region's address as the event queue gives it (binary, 4 bytes).
+fn region_ip(addr: SocketAddr) -> Vec<u8> {
+    match addr.ip() {
+        std::net::IpAddr::V4(ip) => ip.octets().to_vec(),
+        std::net::IpAddr::V6(_) => vec![127, 0, 0, 1],
     }
 }
 
