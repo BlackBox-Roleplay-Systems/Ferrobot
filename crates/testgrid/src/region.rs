@@ -1086,6 +1086,48 @@ impl Region {
                     ),
                 });
             }
+        } else if id == ObjectAdd::ID {
+            if let Ok(m) = pkt.decode::<ObjectAdd>() {
+                let o = &m.object_data;
+                self.shared.saw(Seen::Object {
+                    what: format!(
+                        "add pcode {} path {:#x} profile {:#x} scale {},{} size {:.1},{:.1},{:.1} at {:.0},{:.0},{:.0} bypass {}",
+                        o.p_code,
+                        o.path_curve,
+                        o.profile_curve,
+                        o.path_scale_x,
+                        o.path_scale_y,
+                        o.scale.x,
+                        o.scale.y,
+                        o.scale.z,
+                        o.ray_end.x,
+                        o.ray_end.y,
+                        o.ray_end.z,
+                        o.bypass_raycast
+                    ),
+                });
+            }
+        } else if id == MultipleObjectUpdate::ID {
+            if let Ok(m) = pkt.decode::<MultipleObjectUpdate>() {
+                for o in &m.object_data {
+                    let f = |i: usize| {
+                        o.data
+                            .get(i * 4..i * 4 + 4)
+                            .and_then(|b| b.try_into().ok())
+                            .map_or(f32::NAN, f32::from_le_bytes)
+                    };
+                    self.shared.saw(Seen::Object {
+                        what: format!(
+                            "update {} type {:#x} to {:.0},{:.0},{:.0}",
+                            o.object_local_id,
+                            o.type_,
+                            f(0),
+                            f(1),
+                            f(2)
+                        ),
+                    });
+                }
+            }
         } else if id == DeRezObject::ID {
             if let Ok(m) = pkt.decode::<DeRezObject>() {
                 let ids: Vec<String> = m

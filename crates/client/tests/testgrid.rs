@@ -1035,3 +1035,44 @@ async fn without_neighbours_no_neighbour_queue_is_polled() {
     assert_eq!(polls_of(&r.grid, ferro_testgrid::SECOND_REGION), 0);
     assert!(matches!(r.logout().await, End::LoggedOut));
 }
+
+/// A box as the build tool makes one, moved with its linkset, deleted to the trash: the
+/// messages the region gets (Aurora's build_cmds.rs).
+#[tokio::test]
+async fn a_box_is_made_moved_and_deleted() {
+    let r = connect().await;
+    let did = |what: String| move |s: &Seen| matches!(s, Seen::Object { what: w } if *w == what);
+    r.client
+        .add_box(Vec3::new(10.0, 20.0, 30.0), Vec3::new(1.0, 1.0, 0.5))
+        .await
+        .expect("add");
+    assert!(
+        r.grid
+            .wait_for(
+                WAIT,
+                did("add pcode 9 path 0x10 profile 0x1 scale 100,100 size 1.0,1.0,0.5 at 10,20,30 bypass 1".into())
+            )
+            .await,
+        "{:?}",
+        r.grid.seen()
+    );
+    r.client
+        .move_object(77, Vec3::new(260.0, 20.0, 30.0))
+        .await
+        .expect("move");
+    assert!(
+        r.grid
+            .wait_for(WAIT, did("update 77 type 0x9 to 260,20,30".into()))
+            .await
+    );
+    r.client.delete_object(77).await.expect("delete");
+    assert!(
+        r.grid
+            .wait_for(
+                WAIT,
+                |s| matches!(s, Seen::Object { what } if what.starts_with("derez 77 to 6 "))
+            )
+            .await
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}

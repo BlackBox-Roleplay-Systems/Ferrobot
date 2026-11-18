@@ -1,8 +1,9 @@
 //! The session's side of objects: what the region told of them (objects::Places), clicking one
 //! (ObjectGrab then ObjectDeGrab, as LLToolGrab's click), rezzing from the inventory (RezObject,
 //! LLToolDragAndDrop::dropObject, Aurora's inventory/rez.rs), taking one back (DeRezObject) and
-//! putting an item in one (UpdateTaskInventory, RezScript for a script: dropInventory), and
-//! learning root objects' owners and names (ObjectSelect then ObjectDeselect, as Aurora's Area
+//! putting an item in one (UpdateTaskInventory, RezScript for a script: dropInventory), building
+//! (a new box with ObjectAdd, moving with MultipleObjectUpdate, deleting with DeRezObject to the
+//! trash: Aurora's session/build_cmds.rs), and learning root objects' owners and names (ObjectSelect then ObjectDeselect, as Aurora's Area
 //! Search; see objects.rs).
 
 use super::Session;
@@ -18,6 +19,20 @@ use uuid::Uuid;
 
 /// DeRezObject's DeRezDestination: take into the agent's inventory.
 const TAKE_INTO_AGENT_INVENTORY: u8 = 4;
+/// DeRezObject's DeRezDestination: delete, to the trash (Aurora's build.rs derez::TRASH).
+const TRASH: u8 = 6;
+/// ObjectAdd's PCode for a prim (LL_PCODE_VOLUME), material wood (LL_MCODE_WOOD), the build
+/// tool's default box: a straight path (LL_PCODE_PATH_LINE) along a square profile
+/// (LL_PCODE_PROFILE_SQUARE), path scale 1 (packed 100).
+const PCODE_PRIM: u8 = 9;
+const MATERIAL_WOOD: u8 = 3;
+const PATH_LINE: u8 = 0x10;
+const PROFILE_SQUARE: u8 = 0x01;
+const PATH_SCALE_ONE: u8 = 100;
+/// MultipleObjectUpdate's Type: the position (UPD_POSITION) of the whole linkset
+/// (UPD_LINKED_SETS).
+const UPD_POSITION: u8 = 0x01;
+const UPD_LINKED_SETS: u8 = 0x08;
 
 #[derive(Debug)]
 pub(crate) enum ObjectRequest {
@@ -51,6 +66,23 @@ pub(crate) enum ObjectRequest {
     DeRez {
         local_id: u32,
         folder: Uuid,
+        reply: oneshot::Sender<()>,
+    },
+    /// A new box, as the build tool makes one (ObjectAdd).
+    AddBox {
+        at: Vec3,
+        size: Vec3,
+        reply: oneshot::Sender<()>,
+    },
+    /// Move an object with its linkset (MultipleObjectUpdate), as the edit tool does.
+    Move {
+        local_id: u32,
+        to: Vec3,
+        reply: oneshot::Sender<()>,
+    },
+    /// Delete an object, to the trash (DeRezObject).
+    Delete {
+        local_id: u32,
         reply: oneshot::Sender<()>,
     },
     /// What the bot wears.
@@ -206,6 +238,62 @@ impl Session<'_> {
                 item_block!(m.inventory_data, &item, item.parent, query);
                 self.send(&m, true);
                 let _ = reply.send(query);
+            }
+            ObjectRequest::AddBox { at, size, reply } => {
+                let mut m = ObjectAdd::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.agent_data.group_id = group;
+                let o = &mut m.object_data;
+                o.p_code = PCODE_PRIM;
+                o.material = MATERIAL_WOOD;
+                o.path_curve = PATH_LINE;
+                o.profile_curve = PROFILE_SQUARE;
+                o.path_scale_x = PATH_SCALE_ONE;
+                o.path_scale_y = PATH_SCALE_ONE;
+                // at that place: no ray cast
+                o.bypass_raycast = 1;
+                o.ray_start = at;
+                o.ray_end = at;
+                o.scale = size;
+                o.rotation = glam::Quat::IDENTITY;
+                self.send(&m, true);
+                let _ = reply.send(());
+            }
+            ObjectRequest::Move {
+                local_id,
+                to,
+                reply,
+            } => {
+                let mut m = MultipleObjectUpdate::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                let mut data = Vec::with_capacity(12);
+                for v in to.to_array() {
+                    data.extend_from_slice(&v.to_le_bytes());
+                }
+                m.object_data = vec![multiple_object_update::ObjectData {
+                    object_local_id: local_id,
+                    type_: UPD_POSITION | UPD_LINKED_SETS,
+                    data,
+                }];
+                self.send(&m, true);
+                let _ = reply.send(());
+            }
+            ObjectRequest::Delete { local_id, reply } => {
+                let mut m = DeRezObject::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.agent_block.group_id = group;
+                m.agent_block.destination = TRASH;
+                m.agent_block.transaction_id = Uuid::new_v4();
+                m.agent_block.packet_count = 1;
+                m.agent_block.packet_number = 0;
+                m.object_data = vec![de_rez_object::ObjectData {
+                    object_local_id: local_id,
+                }];
+                self.send(&m, true);
+                let _ = reply.send(());
             }
             ObjectRequest::DeRez {
                 local_id,
