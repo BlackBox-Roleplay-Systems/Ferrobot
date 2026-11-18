@@ -19,6 +19,11 @@ thiserror = "2.0.21"
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "sync"] }
 uuid = { version = "1.27.0", features = ["v4"] }
 
+[features]
+# Faults a test platform puts into the client (faults.rs): ferro-probe turns it on, the bot never
+# does. A workspace build that includes ferro-probe compiles it in, inert unless armed.
+faults = []
+
 [dev-dependencies]
 ferro-testgrid = { path = "../testgrid" }
 # paused time, so that the seed's retries take no real time in tests

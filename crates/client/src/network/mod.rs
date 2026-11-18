@@ -1368,6 +1368,13 @@ impl Session<'_> {
                 return None;
             }
         };
+        #[cfg(feature = "faults")]
+        if let Some(info) = ferro_msg::message_info(pkt.id)
+            && self.shared.faults.take_message(info.name)
+        {
+            log::warn!("fault: {} dropped", info.name);
+            return None;
+        }
         if !self.circuit.on_receive(pkt.flags, pkt.sequence, &pkt.acks) {
             return None;
         }
@@ -1983,6 +1990,11 @@ impl Session<'_> {
             .map(|m| m.keys().map(String::as_str).collect())
             .unwrap_or_default();
         log::debug!("event: {} {fields:?}", e.message);
+        #[cfg(feature = "faults")]
+        if self.shared.faults.take_event(&e.message) {
+            log::warn!("fault: {} dropped", e.message);
+            return None;
+        }
         match e.message.as_str() {
             // EnableSimulator is UDPBlackListed in the message template: the viewer takes it only
             // from the event queue (process_enable_simulator via LLEnableSimulatorViewerNode)
