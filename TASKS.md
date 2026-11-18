@@ -555,7 +555,8 @@ Ferrobot as a test platform for regions: what the Tranquillity teleport rig did 
 LibreMetaverse client, in Rust, on the same client as the bot.
 
 - 🟡 `crates/probe` (ferro-probe): scenarios of teleports and crossings (local, near, far, cross,
-  bounce, lost-crossing, unreachable, restart, sit-cross), one fresh login a round, each step judged by where the
+  bounce, lost-crossing, unreachable, restart, sit-cross, land, land-guard, land-faults), one
+  fresh login a round, each step judged by where the
   avatar ends up (the rig's rules: right region, within 2 m, still there 1.5 s later, no jump back
   toward the start), JSON lines and a table. Run on four NGC regions (2026-11-18): every step of
   `all` right; on Tranquillity's develop build it shows the snap back after a local teleport
@@ -574,6 +575,22 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   Login Response": `UserAccountService.MakeUserAccount`, KeyNotFoundException 'Created', SQLite
   standalone); LogoutReply often lost (queued in the Task throttle, then the agent closed:
   `LLUDPClient.Shutdown` clears the queues)
+- 🟡 `land` (an account that owns the land): a 16 m square divided off, another at the region's
+  east edge, both joined back; the overlay's property lines; the owner's ban list in and out;
+  the ground raised, lowered and reverted, judged by the region's own LayerData patches. Run on
+  four NGC regions (2026-11-18): every step right on Tranquillity's develop
+- 🟡 `land-guard` (an account that does not own it): dividing, joining, terraforming it and a ban
+  list change in the owner's name (`Faults::claim_agent`) all refused. Run on four NGC regions
+  (2026-11-18): all refused; OpenSim's LLUDPServer drops a packet whose AgentData is not the
+  circuit's (`Packet.ValidIDs`)
+- 🟡 `land-faults` (what a viewer never sends; may leave the region damaged): found on
+  Tranquillity's develop (2026-11-18): a divide of no land makes a parcel of no land, kept and
+  stored; a ModifyLand kept to a parcel that does not exist leaves `TerrainModule`'s lock held
+  (`Monitor.Exit` after the `finally`): nobody can terraform again and new arrivals get no ground
+  patches until the region restarts
+- ⬜ More land: a terraform kept to a parcel with a selection off the 4 m grid (it edits the next
+  parcel's edge), the region's Block Terraform and Allow Land Join/Divide flags, a single raised
+  point on a patch's last row (sent flat)
 - ⬜ More scenarios: a teleport while a crossing is under way, a seated crossing into a region
   that refuses the object
 - ⬜ Run the probe in CI against a Tranquillity region: build the region server, four regions on
