@@ -1,0 +1,23 @@
+[package]
+name = "ferro-probe"
+description = "Ferrobot's test platform: teleports and crossings against real regions, timed and judged"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# the faults are what the probe is for: lost events and messages, put in on purpose
+ferro-client = { path = "../client", features = ["faults"] }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+glam = "0.34.1"
+log = "0.4.34"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "gzip"] }
+serde_json = "1.0.154"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[dev-dependencies]
+ferro-testgrid = { path = "../testgrid" }
+
+[lints]
+workspace = true

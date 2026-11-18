@@ -523,6 +523,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferro-probe"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "ferro-client",
+ "ferro-testgrid",
+ "glam",
+ "log",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ferro-testgrid"
 version = "0.1.0"
 dependencies = [
