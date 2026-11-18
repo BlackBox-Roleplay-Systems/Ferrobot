@@ -584,6 +584,8 @@ cargo run -p ferro-probe -- --login-uri http://127.0.0.1:9000/ --user "Test User
 | `land-guard` | on someone else's land: divide, join, terraform and a ban list change in the owner's name, none of which may change anything; needs an account that does not own it |
 | `land-faults` | what a viewer never sends: a divide of no land (must make no parcel), a terraform kept to a parcel that does not exist (the land tools must keep working); may leave the region damaged, so not in `all` |
 | `restart` | restarts the neighbour (its circuit closes, then opens again), then the home region with the bot in it (the notice, the end of the session, a new login once it is back); needs `--remote-admin-password-file`, one bot |
+| `abandoned-login` | logs out, logs in without connecting (as a cancelled login or a viewer that crashed), waits `--login-wait` seconds (150), then logs in: the region must have let go of the first login, or it refuses the second as a duplicate |
+| `vanish` | stops without a logout and sends nothing, then logs in again once the region has timed it out (75 s): the login must work at once |
 
 `all` is `local,near,far,cross`. The regions are `--home`, `--near` (east of home), `--far` and
 `--unreachable` (Alpha, Beta, Gamma and Delta by default). Each round logs in afresh. Exit code 0

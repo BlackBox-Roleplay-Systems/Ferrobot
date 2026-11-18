@@ -555,7 +555,8 @@ Ferrobot as a test platform for regions: what the Tranquillity teleport rig did 
 LibreMetaverse client, in Rust, on the same client as the bot.
 
 - 🟡 `crates/probe` (ferro-probe): scenarios of teleports and crossings (local, near, far, cross,
-  bounce, lost-crossing, unreachable, restart, sit-cross, land, land-guard, land-faults), one
+  bounce, lost-crossing, unreachable, restart, sit-cross, land, land-guard, land-faults,
+  abandoned-login, vanish), one
   fresh login a round, each step judged by where the
   avatar ends up (the rig's rules: right region, within 2 m, still there 1.5 s later, no jump back
   toward the start), JSON lines and a table. Run on four NGC regions (2026-11-18): every step of
@@ -588,6 +589,12 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   stored; a ModifyLand kept to a parcel that does not exist leaves `TerrainModule`'s lock held
   (`Monitor.Exit` after the `finally`): nobody can terraform again and new arrivals get no ground
   patches until the region restarts
+- 🟡 `abandoned-login` (a login whose viewer never connects, then `--login-wait` and a login) and
+  `vanish` (no logout, nothing sent, a login 75 s later). Found on Tranquillity's develop
+  (2026-11-18): the region kept the abandoned login and the user online, and refused the next
+  login as "already logged in"; vanish right (timed out after 60 s). With Tranquillity's
+  fix/login-logout both right, and five logins at once all work (`--bots 5 --stagger 0`; 4 of 5
+  failed before: a SQLite store's column list read while it was being filled)
 - ⬜ More land: a terraform kept to a parcel with a selection off the 4 m grid (it edits the next
   parcel's edge), the region's Block Terraform and Allow Land Join/Divide flags, a single raised
   point on a patch's last row (sent flat)

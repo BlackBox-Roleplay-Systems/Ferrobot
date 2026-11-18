@@ -13,7 +13,7 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --password-file FILE  a file holding its password
   --scenarios LIST      comma-separated: all (local, near, far, cross), local, near, far, cross,
                         bounce, lost-crossing, unreachable, restart, sit-cross, land,
-                        land-guard, land-faults (all)
+                        land-guard, land-faults, abandoned-login, vanish (all)
   --rounds N            rounds, each a fresh login (1)
   --bots N              bots at once, each running the scenarios (1): the first is --user, the
                         others the same name with 2, 3… after the last name, the same password
@@ -27,6 +27,8 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --unreachable REGION  a region whose address the bot cannot reach (Delta)
   --land-at X,Y         the land scenarios' 32 m square in the home region, its south-west
                         corner on the 4 m grid (16,16); land also uses the east edge beside it
+  --login-wait SECS     abandoned-login: how long the region may keep a login whose viewer never
+                        connects before the next login must work (150)
   --no-neighbours       keep no circuits to neighbour regions (a viewer keeps them)
   --json FILE           also write the lines to this file
 ";
@@ -48,6 +50,7 @@ pub struct Options {
     pub stagger: u64,
     pub admin_password_file: Option<PathBuf>,
     pub land_at: (f32, f32),
+    pub login_wait: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +80,12 @@ pub enum Scenario {
     /// What a viewer never sends: a divide of no land, a terraform kept to no parcel. May leave
     /// the region damaged.
     LandFaults,
+    /// A login whose viewer never connects, then a login of the same account: the region must
+    /// have let go of the first by `--login-wait`.
+    AbandonedLogin,
+    /// The bot goes quiet without logging out, then logs in again once the region has timed it
+    /// out.
+    Vanish,
 }
 
 impl Scenario {
@@ -100,6 +109,8 @@ impl Scenario {
             "land" => vec![Scenario::Land],
             "land-guard" => vec![Scenario::LandGuard],
             "land-faults" => vec![Scenario::LandFaults],
+            "abandoned-login" => vec![Scenario::AbandonedLogin],
+            "vanish" => vec![Scenario::Vanish],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }
@@ -123,6 +134,7 @@ impl Options {
             stagger: 250,
             admin_password_file: None,
             land_at: (16.0, 16.0),
+            login_wait: 150,
         };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -170,6 +182,13 @@ impl Options {
                     let v = value()?;
                     o.land_at = parse_land_at(&v)
                         .ok_or("--land-at: X,Y on the 4 m grid, X up to 192, Y up to 224")?;
+                }
+                "--login-wait" => {
+                    o.login_wait = value()?
+                        .parse()
+                        .ok()
+                        .filter(|n| (1..=3600).contains(n))
+                        .ok_or("--login-wait: seconds, from 1 to 3600")?
                 }
                 "--no-neighbours" => o.neighbours = false,
                 "--json" => o.json = Some(value()?.into()),
@@ -300,6 +319,24 @@ mod tests {
             ])
             .is_ok()
         );
+    }
+
+    #[test]
+    fn the_session_scenarios_and_the_login_wait() {
+        let base = ["--user", "u", "--password-file", "pw"];
+        let with = |more: &[&str]| parse(&[&base[..], more].concat());
+        let o = with(&["--scenarios", "abandoned-login,vanish"]).expect("options");
+        assert_eq!(
+            o.scenarios,
+            vec![Scenario::AbandonedLogin, Scenario::Vanish]
+        );
+        assert_eq!(o.login_wait, 150);
+        assert_eq!(
+            with(&["--login-wait", "30"]).expect("options").login_wait,
+            30
+        );
+        assert!(with(&["--login-wait", "0"]).is_err());
+        assert!(with(&["--login-wait", "soon"]).is_err());
     }
 
     #[test]
