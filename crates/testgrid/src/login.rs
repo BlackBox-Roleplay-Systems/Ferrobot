@@ -42,6 +42,7 @@ pub fn handle(shared: &Arc<Shared>, body: &[u8]) -> Response {
         region: crate::FIRST_REGION,
         expected: None,
         arrival: crate::region::ARRIVAL,
+        children: Default::default(),
         events: VecDeque::new(),
         close_queue: false,
         fail_queue: false,

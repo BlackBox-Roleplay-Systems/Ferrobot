@@ -132,6 +132,7 @@ impl Region {
                 session: n,
                 region: self.index,
             });
+            self.move_in(n);
             self.agent_movement_complete(from);
         } else if id == AgentThrottle::ID {
             self.shared.saw(Seen::AgentThrottle { session: n });
@@ -258,7 +259,9 @@ impl Region {
                     && s.circuit_code == c.code
                     && s.session_id == c.session_id
                     && c.id == self.shared.agent_id
-                    && (s.expected == Some(index) || (s.expected.is_none() && s.region == index))
+                    && (s.expected == Some(index)
+                        || (s.expected.is_none() && s.region == index)
+                        || s.children.contains(&index))
             });
             s.map(|s| {
                 if s.expected == Some(index) {
@@ -300,6 +303,25 @@ impl Region {
         h.region_info.water_height = 20.0;
         h.region_info2.region_id = Uuid::new_v4();
         self.send(from, &h, true);
+    }
+
+    /// The agent moves into this region over a circuit opened for its child agent (a crossing):
+    /// the region it leaves keeps a child agent, as OpenSim's does.
+    fn move_in(&mut self, n: u32) {
+        let index = self.index;
+        let mut st = self.shared.state();
+        let Some(s) = st.sessions.get_mut(&n) else {
+            return;
+        };
+        if s.expected == Some(index) {
+            let left = s.region;
+            s.region = index;
+            s.expected = None;
+            s.children.remove(&index);
+            s.children.insert(left);
+            // the queue of the new region starts empty
+            s.events.clear();
+        }
     }
 
     fn agent_movement_complete(&mut self, to: SocketAddr) {
@@ -2137,6 +2159,11 @@ impl Region {
                 m.data.object_owner = str_field(&owner);
                 m.data.questions = questions;
                 self.send(to, &m, true);
+            }
+            RegionCommand::CloseChild => {
+                self.send(to, &DisableSimulator::default(), false);
+                // the circuit only: the session goes on in the other region
+                self.clients.remove(&to);
             }
             RegionCommand::DisableSimulator => {
                 self.send(to, &DisableSimulator::default(), false);
