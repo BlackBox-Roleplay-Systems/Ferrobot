@@ -1076,3 +1076,123 @@ async fn a_box_is_made_moved_and_deleted() {
     );
     assert!(matches!(r.logout().await, End::LoggedOut));
 }
+
+/// The land tools as the viewer sends them: Subdivide and Join of a selection, a brush at a
+/// point (the old brush index and the real size), a flood over a selection.
+#[tokio::test]
+async fn land_is_divided_joined_and_terraformed_as_the_viewer_does() {
+    use ferro_client::ParcelAction;
+    use ferro_client::land::action;
+    let r = connect().await;
+    let parcel = |what: &str| {
+        let what = what.to_owned();
+        move |s: &Seen| matches!(s, Seen::Parcel { what: w } if *w == what)
+    };
+    let rect = |west, south, east, north| (west, south, east, north);
+    let (w, s, e, n) = rect(16.0, 16.0, 32.0, 32.0);
+    r.client
+        .parcel_act(ParcelAction::Divide {
+            west: w,
+            south: s,
+            east: e,
+            north: n,
+        })
+        .await
+        .expect("divide");
+    assert!(r.grid.wait_for(WAIT, parcel("divide 16 16 32 32")).await);
+    r.client
+        .parcel_act(ParcelAction::Join {
+            west: 12.0,
+            south: 16.0,
+            east: 36.0,
+            north: 32.0,
+        })
+        .await
+        .expect("join");
+    assert!(r.grid.wait_for(WAIT, parcel("join 12 16 36 32")).await);
+    r.client
+        .parcel_act(ParcelAction::ModifyLand {
+            action: action::RAISE,
+            brush_size: 4.0,
+            seconds: 0.25,
+            height: 21.5,
+            local_id: -1,
+            west: 40.0,
+            south: 50.0,
+            east: 40.0,
+            north: 50.0,
+        })
+        .await
+        .expect("raise");
+    assert!(
+        r.grid
+            .wait_for(
+                WAIT,
+                parcel("modify-land 1 brush 1 Some(4.0) seconds 0.25 height 21.5 parcel -1 at 40 50 40 50")
+            )
+            .await
+    );
+    r.client
+        .parcel_act(ParcelAction::ModifyLand {
+            action: action::REVERT,
+            brush_size: 8.0,
+            seconds: 1.0,
+            height: 0.0,
+            local_id: 3,
+            west: 0.0,
+            south: 0.0,
+            east: 16.0,
+            north: 16.0,
+        })
+        .await
+        .expect("revert");
+    assert!(
+        r.grid
+            .wait_for(
+                WAIT,
+                parcel("modify-land 5 brush 2 Some(8.0) seconds 1 height 0 parcel 3 at 0 0 16 16")
+            )
+            .await
+    );
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}
+
+/// The ground as the region's LayerData patches have it, and the parcel overlay once all its
+/// parts have come; both forgotten in another region.
+#[tokio::test]
+async fn the_ground_and_the_parcel_overlay_are_known_from_the_region() {
+    use ferro_client::land::{self, CellOwner};
+    let r = connect().await;
+    assert_eq!(r.client.ground_height(40.0, 50.0), None);
+    r.grid
+        .send_ground(land::encode_flat_layer(&[(2, 3, 21.0), (15, 0, 7.5)]));
+    assert!(
+        state_until(&r.client, |st| st.terrain.len() == 2).await,
+        "the patches came"
+    );
+    let h = r.client.ground_height(40.0, 50.0).expect("a height");
+    assert!((h - 21.0).abs() < 1e-3, "{h}");
+    let h = r.client.ground_height(250.0, 1.0).expect("a height");
+    assert!((h - 7.5).abs() < 1e-3, "{h}");
+    assert_eq!(r.client.ground_height(100.0, 100.0), None);
+
+    // the bot's own cells, a line west of the cell (4, 4): a parcel of someone else's
+    let mut first = vec![3u8; land::CELLS_PER_PART];
+    first[4 * 64 + 4] = 1 | 0x40;
+    for (i, part) in [first, vec![3; 1024], vec![3; 1024], vec![3; 1024]]
+        .into_iter()
+        .enumerate()
+    {
+        r.grid.send_overlay(i as i32, part);
+    }
+    assert!(
+        state_until(&r.client, |st| st.overlay.width() == Some(64)).await,
+        "the whole overlay came"
+    );
+    let o = r.client.state().overlay;
+    assert_eq!(o.owner(0, 0), Some(CellOwner::Mine));
+    assert_eq!(o.owner(4, 4), Some(CellOwner::Other));
+    assert_eq!(o.west_line(4, 4), Some(true));
+    assert_eq!(o.updates, 4);
+    assert!(matches!(r.logout().await, End::LoggedOut));
+}

@@ -580,6 +580,9 @@ cargo run -p ferro-probe -- --login-uri http://127.0.0.1:9000/ --user "Test User
 | `lost-crossing` | a crossing whose CrossedRegion the bot drops, then a local teleport, to the neighbour and back |
 | `unreachable` | a teleport to a region whose address the bot cannot reach: right when it fails and the bot is still where it was; then the same |
 | `sit-cross` | sits on a box it makes near the border, moves the box into the neighbour and back (a vehicle's crossing), stands up, deletes the box |
+| `land` | divides a 16 m square off the bot's parcel and another at the region's east edge, joins both back, bans a stranger and lets them in again, raises, lowers and reverts the ground; needs an account that owns the land (`--land-at X,Y`, 16,16 by default, and the east edge beside it) |
+| `land-guard` | on someone else's land: divide, join, terraform and a ban list change in the owner's name, none of which may change anything; needs an account that does not own it |
+| `land-faults` | what a viewer never sends: a divide of no land (must make no parcel), a terraform kept to a parcel that does not exist (the land tools must keep working); may leave the region damaged, so not in `all` |
 | `restart` | restarts the neighbour (its circuit closes, then opens again), then the home region with the bot in it (the notice, the end of the session, a new login once it is back); needs `--remote-admin-password-file`, one bot |
 
 `all` is `local,near,far,cross`. The regions are `--home`, `--near` (east of home), `--far` and

@@ -14,6 +14,8 @@ pub struct Faults {
     events: Mutex<HashMap<String, u32>>,
     /// How many more of each UDP message to drop, by message name.
     messages: Mutex<HashMap<String, u32>>,
+    /// The agent the parcel access list changes claim to come from.
+    claimed: Mutex<Option<uuid::Uuid>>,
 }
 
 impl Faults {
@@ -27,6 +29,23 @@ impl Faults {
     /// dropped, unacknowledged. 0 drops none.
     pub fn drop_messages(&self, message: &str, count: u32) {
         set(&self.messages, message, count);
+    }
+
+    /// The parcel access list changes (ParcelAccessListUpdate) name this agent in their
+    /// AgentData instead of the bot: a client that lies about who it is, which a region must
+    /// answer by the circuit's agent. `None` sends the bot's own again.
+    pub fn claim_agent(&self, agent: Option<uuid::Uuid>) {
+        *self
+            .claimed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = agent;
+    }
+
+    pub(crate) fn claimed_agent(&self) -> Option<uuid::Uuid> {
+        *self
+            .claimed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Drops still to come, events and messages, by name.

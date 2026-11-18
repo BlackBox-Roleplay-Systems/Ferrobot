@@ -12,7 +12,8 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --user NAME           the test account: \"First Last\" or a username
   --password-file FILE  a file holding its password
   --scenarios LIST      comma-separated: all (local, near, far, cross), local, near, far, cross,
-                        bounce, lost-crossing, unreachable, restart, sit-cross (all)
+                        bounce, lost-crossing, unreachable, restart, sit-cross, land,
+                        land-guard, land-faults (all)
   --rounds N            rounds, each a fresh login (1)
   --bots N              bots at once, each running the scenarios (1): the first is --user, the
                         others the same name with 2, 3… after the last name, the same password
@@ -24,6 +25,8 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --near REGION         the home region's neighbour to the east (Beta)
   --far REGION          a region far from home (Gamma)
   --unreachable REGION  a region whose address the bot cannot reach (Delta)
+  --land-at X,Y         the land scenarios' 32 m square in the home region, its south-west
+                        corner on the 4 m grid (16,16); land also uses the east edge beside it
   --no-neighbours       keep no circuits to neighbour regions (a viewer keeps them)
   --json FILE           also write the lines to this file
 ";
@@ -44,6 +47,7 @@ pub struct Options {
     pub bots: u32,
     pub stagger: u64,
     pub admin_password_file: Option<PathBuf>,
+    pub land_at: (f32, f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +70,13 @@ pub enum Scenario {
     Restart,
     /// Sitting on a box moved over the border and back, as on a vehicle.
     SitCross,
+    /// Parcels divided and joined, the ground raised, lowered and reverted (the bot's land).
+    Land,
+    /// Another resident's land: dividing, joining, terraforming it and its ban list must fail.
+    LandGuard,
+    /// What a viewer never sends: a divide of no land, a terraform kept to no parcel. May leave
+    /// the region damaged.
+    LandFaults,
 }
 
 impl Scenario {
@@ -86,6 +97,9 @@ impl Scenario {
             "unreachable" => vec![Scenario::Unreachable],
             "restart" => vec![Scenario::Restart],
             "sit-cross" => vec![Scenario::SitCross],
+            "land" => vec![Scenario::Land],
+            "land-guard" => vec![Scenario::LandGuard],
+            "land-faults" => vec![Scenario::LandFaults],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }
@@ -108,6 +122,7 @@ impl Options {
             bots: 1,
             stagger: 250,
             admin_password_file: None,
+            land_at: (16.0, 16.0),
         };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -151,6 +166,11 @@ impl Options {
                         .map_err(|_| "--stagger: a number of milliseconds")?
                 }
                 "--remote-admin-password-file" => o.admin_password_file = Some(value()?.into()),
+                "--land-at" => {
+                    let v = value()?;
+                    o.land_at = parse_land_at(&v)
+                        .ok_or("--land-at: X,Y on the 4 m grid, X up to 192, Y up to 224")?;
+                }
                 "--no-neighbours" => o.neighbours = false,
                 "--json" => o.json = Some(value()?.into()),
                 "-h" | "--help" => return Err(String::new()),
@@ -174,6 +194,14 @@ impl Options {
         }
         Ok(o)
     }
+}
+
+/// The land square's corner: on the 4 m grid, the square inside the region and clear of the
+/// 16 m at its east edge.
+fn parse_land_at(v: &str) -> Option<(f32, f32)> {
+    let (x, y) = v.split_once(',')?;
+    let (x, y): (u32, u32) = (x.trim().parse().ok()?, y.trim().parse().ok()?);
+    (x % 4 == 0 && y % 4 == 0 && x <= 192 && y <= 224).then_some((x as f32, y as f32))
 }
 
 #[cfg(test)]
@@ -282,5 +310,24 @@ mod tests {
         assert!(parse(&["--user", "u", "--password-file", "pw", "--scenarios", "fly"]).is_err());
         assert!(parse(&["--user", "u", "--password-file", "pw", "--wat"]).is_err());
         assert!(parse(&["--user"]).is_err());
+    }
+
+    #[test]
+    fn the_land_square_is_on_the_grid_and_in_the_region() {
+        let o = parse(&[
+            "--user",
+            "u",
+            "--password-file",
+            "pw",
+            "--scenarios",
+            "land,land-guard",
+        ])
+        .expect("options");
+        assert_eq!(o.scenarios, vec![Scenario::Land, Scenario::LandGuard]);
+        assert_eq!(o.land_at, (16.0, 16.0));
+        assert_eq!(parse_land_at("64, 200"), Some((64.0, 200.0)));
+        for bad in ["63,64", "196,0", "0,228", "0", "a,b", "-4,0"] {
+            assert_eq!(parse_land_at(bad), None, "{bad}");
+        }
     }
 }

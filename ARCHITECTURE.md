@@ -39,6 +39,7 @@ crates/
     src/parcels.rs         a parcel's record (ParcelProperties) and its update (from Aurora)
     src/estate.rs          the estate's info, access lists and changes (from Aurora)
     src/terrain.rs         a terrain RAW file and its upload by xfer (from Aurora)
+    src/land.rs            the ground's height (LayerData patches, from Aurora) and the parcel overlay
     src/gesture.rs         gesture assets (from Aurora) and their playing
     src/profile.rs         avatar profiles and picks (AgentProfile, AvatarPropertiesReply)
     src/upload.rs          asset uploads through NewFileAgentInventory (from Aurora)
@@ -71,11 +72,12 @@ crates/
                            alert and login mails (SecondBot's SmtpService)
     src/services/control.rs  the services that can be stopped, started and changed by name (SecondBot's service control)
     tests/testgrid.rs      the real bot, run as a process against the test grid
-  probe/      ferro-probe  the test platform: teleports and crossings against real regions
+  probe/      ferro-probe  the test platform: teleports, crossings and land against real regions
     src/main.rs            the bots and their rounds, the exit code
     src/options.rs         the command line
     src/scenarios.rs       the scenarios: login, teleports, crossings, faults put in, restarts,
                            a seated crossing
+    src/scenarios/land.rs  the land scenarios: divide, join, terraform, as owner, as visitor, faults
     src/admin.rs           OpenSim's RemoteAdmin: accounts for the bots, region restarts
     src/judge.rs           a teleport's verdict, from where the avatar is afterwards
     src/report.rs          one JSON line per step, the table

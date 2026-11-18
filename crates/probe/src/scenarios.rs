@@ -16,6 +16,8 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+mod land;
+
 /// How long a teleport may take to put the avatar at its target.
 const ARRIVAL_WAIT: Duration = Duration::from_secs(15);
 /// How long the avatar is watched after arriving, and how often.
@@ -397,6 +399,9 @@ impl Probe {
             Scenario::Bounce => self.bounce(client).await,
             Scenario::LostCrossing => self.lost_crossing(client).await,
             Scenario::SitCross => self.sit_cross(client).await,
+            Scenario::Land => self.land(client).await,
+            Scenario::LandGuard => self.land_guard(client).await,
+            Scenario::LandFaults => self.land_faults(client).await,
             // run by the round: the session ends in it
             Scenario::Restart => {}
             Scenario::Unreachable => {

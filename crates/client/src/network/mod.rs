@@ -185,6 +185,8 @@ impl Network {
             st.avatars.clear();
             st.parcel = None;
             st.region_parcels = None;
+            st.terrain = Default::default();
+            st.overlay = Default::default();
             st.mute_list = None;
             st.away = false;
             st.inventory_root = login.inventory_root;
@@ -1058,6 +1060,8 @@ impl Session<'_> {
             st.avatars.clear();
             st.parcel = None;
             st.region_parcels = None;
+            st.terrain = Default::default();
+            st.overlay = Default::default();
         }
         match open {
             Some(n) => {
@@ -1723,6 +1727,12 @@ impl Session<'_> {
         } else if id == DirLandReply::ID {
             let m: DirLandReply = pkt.decode()?;
             self.on_land_reply(&m);
+        } else if id == LayerData::ID {
+            let m: LayerData = pkt.decode()?;
+            self.on_layer_data(&m);
+        } else if id == ParcelOverlay::ID {
+            let m: ParcelOverlay = pkt.decode()?;
+            self.on_parcel_overlay(&m);
         } else if id == ParcelDwellReply::ID {
             let m: ParcelDwellReply = pkt.decode()?;
             self.on_dwell_reply(&m);
