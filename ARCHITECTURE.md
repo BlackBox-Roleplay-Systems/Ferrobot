@@ -18,6 +18,8 @@ crates/
     src/caps.rs            the seed capability and the EventQueueGet long poll
     src/network/mod.rs     one session in one region: connect sequence, keep-alive, incoming
                            messages, requests, teleports, logout
+    src/network/neighbours.rs  circuits to neighbour regions (child agents), when asked for:
+                           EnableSimulator, crossings over an open circuit (from Aurora's session)
     src/network/groups.rs  group requests and replies (from Aurora's session_groups.rs)
     src/groups.rs          group data: roles, members, pairs, titles (from Aurora's groups.rs)
     src/group_api.rs       the client's group requests, the member list cache

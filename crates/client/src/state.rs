@@ -12,6 +12,9 @@ pub struct State {
     /// "First Last"
     pub name: String,
     pub region: Option<Region>,
+    /// The neighbour regions the bot keeps a circuit to (handle, name once its handshake came),
+    /// when the network task keeps them (`Network::set_neighbours`).
+    pub neighbours: Vec<(u64, String)>,
     /// In the region, as the region last said.
     pub position: Vec3,
     pub home: Option<Home>,

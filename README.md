@@ -18,6 +18,7 @@ All settings come from environment variables.
 | `FERRO_RELOG_DELAY` | `60` | Seconds to wait before logging in again |
 | `FERRO_REGION_TIMEOUT` | `100` | Seconds without a packet from the region before the connection counts as lost, as the viewer. For tests: keep the default on a grid |
 | `FERRO_EVENT_QUEUE_ERRORS` | `15` | Quick event queue failures in a row (1 s + 3 s more after each) before the queue counts as lost and the bot logs in again, as the viewer. For tests: keep the default on a grid |
+| `FERRO_NEIGHBOURS` | `false` | Keep circuits to the neighbour regions, as a viewer does: a crossing then moves in over the circuit already open, and the regions see the bot's child agents. For tests of crossings; a bot needs none |
 | `FERRO_MASTERS` | (none) | Avatars the bot obeys, comma-separated: `First Last` or usernames |
 | `FERRO_SHARED_SECRET` | (none) | The secret that signs the HTTP API's commands. Without it, the API is off |
 | `FERRO_HTTP` | `true` | SecondBot's HTTP API (`POST /api/Run`, `POST /json`) |

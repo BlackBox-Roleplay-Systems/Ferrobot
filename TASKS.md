@@ -66,8 +66,18 @@ baking: the bot says so and goes on.
   grid 2026-11-12
 - ✅ Masters' teleport offers accepted (`FERRO_MASTERS`, now services/interactions.rs, SecondBot's
   BotTeleportOffer); others ignored; verified on the grid 2026-11-12
-- ✅ Neighbour regions: not connected, like LibreMetaverse's bots (`MultipleSims = false`); a
-  bot that stays put needs no child agents. Revisit with movement (phase 7)
+- ✅ Neighbour regions: not connected by default, like LibreMetaverse's bots (`MultipleSims =
+  false`); a bot that stays put needs no child agents
+- 🟡 Neighbour regions on request (`FERRO_NEIGHBOURS`, `Network::set_neighbours`,
+  network/neighbours.rs): EnableSimulator (event queue) opens a circuit to the neighbour
+  (UseCircuitCode, handshake answered, pings both ways, no CompleteAgentMovement); a crossing or
+  teleport into it moves in over that circuit with CompleteAgentMovement alone, its handshake
+  kept; the region left is kept as a neighbour until DisableSimulator or silence; the
+  neighbours in `State::neighbours`. As the viewer's LLWorld and Aurora's session
+  (add_sim/remove_sim/switch_region). Tested on the test grid (child agents, crossings,
+  `TestGrid::enable_neighbour`, `cross`, `close_neighbour`) and on NGC regions
+- ⬜ Neighbours' seed capabilities and event queues (EstablishAgentCommunication): not opened yet;
+  Aurora opens them for the objects it draws across the border
 - 🟡 Region restarts: notices read as Aurora's region_restart.rs (Second Life's named alerts,
   OpenSim's `/RESTART_X_…` texts, the cancellation); the bot goes home at once when home is in
   another region (services/restart.rs), else logs in again after the restart

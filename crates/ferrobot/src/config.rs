@@ -19,6 +19,9 @@ pub struct Config {
     /// How long the client bears with a silent region or a failing event queue: the viewer's
     /// defaults, shorter only in tests (FERRO_REGION_TIMEOUT, FERRO_EVENT_QUEUE_ERRORS).
     pub timeouts: ferro_client::Timeouts,
+    /// Keep circuits to the neighbour regions, as a viewer does (FERRO_NEIGHBOURS, off): the
+    /// regions then see the bot as they see a viewer, for tests of crossings and child agents.
+    pub neighbours: bool,
     /// The avatars the bot obeys: "First Last" or usernames (SecondBot's MastersCSV).
     pub masters: Vec<String>,
     /// SecondBot's HTTP API: on unless turned off, and only with a shared secret.
@@ -82,6 +85,7 @@ impl std::fmt::Debug for Config {
             .field("relog", &self.relog)
             .field("relog_delay", &self.relog_delay)
             .field("timeouts", &self.timeouts)
+            .field("neighbours", &self.neighbours)
             .field("masters", &self.masters)
             .field("http_enabled", &self.http_enabled)
             .field("http_port", &self.http_port)
@@ -1223,6 +1227,7 @@ impl Config {
             relog: s.flag("FERRO_RELOG", true)?,
             relog_delay,
             timeouts,
+            neighbours: s.flag("FERRO_NEIGHBOURS", false)?,
             masters: s
                 .setting("FERRO_MASTERS", "commands_MastersCSV")
                 .map(|(_, v)| parse_masters(&v))

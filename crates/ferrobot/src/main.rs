@@ -69,6 +69,7 @@ async fn main() -> std::process::ExitCode {
     };
     let (client, mut network) = Client::new(http.clone());
     network.set_timeouts(cfg.timeouts);
+    network.set_neighbours(cfg.neighbours);
     // Each service's subscription is made here, before its task runs and before the login: a
     // task that subscribed when it first ran could miss the first events after the login.
     tokio::spawn(services::health::run(client.clone(), health_file.into()));
