@@ -121,3 +121,39 @@ async fn a_dropped_message_never_reaches_the_client() {
     stop.send(true).expect("stop");
     let _ = tokio::time::timeout(WAIT, session).await;
 }
+
+/// A client that lies about who it is: the access list change names another agent. The region
+/// must go by the circuit (OpenSim's LLUDPServer drops a packet whose AgentData is not the
+/// circuit's), which ferro-probe's land-guard checks on a real region.
+#[tokio::test]
+async fn an_access_list_change_can_claim_another_agent() {
+    use ferro_client::ParcelAction;
+    use ferro_client::parcels::{AL_BAN, AccessEntry};
+    let (grid, client, stop, session) = connect(false).await;
+    let owner = uuid::Uuid::from_u128(0x0e4e);
+    let ban = |entries: Vec<AccessEntry>| {
+        client.parcel_act(ParcelAction::AccessList {
+            local_id: 1,
+            flags: AL_BAN,
+            entries,
+        })
+    };
+    let someone = AccessEntry {
+        id: uuid::Uuid::from_u128(0xbad),
+        time: 0,
+        flags: AL_BAN,
+    };
+    client.faults().claim_agent(Some(owner));
+    ban(vec![someone]).await.expect("sent");
+    client.faults().claim_agent(None);
+    let from = |id: uuid::Uuid| {
+        let what = format!("access list from {id}");
+        move |s: &Seen| matches!(s, Seen::Parcel { what: w } if *w == what)
+    };
+    assert!(grid.wait_for(WAIT, from(owner)).await);
+    ban(vec![someone]).await.expect("sent");
+    let me = client.state().agent_id;
+    assert!(grid.wait_for(WAIT, from(me)).await);
+    stop.send(true).expect("stop");
+    let _ = tokio::time::timeout(WAIT, session).await;
+}

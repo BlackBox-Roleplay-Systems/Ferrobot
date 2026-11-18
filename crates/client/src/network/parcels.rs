@@ -458,6 +458,8 @@ impl Session<'_> {
                 // LLViewerParcelMgr::sendParcelAccessListUpdate
                 let (sections, chunks) = parcels::access_list_chunks(&entries);
                 let transaction = Uuid::new_v4();
+                #[cfg(feature = "faults")]
+                let agent = self.shared.faults.claimed_agent().unwrap_or(agent);
                 for (i, chunk) in chunks.iter().enumerate() {
                     let mut m = ParcelAccessListUpdate::default();
                     m.agent_data.agent_id = agent;

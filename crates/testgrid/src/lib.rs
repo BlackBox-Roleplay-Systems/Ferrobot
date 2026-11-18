@@ -443,7 +443,7 @@ pub enum Seen {
     /// Something done to a parcel or on it, in words: "eject <key> <flags>", "freeze …",
     /// "return <type> <owners>", "deed <local id> <group>", "release", "buy", "reclaim",
     /// "divide <w> <s> <e> <n>", "join …", "modify-land <action> brush <index> <size> seconds …
-    /// parcel <local id> at <w> <s> <e> <n>".
+    /// parcel <local id> at <w> <s> <e> <n>", "access list from <agent>".
     Parcel {
         what: String,
     },

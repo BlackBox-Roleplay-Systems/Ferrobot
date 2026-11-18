@@ -885,6 +885,9 @@ impl Region {
                     .map(|e| e.id)
                     .filter(|id| !id.is_nil())
                     .collect();
+                self.shared.saw(Seen::Parcel {
+                    what: format!("access list from {}", m.agent_data.agent_id),
+                });
                 self.shared.saw(Seen::AccessListUpdate {
                     flags: m.data.flags,
                     ids: ids.clone(),
