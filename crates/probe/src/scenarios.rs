@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 mod land;
+mod sessions;
 
 /// How long a teleport may take to put the avatar at its target.
 const ARRIVAL_WAIT: Duration = Duration::from_secs(15);
@@ -101,14 +102,20 @@ impl Probe {
             if !on.client.state().online {
                 break;
             }
-            if scenario == Scenario::Restart {
-                match self.restart(on).await {
-                    Some(again) => on = again,
-                    None => return,
+            // these end the bot's session and give back the next one
+            let again = match scenario {
+                Scenario::Restart => self.restart(on).await,
+                Scenario::AbandonedLogin => self.abandoned_login(on).await,
+                Scenario::Vanish => self.vanish(on).await,
+                _ => {
+                    self.scenario(&on.client, scenario).await;
+                    continue;
                 }
-                continue;
+            };
+            match again {
+                Some(again) => on = again,
+                None => return,
             }
-            self.scenario(&on.client, scenario).await;
         }
         self.logout(on).await;
     }
@@ -118,17 +125,7 @@ impl Probe {
         let (client, mut network) = Client::new(self.http.clone());
         network.set_neighbours(self.opts.neighbours);
         let mut events = client.subscribe();
-        let req = LoginRequest {
-            login_uri: self.opts.login_uri.clone(),
-            username: self.user.clone(),
-            password: self.password.clone(),
-            start: StartLocation::Region {
-                name: self.opts.home.clone(),
-                x: 128,
-                y: 128,
-                z: 30,
-            },
-        };
+        let req = self.login_request();
         let t = Instant::now();
         let resp = match login::login(&self.http, &req).await {
             Ok(resp) => resp,
@@ -168,6 +165,21 @@ impl Probe {
         } else {
             self.logout(on).await;
             None
+        }
+    }
+
+    /// The bot's login, at the home region's middle.
+    fn login_request(&self) -> LoginRequest {
+        LoginRequest {
+            login_uri: self.opts.login_uri.clone(),
+            username: self.user.clone(),
+            password: self.password.clone(),
+            start: StartLocation::Region {
+                name: self.opts.home.clone(),
+                x: 128,
+                y: 128,
+                z: 30,
+            },
         }
     }
 
@@ -402,8 +414,8 @@ impl Probe {
             Scenario::Land => self.land(client).await,
             Scenario::LandGuard => self.land_guard(client).await,
             Scenario::LandFaults => self.land_faults(client).await,
-            // run by the round: the session ends in it
-            Scenario::Restart => {}
+            // run by the round: the session ends in them
+            Scenario::Restart | Scenario::AbandonedLogin | Scenario::Vanish => {}
             Scenario::Unreachable => {
                 let unreachable = o.unreachable.clone();
                 self.refused(
