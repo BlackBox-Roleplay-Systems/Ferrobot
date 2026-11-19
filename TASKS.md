@@ -595,6 +595,10 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   login as "already logged in"; vanish right (timed out after 60 s). With Tranquillity's
   fix/login-logout both right, and five logins at once all work (`--bots 5 --stagger 0`; 4 of 5
   failed before: a SQLite store's column list read while it was being filled)
+- 🟡 `hypergrid` (`--hg-region host:port:Region`, `--hg-near`): to another grid's region, a teleport
+  and a crossing there as a visitor, home again, then the home grid's own teleports. For two
+  Tranquillity Hypergrid standalones on one host; not yet: instant messages and friends across
+  grids, the visitor's inventory and attachments
 - ⬜ More land: a terraform kept to a parcel with a selection off the 4 m grid (it edits the next
   parcel's edge), the region's Block Terraform and Allow Land Join/Divide flags, a single raised
   point on a patch's last row (sent flat)
