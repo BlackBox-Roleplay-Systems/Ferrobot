@@ -96,6 +96,9 @@ pub enum Scenario {
     Vanish,
     /// To a region of another grid (Hypergrid), around it, and back home.
     Hypergrid,
+    /// The region console's `kick user`, plain and with `--force` (RemoteAdmin): the bot is told
+    /// why, the regions let the agent go, and the next login works.
+    Kick,
 }
 
 impl Scenario {
@@ -122,6 +125,7 @@ impl Scenario {
             "abandoned-login" => vec![Scenario::AbandonedLogin],
             "vanish" => vec![Scenario::Vanish],
             "hypergrid" => vec![Scenario::Hypergrid],
+            "kick" => vec![Scenario::Kick],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }
@@ -228,6 +232,9 @@ impl Options {
         }
         if o.scenarios.contains(&Scenario::Restart) && o.admin_password_file.is_none() {
             return Err("--scenarios restart needs --remote-admin-password-file".into());
+        }
+        if o.scenarios.contains(&Scenario::Kick) && o.admin_password_file.is_none() {
+            return Err("--scenarios kick needs --remote-admin-password-file".into());
         }
         if o.bots > 1 && o.scenarios.contains(&Scenario::Restart) {
             return Err("--scenarios restart runs with one bot".into());

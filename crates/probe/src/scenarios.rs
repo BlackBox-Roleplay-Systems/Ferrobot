@@ -108,6 +108,7 @@ impl Probe {
                 Scenario::Restart => self.restart(on).await,
                 Scenario::AbandonedLogin => self.abandoned_login(on).await,
                 Scenario::Vanish => self.vanish(on).await,
+                Scenario::Kick => self.kick(on).await,
                 _ => {
                     self.scenario(&on.client, scenario).await;
                     continue;
@@ -417,7 +418,7 @@ impl Probe {
             Scenario::LandFaults => self.land_faults(client).await,
             Scenario::Hypergrid => self.hypergrid(client).await,
             // run by the round: the session ends in them
-            Scenario::Restart | Scenario::AbandonedLogin | Scenario::Vanish => {}
+            Scenario::Restart | Scenario::AbandonedLogin | Scenario::Vanish | Scenario::Kick => {}
             Scenario::Unreachable => {
                 let unreachable = o.unreachable.clone();
                 self.refused(

@@ -1,5 +1,6 @@
 //! OpenSim's RemoteAdmin (XML-RPC on the grid's public port, OpenSim's RemoteAdminPlugin): the
-//! probe creates the accounts of extra bots and restarts regions through it. A local test grid
+//! probe creates the accounts of extra bots, restarts regions, lists a region's agents and runs
+//! console commands (`kick user`) through it. A local test grid
 //! only (AGENTS.md rule 1); its password is read from a file and never logged.
 
 use std::time::Duration;
@@ -79,6 +80,35 @@ impl Admin {
                 error(&body)
             ))
         }
+    }
+
+    /// Run a region console command (admin_console_command). The answer says nothing but an
+    /// error, if there is one; the console's output is not returned.
+    pub async fn console(&self, command: &str) -> Result<(), String> {
+        let body = self
+            .post("admin_console_command", &[("command", Value::Str(command))])
+            .await?;
+        if body.contains("<name>error</name>") {
+            return Err(format!("admin_console_command: {}", error(&body)));
+        }
+        Ok(())
+    }
+
+    /// Whether `region` holds an agent with this id, root or child (admin_get_agents).
+    pub async fn has_agent(&self, region: &str, agent: &str) -> Result<bool, String> {
+        let body = self
+            .post(
+                "admin_get_agents",
+                &[
+                    ("region_name", Value::Str(region)),
+                    ("include_children", Value::Str("true")),
+                ],
+            )
+            .await?;
+        if !member_true(&body, "success") {
+            return Err(format!("admin_get_agents in {region}: {}", error(&body)));
+        }
+        Ok(body.contains(&format!("<string>{agent}</string>")))
     }
 
     /// A call whose answer says `success`.
