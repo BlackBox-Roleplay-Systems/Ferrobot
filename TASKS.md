@@ -599,6 +599,13 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   and a crossing there as a visitor, home again, then the home grid's own teleports. For two
   Tranquillity Hypergrid standalones on one host; not yet: instant messages and friends across
   grids, the visitor's inventory and attachments
+- 🟡 `kick`: the region console's `kick user`, plain and with `--force`, through RemoteAdmin's
+  `admin_console_command`; the agent must be in the home region and the neighbour first, then the
+  bot must be told the operator's message, both regions must let the agent go
+  (`admin_get_agents`), and the next login must work. Found on Tranquillity's develop: `--force`
+  put its own text into the message ("--force Probe kick-force, round 1")
+- ⬜ The client sometimes reads a packet seconds late in the first seconds after a login: a
+  KickUser the region sent at once ended the session 8 s later. Find what holds the session loop
 - ⬜ More land: a terraform kept to a parcel with a selection off the 4 m grid (it edits the next
   parcel's edge), the region's Block Terraform and Allow Land Join/Divide flags, a single raised
   point on a patch's last row (sent flat)
