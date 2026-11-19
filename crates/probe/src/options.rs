@@ -13,7 +13,7 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --password-file FILE  a file holding its password
   --scenarios LIST      comma-separated: all (local, near, far, cross), local, near, far, cross,
                         bounce, lost-crossing, unreachable, restart, sit-cross, land,
-                        land-guard, land-faults, abandoned-login, vanish (all)
+                        land-guard, land-faults, abandoned-login, vanish, hypergrid (all)
   --rounds N            rounds, each a fresh login (1)
   --bots N              bots at once, each running the scenarios (1): the first is --user, the
                         others the same name with 2, 3… after the last name, the same password
@@ -29,6 +29,10 @@ ferro-probe: teleports and crossings against real regions, timed and judged
                         corner on the 4 m grid (16,16); land also uses the east edge beside it
   --login-wait SECS     abandoned-login: how long the region may keep a login whose viewer never
                         connects before the next login must work (150)
+  --hg-region GATE:REGION
+                        hypergrid: a region of another grid, by its gatekeeper and name
+                        (host:port:Region); the bot goes there and comes back home through it
+  --hg-near REGION      hypergrid: that region's neighbour to the east, crossed into and back
   --no-neighbours       keep no circuits to neighbour regions (a viewer keeps them)
   --json FILE           also write the lines to this file
 ";
@@ -51,6 +55,10 @@ pub struct Options {
     pub admin_password_file: Option<PathBuf>,
     pub land_at: (f32, f32),
     pub login_wait: u64,
+    /// The hypergrid scenario's region of another grid, `host:port:Region`.
+    pub hg_region: Option<String>,
+    /// Its neighbour to the east, on that grid.
+    pub hg_near: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +94,8 @@ pub enum Scenario {
     /// The bot goes quiet without logging out, then logs in again once the region has timed it
     /// out.
     Vanish,
+    /// To a region of another grid (Hypergrid), around it, and back home.
+    Hypergrid,
 }
 
 impl Scenario {
@@ -111,6 +121,7 @@ impl Scenario {
             "land-faults" => vec![Scenario::LandFaults],
             "abandoned-login" => vec![Scenario::AbandonedLogin],
             "vanish" => vec![Scenario::Vanish],
+            "hypergrid" => vec![Scenario::Hypergrid],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }
@@ -135,6 +146,8 @@ impl Options {
             admin_password_file: None,
             land_at: (16.0, 16.0),
             login_wait: 150,
+            hg_region: None,
+            hg_near: None,
         };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -190,6 +203,14 @@ impl Options {
                         .filter(|n| (1..=3600).contains(n))
                         .ok_or("--login-wait: seconds, from 1 to 3600")?
                 }
+                "--hg-region" => {
+                    let v = value()?;
+                    if hg_region_name(&v).is_none() {
+                        return Err("--hg-region: host:port:Region".into());
+                    }
+                    o.hg_region = Some(v);
+                }
+                "--hg-near" => o.hg_near = Some(value()?),
                 "--no-neighbours" => o.neighbours = false,
                 "--json" => o.json = Some(value()?.into()),
                 "-h" | "--help" => return Err(String::new()),
@@ -211,8 +232,26 @@ impl Options {
         if o.bots > 1 && o.scenarios.contains(&Scenario::Restart) {
             return Err("--scenarios restart runs with one bot".into());
         }
+        if o.scenarios.contains(&Scenario::Hypergrid) && o.hg_region.is_none() {
+            return Err("--scenarios hypergrid needs --hg-region".into());
+        }
         Ok(o)
     }
+
+    /// The home grid's gatekeeper, `host:port`, from the login address: how another grid's map
+    /// finds the way back.
+    pub fn home_gate(&self) -> String {
+        let uri = self.login_uri.trim();
+        let rest = uri.split_once("://").map_or(uri, |(_, r)| r);
+        rest.split('/').next().unwrap_or(rest).to_owned()
+    }
+}
+
+/// The region's own name in a `host:port:Region` address: what the region calls itself once the
+/// bot is there. `None` when the address has no gatekeeper or no name.
+pub fn hg_region_name(address: &str) -> Option<&str> {
+    let (gate, name) = address.trim().rsplit_once(':')?;
+    (!gate.is_empty() && !name.trim().is_empty()).then(|| name.trim())
 }
 
 /// The land square's corner: on the 4 m grid, the square inside the region and clear of the
@@ -229,6 +268,45 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Options, String> {
         Options::parse(args.iter().map(|s| (*s).to_owned()))
+    }
+
+    #[test]
+    fn hypergrid_needs_a_region_of_another_grid() {
+        let base = [
+            "--user",
+            "u",
+            "--password-file",
+            "pw",
+            "--scenarios",
+            "hypergrid",
+        ];
+        let with = |more: &[&str]| parse(&[&base[..], more].concat());
+        assert!(with(&[]).is_err(), "no --hg-region");
+        assert!(with(&["--hg-region", "Cedar"]).is_err(), "no gatekeeper");
+        assert!(
+            with(&["--hg-region", "172.17.0.1:9400:"]).is_err(),
+            "no name"
+        );
+        let o = with(&[
+            "--hg-region",
+            "172.17.0.1:9400:Cedar",
+            "--hg-near",
+            "Dogwood",
+            "--login-uri",
+            "http://172.17.0.1:9300/",
+        ])
+        .expect("options");
+        assert_eq!(o.scenarios, vec![Scenario::Hypergrid]);
+        assert_eq!(
+            hg_region_name(o.hg_region.as_deref().unwrap()),
+            Some("Cedar")
+        );
+        assert_eq!(o.hg_near.as_deref(), Some("Dogwood"));
+        assert_eq!(o.home_gate(), "172.17.0.1:9300");
+        assert_eq!(
+            hg_region_name("grid.example.invalid:8002:Some Region"),
+            Some("Some Region")
+        );
     }
 
     #[test]

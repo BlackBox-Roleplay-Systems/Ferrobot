@@ -16,6 +16,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+mod hypergrid;
 mod land;
 mod sessions;
 
@@ -414,6 +415,7 @@ impl Probe {
             Scenario::Land => self.land(client).await,
             Scenario::LandGuard => self.land_guard(client).await,
             Scenario::LandFaults => self.land_faults(client).await,
+            Scenario::Hypergrid => self.hypergrid(client).await,
             // run by the round: the session ends in them
             Scenario::Restart | Scenario::AbandonedLogin | Scenario::Vanish => {}
             Scenario::Unreachable => {
@@ -653,13 +655,26 @@ impl Probe {
 
     /// A teleport, judged by where the avatar is afterwards (judge.rs).
     async fn teleport(&mut self, client: &Client, what: &str, region: &str, to: Vec3) -> bool {
-        let Some(handle) = self.handle(client, region).await else {
+        self.teleport_via(client, what, region, region, to).await
+    }
+
+    /// A teleport to the region the map finds as `lookup`, which calls itself `region` once the
+    /// bot is there: another grid's region is looked up as `host:port:Region`.
+    async fn teleport_via(
+        &mut self,
+        client: &Client,
+        what: &str,
+        lookup: &str,
+        region: &str,
+        to: Vec3,
+    ) -> bool {
+        let Some(handle) = self.handle(client, lookup).await else {
             self.emit(
                 client,
                 what,
                 false,
                 Instant::now(),
-                format!("no region named {region} on the map"),
+                format!("no region named {lookup} on the map"),
             );
             return false;
         };

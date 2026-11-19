@@ -586,6 +586,7 @@ cargo run -p ferro-probe -- --login-uri http://127.0.0.1:9000/ --user "Test User
 | `restart` | restarts the neighbour (its circuit closes, then opens again), then the home region with the bot in it (the notice, the end of the session, a new login once it is back); needs `--remote-admin-password-file`, one bot |
 | `abandoned-login` | logs out, logs in without connecting (as a cancelled login or a viewer that crashed), waits `--login-wait` seconds (150), then logs in: the region must have let go of the first login, or it refuses the second as a duplicate |
 | `vanish` | stops without a logout and sends nothing, then logs in again once the region has timed it out (75 s): the login must work at once |
+| `hypergrid` | to a region of another grid (`--hg-region host:port:Region`, through that grid's gatekeeper), a teleport inside it, over the border to its neighbour (`--hg-near`) and back, home through the other grid's map (`host:port:Home`, the home grid's address from `--login-uri`), then the home grid's own teleports; needs a second grid with Hypergrid on, so not in `all` |
 
 `all` is `local,near,far,cross`. The regions are `--home`, `--near` (east of home), `--far` and
 `--unreachable` (Alpha, Beta, Gamma and Delta by default). Each round logs in afresh. Exit code 0
