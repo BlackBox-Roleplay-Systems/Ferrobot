@@ -26,6 +26,11 @@ impl Probe {
         };
         let middle = Vec3::new(128.0, 128.0, 30.0);
         let me = client.state().agent_id;
+        let home_bakes = client
+            .state()
+            .region
+            .as_ref()
+            .is_some_and(|r| r.server_bakes);
         let mut events = client.subscribe();
 
         if !self
@@ -43,21 +48,36 @@ impl Probe {
         }
         tokio::time::sleep(SETTLE).await;
 
-        // a grid that bakes server-side bakes the visitor too; the visitor's viewer fetches every
-        // bake from its own home grid's appearance service, the one its login named
-        if client.state().agent_appearance_service.is_some() {
-            let first = match super::bake::current(client, me).filter(|a| a.cof_version > 0) {
+        // a region that bakes server-side must not say so to a visitor: the visitor's viewer would
+        // fetch every bake from its own grid's appearance service, which has none of the other
+        // grid's. Its viewer bakes it, and fetches the bakes everyone wears from the region by id.
+        if home_bakes {
+            let t = Instant::now();
+            let told = client
+                .state()
+                .region
+                .as_ref()
+                .is_some_and(|r| r.server_bakes);
+            self.emit(
+                client,
+                &format!("hg-no-server-bakes-in-{there}"),
+                !told,
+                t,
+                if told {
+                    "the region told a visitor it bakes server-side".into()
+                } else {
+                    String::new()
+                },
+            );
+            let appearance = match super::bake::current(client, me) {
                 Some(a) => Some(a),
                 None => {
                     super::bake::next_appearance(&mut events, client, me, super::bake::BAKE_WAIT)
                         .await
                 }
             };
-            if let Some(first) = first {
-                let baked = super::bake::settled(&mut events, client, me, first).await;
-                self.fetch_bakes(client, &format!("hg-bakes-in-{there}"), &baked)
-                    .await;
-                self.fetch_from_service(client, "hg-bakes-from-home-service", me, &baked)
+            if let Some(a) = appearance {
+                self.fetch_bakes(client, &format!("hg-bakes-in-{there}"), &a)
                     .await;
             }
         }

@@ -298,6 +298,7 @@ struct Session<'a> {
     /// The bot manages the region's estate (RegionHandshake).
     estate_manager: bool,
     region_product: String,
+    region_server_bakes: bool,
     /// The invoice of the last estate `getinfo`.
     estate_invoice: Uuid,
     estate_waits: estate::EstateWaits,
@@ -924,6 +925,7 @@ impl Session<'_> {
                 id: self.region_id,
                 estate_manager: self.estate_manager,
                 product: self.region_product.clone(),
+                server_bakes: self.region_server_bakes,
             });
         }
         self.shared.emit(Event::Arrived {
@@ -1097,6 +1099,7 @@ impl Session<'_> {
             id: self.region_id,
             estate_manager: self.estate_manager,
             product: self.region_product.clone(),
+            server_bakes: self.region_server_bakes,
         }
     }
 
@@ -1105,6 +1108,7 @@ impl Session<'_> {
         self.region_id = h.id;
         self.estate_manager = h.estate_manager;
         self.region_product = h.product;
+        self.region_server_bakes = h.server_bakes;
     }
 
     /// EnableSimulator (event queue): a circuit to a neighbour region, when they are on.
@@ -2442,6 +2446,7 @@ async fn run(
         region_id: Uuid::nil(),
         estate_manager: false,
         region_product: String::new(),
+        region_server_bakes: false,
         estate_invoice: Uuid::new_v4(),
         estate_waits: Default::default(),
         profile_waits: Default::default(),

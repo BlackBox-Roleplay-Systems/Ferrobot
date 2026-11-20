@@ -36,6 +36,8 @@ pub(super) struct Handshake {
     pub id: Uuid,
     pub estate_manager: bool,
     pub product: String,
+    /// RegionProtocols bit 0: the region bakes this avatar server-side.
+    pub server_bakes: bool,
 }
 
 impl Handshake {
@@ -45,6 +47,10 @@ impl Handshake {
             id: m.region_info2.region_id,
             estate_manager: m.region_info.is_estate_manager,
             product: field_str(&m.region_info3.product_name),
+            server_bakes: m
+                .region_info4
+                .first()
+                .is_some_and(|r| r.region_protocols & 1 != 0),
         }
     }
 }

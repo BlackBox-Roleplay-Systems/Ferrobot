@@ -80,6 +80,8 @@ pub struct Region {
     pub estate_manager: bool,
     /// What the grid sells it as (RegionHandshake's ProductName): "Estate / Full Region"…
     pub product: String,
+    /// The region bakes the bot's outfit itself (RegionHandshake's RegionProtocols bit 0).
+    pub server_bakes: bool,
 }
 
 /// Where "home" is (the login reply's `home`).
