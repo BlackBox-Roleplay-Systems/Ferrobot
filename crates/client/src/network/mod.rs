@@ -1527,6 +1527,27 @@ impl Session<'_> {
         None
     }
 
+    /// An instant message, from the region's circuit or a neighbour's.
+    fn on_instant_message(&mut self, m: ImprovedInstantMessage) {
+        let b = m.message_block;
+        let im = InstantMessage {
+            from_agent_id: m.agent_data.agent_id,
+            from_name: field_str(&b.from_agent_name),
+            to_agent_id: b.to_agent_id,
+            dialog: b.dialog,
+            id: b.id,
+            message: field_str(&b.message),
+            from_group: b.from_group,
+            offline: b.offline != 0,
+            timestamp: b.timestamp,
+            region_id: b.region_id,
+            position: b.position,
+            binary_bucket: b.binary_bucket,
+        };
+        self.on_session_message(&im);
+        self.shared.emit(Event::InstantMessage(im));
+    }
+
     fn on_datagram(&mut self, data: &[u8], from: SocketAddr) -> Option<End> {
         if let Some(p) = &mut self.previous
             && from == p.n.circuit.addr
@@ -1537,16 +1558,20 @@ impl Session<'_> {
                     log::info!("the region left closed its circuit");
                     self.previous = None;
                 }
+                neighbours::Heard::InstantMessage(m) => self.on_instant_message(*m),
                 neighbours::Heard::Nothing | neighbours::Heard::Handshake => {}
             }
             return None;
         }
         if from != self.addr() {
-            if self
+            let (changed, im) = self
                 .neighbours
-                .on_datagram(&self.sock, self.login, data, from)
-            {
+                .on_datagram(&self.sock, self.login, data, from);
+            if changed {
                 self.publish_neighbours();
+            }
+            if let Some(m) = im {
+                self.on_instant_message(*m);
             }
             return None;
         }
@@ -1628,23 +1653,7 @@ impl Session<'_> {
             }));
         } else if id == ImprovedInstantMessage::ID {
             let m: ImprovedInstantMessage = pkt.decode()?;
-            let b = m.message_block;
-            let im = InstantMessage {
-                from_agent_id: m.agent_data.agent_id,
-                from_name: field_str(&b.from_agent_name),
-                to_agent_id: b.to_agent_id,
-                dialog: b.dialog,
-                id: b.id,
-                message: field_str(&b.message),
-                from_group: b.from_group,
-                offline: b.offline != 0,
-                timestamp: b.timestamp,
-                region_id: b.region_id,
-                position: b.position,
-                binary_bucket: b.binary_bucket,
-            };
-            self.on_session_message(&im);
-            self.shared.emit(Event::InstantMessage(im));
+            self.on_instant_message(m);
         } else if id == ObjectUpdate::ID {
             let m: ObjectUpdate = pkt.decode()?;
             let placed: Vec<_> = m
