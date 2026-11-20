@@ -33,6 +33,8 @@ ferro-probe: teleports and crossings against real regions, timed and judged
                         hypergrid: a region of another grid, by its gatekeeper and name
                         (host:port:Region); the bot goes there and comes back home through it
   --hg-near REGION      hypergrid: that region's neighbour to the east, crossed into and back
+  --partner-home REGION group-admin: the region the second avatar logs in to (default --home);
+                        another region server's, to see a change reach a region it was not made on
   --no-neighbours       keep no circuits to neighbour regions (a viewer keeps them)
   --json FILE           also write the lines to this file
 ";
@@ -59,6 +61,8 @@ pub struct Options {
     pub hg_region: Option<String>,
     /// Its neighbour to the east, on that grid.
     pub hg_near: Option<String>,
+    /// The group-admin scenario's second avatar logs in here; `home` when unset.
+    pub partner_home: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +173,7 @@ impl Options {
             login_wait: 150,
             hg_region: None,
             hg_near: None,
+            partner_home: None,
         };
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -232,6 +237,7 @@ impl Options {
                     o.hg_region = Some(v);
                 }
                 "--hg-near" => o.hg_near = Some(value()?),
+                "--partner-home" => o.partner_home = Some(value()?),
                 "--no-neighbours" => o.neighbours = false,
                 "--json" => o.json = Some(value()?.into()),
                 "-h" | "--help" => return Err(String::new()),

@@ -605,14 +605,18 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   (`admin_get_agents`), and the next login must work. Found on Tranquillity's develop: `--force`
   put its own text into the message ("--force Probe kick-force, round 1")
 - 🟡 `groups`: one resident's use of a group (create, roles, owner, title, active group, chat, notice,
-  leave, join), for Tranquillity's groups rebuild. Not yet: bans (GroupAPIv1, not on Tranquillity
-  yet); group land and group-owned objects; a large seeded group
+  leave, join), for Tranquillity's groups rebuild. Not yet: group land and group-owned objects; a large seeded group
 - 🟡 `group-admin`: running a group with a second avatar (a closed group's join refused, an
   invitation accepted, a plain member unable to eject or promote, a role given and taken back, an
   ejection). Found on Tranquillity's develop: a plain member's ejection of the owner was answered
   as done (the owner stayed a member, but was told of the ejection); an officer could change
   neither the charter nor a role's title (both needed Change Actions). Not yet: an officer
   inviting and ejecting, declined invitations, notices to a member who turned them off
+- 🟡 `group-admin` on a grid (`--partner-home` a region of another region server): the owner's
+  region must show the partner's acceptance, and the partner's region the role the owner gave,
+  within 5 s (each region caches Robust's answers up to 30 s); then a ban through GroupAPIv1 (on the
+  list, no invitation reaches the banned avatar) and its lifting. Found on Tranquillity's develop:
+  a member ejected through another region server kept the group in their viewer
 - 🟡 The client's group settings: `group_profile` (GroupProfileRequest), `group_update`
   (UpdateGroupInfo), `group_role_update` (GroupRoleUpdate, the whole role)
 - ⬜ The client sometimes reads a packet seconds late in the first seconds after a login: a

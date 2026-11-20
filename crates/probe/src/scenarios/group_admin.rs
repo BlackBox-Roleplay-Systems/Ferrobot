@@ -20,6 +20,11 @@ const POWER_CHANGE_ACTIONS: u64 = 1 << 10;
 const ANSWER_WAIT: Duration = Duration::from_secs(15);
 /// How long a change the grid does not answer (a role given) gets before it is checked.
 const SETTLE: Duration = Duration::from_secs(3);
+/// How soon the partner's own region must show a change made through the owner's: on a grid,
+/// a region that is not told of a change keeps its cached answer up to 30 s.
+const SEEN_ELSEWHERE: Duration = Duration::from_secs(5);
+/// How long the probe watches for it, to tell "late" from "never".
+const WATCH_ELSEWHERE: Duration = Duration::from_secs(40);
 
 impl Probe {
     pub(super) async fn group_admin(&mut self, owner: &Client) {
@@ -37,7 +42,15 @@ impl Probe {
             self.emit(owner, "group-admin-partner", false, Instant::now(), e);
             return;
         }
-        let Some(partner) = self.login_as("group-admin-partner", &partner_name).await else {
+        let region = self
+            .opts
+            .partner_home
+            .clone()
+            .unwrap_or_else(|| self.opts.home.clone());
+        let Some(partner) = self
+            .login_as("group-admin-partner", &partner_name, &region)
+            .await
+        else {
             return;
         };
         self.group_admin_with(owner, &partner.client).await;
@@ -174,7 +187,15 @@ impl Probe {
             }
             None => false,
         };
-        let member = self.is_member(owner, group, them).await;
+        // the owner's region shows the new member: at once on one region server, or once Robust
+        // has told the owner's server of the change (the partner accepted on its own region)
+        let since = Instant::now();
+        let mut member = self.is_member(owner, group, them).await;
+        while accepted && member != Some(true) && since.elapsed() < SEEN_ELSEWHERE {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            member = self.is_member(owner, group, them).await;
+        }
+        let shown = since.elapsed().as_millis();
         let (ok, note) = match (invited, invitation, accepted, member) {
             (Err(e), ..) => (false, format!("invite: {e}")),
             (_, None, ..) => (false, "no invitation came".to_owned()),
@@ -182,13 +203,18 @@ impl Probe {
                 false,
                 "accepted, but the group is not in the partner's list".to_owned(),
             ),
-            (_, _, true, Some(true)) => (true, String::new()),
-            (_, _, true, m) => (false, format!("not in the owner's member list ({m:?})")),
+            (_, _, true, Some(true)) => (true, format!("in the owner's list after {shown} ms")),
+            (_, _, true, m) => (
+                false,
+                format!("not in the owner's member list after {shown} ms ({m:?})"),
+            ),
         };
         self.emit(owner, "group-admin-invite", ok, t, note);
         if !ok {
             return;
         }
+        // the partner's region now has the member list cached (the role step checks it changes)
+        let _ = partner.group_members_within(group, Duration::ZERO).await;
 
         // a plain member can neither eject the owner nor make itself an owner
         let t = Instant::now();
@@ -242,6 +268,31 @@ impl Probe {
             (false, _) => (false, "not in the Officers role".to_owned()),
         };
         self.emit(owner, "group-admin-role", ok, t, note);
+
+        // the partner's own region shows the role given through the owner's (another region
+        // server on a grid: there it takes Robust telling that server of the change)
+        let t = Instant::now();
+        let mut seen = None;
+        while t.elapsed() < WATCH_ELSEWHERE {
+            if self
+                .powers_seen_by(partner, group, them)
+                .await
+                .is_some_and(|p| p & POWER_INVITE != 0)
+            {
+                seen = Some(t.elapsed());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        let (ok, note) = match seen {
+            Some(d) if d <= SEEN_ELSEWHERE => (true, format!("seen after {} ms", d.as_millis())),
+            Some(d) => (false, format!("seen only after {} ms", d.as_millis())),
+            None => (
+                false,
+                format!("not seen in {} s", WATCH_ELSEWHERE.as_secs()),
+            ),
+        };
+        self.emit(owner, "group-admin-role-seen-by-member", ok, t, note);
 
         // an officer may change the charter (Change Identity) and a role's title (Role Properties),
         // but not a role's abilities (no Change Actions)
@@ -337,6 +388,45 @@ impl Probe {
             (_, _, m) => (false, format!("still in the member list ({m:?})")),
         };
         self.emit(owner, "group-admin-eject", ok, t, note);
+
+        // banned (GroupAPIv1): on the list, and no invitation reaches them; then the ban lifted
+        let t = Instant::now();
+        let (ok, note) = match owner.group_ban(group, &[them], true).await {
+            Ok(list) if list.contains(&them) => (true, String::new()),
+            Ok(list) => (
+                false,
+                format!("not on the ban list ({} banned)", list.len()),
+            ),
+            Err(e) => (false, e.to_string()),
+        };
+        self.emit(owner, "group-admin-ban", ok, t, note);
+
+        let mut events = partner.subscribe();
+        let t = Instant::now();
+        let invited = owner.group_invite(group, them, &[Uuid::nil()]).await;
+        let came = next_event(&mut events, SEEN_ELSEWHERE, |e| match e {
+            Event::InstantMessage(im)
+                if im.dialog == IM_GROUP_INVITATION && im.from_agent_id == group =>
+            {
+                Some(())
+            }
+            _ => None,
+        })
+        .await;
+        let (ok, note) = match (invited, came) {
+            (Err(e), _) => (false, format!("invite: {e}")),
+            (Ok(()), None) => (true, String::new()),
+            (Ok(()), Some(())) => (false, "a banned avatar was invited".to_owned()),
+        };
+        self.emit(owner, "group-admin-banned-not-invited", ok, t, note);
+
+        let t = Instant::now();
+        let (ok, note) = match owner.group_ban(group, &[them], false).await {
+            Ok(list) if !list.contains(&them) => (true, String::new()),
+            Ok(_) => (false, "still on the ban list".to_owned()),
+            Err(e) => (false, e.to_string()),
+        };
+        self.emit(owner, "group-admin-unban", ok, t, note);
     }
 
     /// The partner sends the group's settings with a new charter (the rest as they are); the
@@ -373,6 +463,17 @@ impl Probe {
             .await
             .ok()
             .map(|m| m.iter().any(|x| x.id == avatar))
+    }
+
+    /// The avatar's powers in the group, as `viewer`'s region gives them in the member list.
+    async fn powers_seen_by(&self, viewer: &Client, group: Uuid, avatar: Uuid) -> Option<u64> {
+        viewer
+            .group_members_within(group, Duration::ZERO)
+            .await
+            .ok()?
+            .iter()
+            .find(|x| x.id == avatar)
+            .map(|x| x.powers)
     }
 
     /// The avatar's powers in the group, as its member list gives them.
