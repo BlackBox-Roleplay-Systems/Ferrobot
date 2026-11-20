@@ -610,8 +610,11 @@ LibreMetaverse client, in Rust, on the same client as the bot.
 - 🟡 `group-admin`: running a group with a second avatar (a closed group's join refused, an
   invitation accepted, a plain member unable to eject or promote, a role given and taken back, an
   ejection). Found on Tranquillity's develop: a plain member's ejection of the owner was answered
-  as done (the owner stayed a member, but was told of the ejection). Not yet: an officer inviting
-  and ejecting, declined invitations, notices to a member who turned them off
+  as done (the owner stayed a member, but was told of the ejection); an officer could change
+  neither the charter nor a role's title (both needed Change Actions). Not yet: an officer
+  inviting and ejecting, declined invitations, notices to a member who turned them off
+- 🟡 The client's group settings: `group_profile` (GroupProfileRequest), `group_update`
+  (UpdateGroupInfo), `group_role_update` (GroupRoleUpdate, the whole role)
 - ⬜ The client sometimes reads a packet seconds late in the first seconds after a login: a
   KickUser the region sent at once ended the session 8 s later. Find what holds the session loop
 - ⬜ More land: a terraform kept to a parcel with a selection off the 4 m grid (it edits the next

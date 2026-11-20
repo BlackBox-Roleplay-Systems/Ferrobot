@@ -54,6 +54,23 @@ pub(crate) enum GroupRequest {
         members: Vec<Uuid>,
         reply: oneshot::Sender<bool>,
     },
+    /// A group's profile, answered by GroupProfileReply (which names the group, not a request).
+    Profile {
+        group: Uuid,
+        reply: oneshot::Sender<groups::GroupProfile>,
+    },
+    /// The group's settings (UpdateGroupInfo); the grid does not answer.
+    Update {
+        group: Uuid,
+        settings: groups::GroupSettings,
+        reply: oneshot::Sender<()>,
+    },
+    /// One role, every part of it (GroupRoleUpdate); the grid does not answer.
+    RoleUpdate {
+        group: Uuid,
+        role: groups::RoleUpdate,
+        reply: oneshot::Sender<()>,
+    },
     /// The grid does not answer role changes.
     RoleChanges {
         group: Uuid,
@@ -136,6 +153,8 @@ pub(super) struct GroupWaits {
     members: HashMap<Uuid, Gathering<GroupMember>>,
     role_members: HashMap<Uuid, Gathering<(Uuid, Uuid)>>,
     titles: HashMap<Uuid, oneshot::Sender<Vec<GroupTitle>>>,
+    /// Profiles asked for, by group.
+    profiles: HashMap<Uuid, Vec<oneshot::Sender<groups::GroupProfile>>>,
     /// EjectGroupMemberReply names the group only: answered in order.
     ejects: HashMap<Uuid, VecDeque<oneshot::Sender<bool>>>,
     /// Joins and leaves asked for, by group.
@@ -307,6 +326,36 @@ impl Session<'_> {
                     let (tx, _) = oneshot::channel();
                     q.push_back(tx);
                 }
+            }
+            GroupRequest::Profile { group, reply } => {
+                let waiting = self.groups.profiles.entry(group).or_default();
+                let first = waiting.is_empty();
+                waiting.push(reply);
+                if first {
+                    let mut m = GroupProfileRequest::default();
+                    m.agent_data.agent_id = agent;
+                    m.agent_data.session_id = session;
+                    m.group_data.group_id = group;
+                    self.send(&m, true);
+                }
+            }
+            GroupRequest::Update {
+                group,
+                settings,
+                reply,
+            } => {
+                self.send(
+                    &groups::update_message(agent, session, group, &settings),
+                    true,
+                );
+                let _ = reply.send(());
+            }
+            GroupRequest::RoleUpdate { group, role, reply } => {
+                self.send(
+                    &groups::role_update_message(agent, session, group, &role),
+                    true,
+                );
+                let _ = reply.send(());
             }
             GroupRequest::RoleChanges {
                 group,
@@ -593,6 +642,14 @@ impl Session<'_> {
                 && let Some(tx) = self.groups.titles.remove(&m.agent_data.request_id)
             {
                 let _ = tx.send(groups::titles_reply(&m));
+            }
+        } else if id == GroupProfileReply::ID {
+            let m: GroupProfileReply = pkt.decode()?;
+            if m.agent_data.agent_id == me {
+                let profile = groups::profile_reply(&m);
+                for tx in self.groups.profiles.remove(&profile.id).unwrap_or_default() {
+                    let _ = tx.send(profile.clone());
+                }
             }
         } else if id == JoinGroupReply::ID {
             let m: JoinGroupReply = pkt.decode()?;

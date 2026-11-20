@@ -2,7 +2,9 @@
 //! API: the roles, the members (on demand, cached a minute, unlike SecondBot's list from the login
 //! only), who holds a role, invitations with a role, ejections and role changes.
 
-use crate::groups::{GroupMember, GroupRole, GroupTitle, RoleChange};
+use crate::groups::{
+    GroupMember, GroupProfile, GroupRole, GroupSettings, GroupTitle, RoleChange, RoleUpdate,
+};
 use crate::network::GroupRequest;
 use crate::{Client, ClientError, Request};
 use std::time::{Duration, Instant};
@@ -169,6 +171,49 @@ impl Client {
         self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::RoleChanges {
             group,
             changes: vec![change],
+            reply,
+        })
+        .await
+    }
+
+    /// A group's profile (GroupProfileRequest): any group, the bot a member or not.
+    pub async fn group_profile(&self, group: Uuid) -> Result<GroupProfile, ClientError> {
+        if !self.shared.state().online {
+            return Err(ClientError::NotConnected);
+        }
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Profile {
+            group,
+            reply,
+        })
+        .await
+    }
+
+    /// Change the group's settings (UpdateGroupInfo), all of them at once as the viewer sends
+    /// them; the grid applies what the bot may change and does not answer.
+    pub async fn group_update(
+        &self,
+        group: Uuid,
+        settings: GroupSettings,
+    ) -> Result<(), ClientError> {
+        self.check_group(group)?;
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::Update {
+            group,
+            settings,
+            reply,
+        })
+        .await
+    }
+
+    /// Change a role, every part of it (GroupRoleUpdate); the grid does not answer.
+    pub async fn group_role_update(
+        &self,
+        group: Uuid,
+        role: RoleUpdate,
+    ) -> Result<(), ClientError> {
+        self.check_group(group)?;
+        self.group_ask(crate::REQUEST_TIMEOUT, |reply| GroupRequest::RoleUpdate {
+            group,
+            role,
             reply,
         })
         .await

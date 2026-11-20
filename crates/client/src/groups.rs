@@ -515,6 +515,133 @@ pub fn create_message(agent: Uuid, session: Uuid, g: &NewGroup) -> msgs::CreateG
     m
 }
 
+/// A group's profile (GroupProfileReply, as LLGroupMgr::processGroupPropertiesReply reads it): the
+/// settings any avatar may see, and the asker's own title and powers in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupProfile {
+    pub id: Uuid,
+    pub name: String,
+    pub charter: String,
+    pub show_in_list: bool,
+    pub member_title: String,
+    pub powers: u64,
+    pub insignia: Uuid,
+    pub founder: Uuid,
+    pub membership_fee: i32,
+    pub open_enrollment: bool,
+    pub member_count: i32,
+    pub role_count: i32,
+    pub allow_publish: bool,
+    pub mature_publish: bool,
+    pub owner_role: Uuid,
+}
+
+/// GroupProfileReply, read.
+pub fn profile_reply(m: &msgs::GroupProfileReply) -> GroupProfile {
+    let d = &m.group_data;
+    GroupProfile {
+        id: d.group_id,
+        name: field_str(&d.name),
+        charter: field_str(&d.charter),
+        show_in_list: d.show_in_list,
+        member_title: field_str(&d.member_title),
+        powers: d.powers_mask,
+        insignia: d.insignia_id,
+        founder: d.founder_id,
+        membership_fee: d.membership_fee,
+        open_enrollment: d.open_enrollment,
+        member_count: d.group_membership_count,
+        role_count: d.group_roles_count,
+        allow_publish: d.allow_publish,
+        mature_publish: d.mature_publish,
+        owner_role: d.owner_role,
+    }
+}
+
+/// The settings UpdateGroupInfo sends: all of them at once, as LLGroupMgr::sendUpdateGroupInfo
+/// does, whichever of them the sender may change.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupSettings {
+    pub charter: String,
+    pub show_in_list: bool,
+    pub insignia: Uuid,
+    pub membership_fee: i32,
+    pub open_enrollment: bool,
+    pub allow_publish: bool,
+    pub mature_publish: bool,
+}
+
+impl From<&GroupProfile> for GroupSettings {
+    fn from(p: &GroupProfile) -> Self {
+        GroupSettings {
+            charter: p.charter.clone(),
+            show_in_list: p.show_in_list,
+            insignia: p.insignia,
+            membership_fee: p.membership_fee,
+            open_enrollment: p.open_enrollment,
+            allow_publish: p.allow_publish,
+            mature_publish: p.mature_publish,
+        }
+    }
+}
+
+/// UpdateGroupInfo (LLGroupMgr::sendUpdateGroupInfo).
+pub fn update_message(
+    agent: Uuid,
+    session: Uuid,
+    group: Uuid,
+    g: &GroupSettings,
+) -> msgs::UpdateGroupInfo {
+    let mut m = msgs::UpdateGroupInfo::default();
+    m.agent_data.agent_id = agent;
+    m.agent_data.session_id = session;
+    let d = &mut m.group_data;
+    d.group_id = group;
+    d.charter = ferro_msg::str_field(&g.charter);
+    d.show_in_list = g.show_in_list;
+    d.insignia_id = g.insignia;
+    d.membership_fee = g.membership_fee;
+    d.open_enrollment = g.open_enrollment;
+    d.allow_publish = g.allow_publish;
+    d.mature_publish = g.mature_publish;
+    m
+}
+
+/// A role as GroupRoleUpdate sends it: the whole role, as the viewer's roles panel does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoleUpdate {
+    pub role: Uuid,
+    pub name: String,
+    pub description: String,
+    pub title: String,
+    pub powers: u64,
+}
+
+/// LLRoleChangeType's RC_UPDATE_ALL: the role's name, description and title, and its powers.
+pub const RC_UPDATE_ALL: u8 = 3;
+
+/// GroupRoleUpdate (LLGroupMgr::sendGroupRoleChanges) for one role, every part of it.
+pub fn role_update_message(
+    agent: Uuid,
+    session: Uuid,
+    group: Uuid,
+    r: &RoleUpdate,
+) -> msgs::GroupRoleUpdate {
+    let mut m = msgs::GroupRoleUpdate::default();
+    m.agent_data.agent_id = agent;
+    m.agent_data.session_id = session;
+    m.agent_data.group_id = group;
+    m.role_data.push(msgs::group_role_update::RoleData {
+        role_id: r.role,
+        name: ferro_msg::str_field(&r.name),
+        description: ferro_msg::str_field(&r.description),
+        title: ferro_msg::str_field(&r.title),
+        powers: r.powers,
+        update_type: RC_UPDATE_ALL,
+    });
+    m
+}
+
 /// CreateGroupReply, read.
 pub fn created_reply(m: &msgs::CreateGroupReply) -> GroupCreated {
     GroupCreated {
@@ -528,6 +655,71 @@ pub fn created_reply(m: &msgs::CreateGroupReply) -> GroupCreated {
 mod tests {
     use super::*;
     use ferro_msg::str_field;
+
+    #[test]
+    fn update_and_role_update_carry_every_field() {
+        let (agent, session, group, role) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let m = update_message(
+            agent,
+            session,
+            group,
+            &GroupSettings {
+                charter: "New charter".into(),
+                show_in_list: true,
+                insignia: role,
+                membership_fee: 7,
+                open_enrollment: true,
+                allow_publish: false,
+                mature_publish: true,
+            },
+        );
+        assert_eq!(m.agent_data.agent_id, agent);
+        assert_eq!(m.group_data.group_id, group);
+        assert_eq!(field_str(&m.group_data.charter), "New charter");
+        assert_eq!(m.group_data.membership_fee, 7);
+        assert!(
+            m.group_data.open_enrollment
+                && m.group_data.mature_publish
+                && !m.group_data.allow_publish
+        );
+
+        let r = role_update_message(
+            agent,
+            session,
+            group,
+            &RoleUpdate {
+                role,
+                name: "Builders".into(),
+                description: "They build".into(),
+                title: "Builder".into(),
+                powers: 1 << 4,
+            },
+        );
+        assert_eq!(r.agent_data.group_id, group);
+        assert_eq!(r.role_data.len(), 1);
+        assert_eq!(field_str(&r.role_data[0].title), "Builder");
+        assert_eq!(r.role_data[0].powers, 1 << 4);
+        assert_eq!(r.role_data[0].update_type, RC_UPDATE_ALL);
+    }
+
+    #[test]
+    fn a_profile_is_read() {
+        let mut m = msgs::GroupProfileReply::default();
+        m.group_data.group_id = Uuid::from_u128(5);
+        m.group_data.charter = str_field("The charter");
+        m.group_data.membership_fee = 3;
+        m.group_data.powers_mask = 1 << 11;
+        let p = profile_reply(&m);
+        assert_eq!(p.id, Uuid::from_u128(5));
+        assert_eq!(p.charter, "The charter");
+        assert_eq!(p.membership_fee, 3);
+        assert_eq!(GroupSettings::from(&p).charter, "The charter");
+    }
 
     #[test]
     fn a_group_created_as_the_viewer_asks() {
