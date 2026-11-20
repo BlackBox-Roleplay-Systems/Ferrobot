@@ -105,6 +105,9 @@ pub enum Scenario {
     /// Bakes on Mesh: a test outfit of the probe's own textures (a Universal layer, a skirt)
     /// worn, kept through teleports, taken off.
     Bom,
+    /// Groups as one resident uses them: make one, its roles and title, chat, a notice, leave and
+    /// join again.
+    Groups,
 }
 
 impl Scenario {
@@ -134,6 +137,7 @@ impl Scenario {
             "kick" => vec![Scenario::Kick],
             "bake" => vec![Scenario::Bake],
             "bom" => vec![Scenario::Bom],
+            "groups" => vec![Scenario::Groups],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }

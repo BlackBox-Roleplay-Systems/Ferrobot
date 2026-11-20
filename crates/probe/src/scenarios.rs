@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 mod bake;
 mod bom;
+mod groups;
 mod hypergrid;
 mod land;
 mod sessions;
@@ -421,6 +422,7 @@ impl Probe {
             Scenario::LandFaults => self.land_faults(client).await,
             Scenario::Hypergrid => self.hypergrid(client).await,
             Scenario::Bom => self.bom(client).await,
+            Scenario::Groups => self.groups(client).await,
             // run by the round: the session ends in them
             Scenario::Restart
             | Scenario::AbandonedLogin
