@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 mod bake;
 mod bom;
+mod group_admin;
 mod groups;
 mod hypergrid;
 mod land;
@@ -128,10 +129,16 @@ impl Probe {
 
     /// Log in at the home region's middle and wait for the arrival; the step is told as `what`.
     async fn login(&mut self, what: &str) -> Option<Online> {
+        let user = self.user.clone();
+        self.login_as(what, &user).await
+    }
+
+    /// As [`Probe::login`], for another account with the bot's password (a scenario's second avatar).
+    async fn login_as(&mut self, what: &str, user: &str) -> Option<Online> {
         let (client, mut network) = Client::new(self.http.clone());
         network.set_neighbours(self.opts.neighbours);
         let mut events = client.subscribe();
-        let req = self.login_request();
+        let req = self.login_request_for(user);
         let t = Instant::now();
         let resp = match login::login(&self.http, &req).await {
             Ok(resp) => resp,
@@ -176,9 +183,14 @@ impl Probe {
 
     /// The bot's login, at the home region's middle.
     fn login_request(&self) -> LoginRequest {
+        self.login_request_for(&self.user)
+    }
+
+    /// An account's login with the bot's password, at the home region's middle.
+    fn login_request_for(&self, user: &str) -> LoginRequest {
         LoginRequest {
             login_uri: self.opts.login_uri.clone(),
-            username: self.user.clone(),
+            username: user.to_owned(),
             password: self.password.clone(),
             start: StartLocation::Region {
                 name: self.opts.home.clone(),
@@ -423,6 +435,7 @@ impl Probe {
             Scenario::Hypergrid => self.hypergrid(client).await,
             Scenario::Bom => self.bom(client).await,
             Scenario::Groups => self.groups(client).await,
+            Scenario::GroupAdmin => self.group_admin(client).await,
             // run by the round: the session ends in them
             Scenario::Restart
             | Scenario::AbandonedLogin

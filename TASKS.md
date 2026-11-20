@@ -605,8 +605,13 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   (`admin_get_agents`), and the next login must work. Found on Tranquillity's develop: `--force`
   put its own text into the message ("--force Probe kick-force, round 1")
 - 🟡 `groups`: one resident's use of a group (create, roles, owner, title, active group, chat, notice,
-  leave, join), for Tranquillity's groups rebuild. Not yet: a second account for invites, ejects,
-  role assignment by others and bans; group land and group-owned objects; a large seeded group
+  leave, join), for Tranquillity's groups rebuild. Not yet: bans (GroupAPIv1, not on Tranquillity
+  yet); group land and group-owned objects; a large seeded group
+- 🟡 `group-admin`: running a group with a second avatar (a closed group's join refused, an
+  invitation accepted, a plain member unable to eject or promote, a role given and taken back, an
+  ejection). Found on Tranquillity's develop: a plain member's ejection of the owner was answered
+  as done (the owner stayed a member, but was told of the ejection). Not yet: an officer inviting
+  and ejecting, declined invitations, notices to a member who turned them off
 - ⬜ The client sometimes reads a packet seconds late in the first seconds after a login: a
   KickUser the region sent at once ended the session 8 s later. Find what holds the session loop
 - ⬜ More land: a terraform kept to a parcel with a selection off the 4 m grid (it edits the next
