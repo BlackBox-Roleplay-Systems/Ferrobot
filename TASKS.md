@@ -604,6 +604,9 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   bot must be told the operator's message, both regions must let the agent go
   (`admin_get_agents`), and the next login must work. Found on Tranquillity's develop: `--force`
   put its own text into the message ("--force Probe kick-force, round 1")
+- 🟡 `groups`: one resident's use of a group (create, roles, owner, title, active group, chat, notice,
+  leave, join), for Tranquillity's groups rebuild. Not yet: a second account for invites, ejects,
+  role assignment by others and bans; group land and group-owned objects; a large seeded group
 - ⬜ The client sometimes reads a packet seconds late in the first seconds after a login: a
   KickUser the region sent at once ended the session 8 s later. Find what holds the session loop
 - ⬜ More land: a terraform kept to a parcel with a selection off the 4 m grid (it edits the next
