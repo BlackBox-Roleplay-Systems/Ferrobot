@@ -5,7 +5,7 @@
 //! keep, the permission refusals most of all.
 
 use super::Probe;
-use ferro_client::groups::NewGroup;
+use ferro_client::groups::{GroupSettings, NewGroup, RoleUpdate};
 use ferro_client::{Client, Event};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -14,6 +14,8 @@ use uuid::Uuid;
 const IM_GROUP_INVITATION: u8 = 3;
 /// GP_MEMBER_INVITE: officers have it, a plain member does not.
 const POWER_INVITE: u64 = 1 << 1;
+/// GP_ROLE_CHANGE_ACTIONS: owners have it, the default officers do not.
+const POWER_CHANGE_ACTIONS: u64 = 1 << 10;
 /// How long the region may take to answer, or to pass an invitation or an ejection on.
 const ANSWER_WAIT: Duration = Duration::from_secs(15);
 /// How long a change the grid does not answer (a role given) gets before it is checked.
@@ -241,6 +243,58 @@ impl Probe {
         };
         self.emit(owner, "group-admin-role", ok, t, note);
 
+        // an officer may change the charter (Change Identity) and a role's title (Role Properties),
+        // but not a role's abilities (no Change Actions)
+        let t = Instant::now();
+        let charter = format!("Charter by the officer, round {}", self.round);
+        let (ok, note) = match self.change_charter(owner, partner, group, &charter).await {
+            Ok(now) if now == charter => (true, String::new()),
+            Ok(now) => (false, format!("the charter stayed {now:?}")),
+            Err(e) => (false, e),
+        };
+        self.emit(owner, "group-admin-officer-charter", ok, t, note);
+
+        let t = Instant::now();
+        let title = format!("Officer, round {}", self.round);
+        let (ok, note) = match roles.iter().find(|r| r.id == officers) {
+            Some(before) => {
+                let sent = partner
+                    .group_role_update(
+                        group,
+                        RoleUpdate {
+                            role: officers,
+                            name: before.name.clone(),
+                            description: before.description.clone(),
+                            title: title.clone(),
+                            powers: before.powers | POWER_CHANGE_ACTIONS,
+                        },
+                    )
+                    .await;
+                tokio::time::sleep(SETTLE).await;
+                match (sent, owner.group_roles(group).await) {
+                    (Err(e), _) | (_, Err(e)) => (false, e.to_string()),
+                    (Ok(()), Ok(now)) => match now.iter().find(|r| r.id == officers) {
+                        Some(r) if r.title == title && r.powers == before.powers => {
+                            (true, String::new())
+                        }
+                        Some(r) if r.title != title => {
+                            (false, format!("the title stayed {:?}", r.title))
+                        }
+                        Some(r) => (
+                            false,
+                            format!(
+                                "the abilities changed: {:x} to {:x}",
+                                before.powers, r.powers
+                            ),
+                        ),
+                        None => (false, "the Officers role went".to_owned()),
+                    },
+                }
+            }
+            None => (false, "no Officers role".to_owned()),
+        };
+        self.emit(owner, "group-admin-officer-role", ok, t, note);
+
         let t = Instant::now();
         let taken = owner.group_remove_role(group, them, officers).await.is_ok()
             && self.holds(owner, group, officers, them, false).await;
@@ -251,6 +305,21 @@ impl Probe {
             (false, _) => (false, "still in the Officers role".to_owned()),
         };
         self.emit(owner, "group-admin-unrole", ok, t, note);
+
+        // a plain member again: the charter is not theirs to change
+        let t = Instant::now();
+        let before = owner.group_profile(group).await.map(|p| p.charter);
+        let (ok, note) = match (
+            before,
+            self.change_charter(owner, partner, group, "Charter by a plain member")
+                .await,
+        ) {
+            (Ok(b), Ok(now)) if now == b => (true, String::new()),
+            (Ok(_), Ok(now)) => (false, format!("the charter became {now:?}")),
+            (Err(e), _) => (false, e.to_string()),
+            (_, Err(e)) => (false, e),
+        };
+        self.emit(owner, "group-admin-member-cannot-edit", ok, t, note);
 
         // ejected: gone from the member list and from the partner's own groups
         let t = Instant::now();
@@ -268,6 +337,33 @@ impl Probe {
             (_, _, m) => (false, format!("still in the member list ({m:?})")),
         };
         self.emit(owner, "group-admin-eject", ok, t, note);
+    }
+
+    /// The partner sends the group's settings with a new charter (the rest as they are); the
+    /// owner then reads the charter the group has.
+    async fn change_charter(
+        &self,
+        owner: &Client,
+        partner: &Client,
+        group: Uuid,
+        charter: &str,
+    ) -> Result<String, String> {
+        let current = partner
+            .group_profile(group)
+            .await
+            .map_err(|e| format!("profile: {e}"))?;
+        let mut settings = GroupSettings::from(&current);
+        settings.charter = charter.to_owned();
+        partner
+            .group_update(group, settings)
+            .await
+            .map_err(|e| format!("update: {e}"))?;
+        tokio::time::sleep(SETTLE).await;
+        owner
+            .group_profile(group)
+            .await
+            .map(|p| p.charter)
+            .map_err(|e| format!("the owner's profile: {e}"))
     }
 
     /// Whether the avatar is in the group's member list, fetched afresh; None when it did not come.
