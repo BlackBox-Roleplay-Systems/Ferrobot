@@ -108,6 +108,10 @@ pub enum Scenario {
     /// Groups as one resident uses them: make one, its roles and title, chat, a notice, leave and
     /// join again.
     Groups,
+    /// Running a group with a second avatar: a closed group refuses a join, an invitation is
+    /// accepted, a plain member can neither eject nor promote, a role given and taken back, an
+    /// ejection.
+    GroupAdmin,
 }
 
 impl Scenario {
@@ -138,6 +142,7 @@ impl Scenario {
             "bake" => vec![Scenario::Bake],
             "bom" => vec![Scenario::Bom],
             "groups" => vec![Scenario::Groups],
+            "group-admin" => vec![Scenario::GroupAdmin],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }
