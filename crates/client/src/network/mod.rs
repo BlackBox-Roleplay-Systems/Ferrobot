@@ -190,6 +190,7 @@ impl Network {
             st.mute_list = None;
             st.away = false;
             st.inventory_root = login.inventory_root;
+            st.agent_appearance_service = login.agent_appearance_service.clone();
             st.sound_upload_cost = login.sound_upload_cost;
         }
         self.shared
@@ -285,6 +286,8 @@ struct Session<'a> {
     rotation: Quat,
     /// Inventory items being created, by callback number.
     created: HashMap<u32, oneshot::Sender<Uuid>>,
+    /// Assets uploaded over UDP and not yet answered, oldest first, with their transactions.
+    udp_uploads: std::collections::VecDeque<(Uuid, oneshot::Sender<Result<Uuid, String>>)>,
     next_callback: u32,
     /// The outfit was asked to be baked this session.
     appearance_asked: bool,
@@ -295,6 +298,7 @@ struct Session<'a> {
     /// The bot manages the region's estate (RegionHandshake).
     estate_manager: bool,
     region_product: String,
+    region_server_bakes: bool,
     /// The invoice of the last estate `getinfo`.
     estate_invoice: Uuid,
     estate_waits: estate::EstateWaits,
@@ -921,6 +925,7 @@ impl Session<'_> {
                 id: self.region_id,
                 estate_manager: self.estate_manager,
                 product: self.region_product.clone(),
+                server_bakes: self.region_server_bakes,
             });
         }
         self.shared.emit(Event::Arrived {
@@ -1094,6 +1099,7 @@ impl Session<'_> {
             id: self.region_id,
             estate_manager: self.estate_manager,
             product: self.region_product.clone(),
+            server_bakes: self.region_server_bakes,
         }
     }
 
@@ -1102,6 +1108,7 @@ impl Session<'_> {
         self.region_id = h.id;
         self.estate_manager = h.estate_manager;
         self.region_product = h.product;
+        self.region_server_bakes = h.server_bakes;
     }
 
     /// EnableSimulator (event queue): a circuit to a neighbour region, when they are on.
@@ -1883,6 +1890,19 @@ impl Session<'_> {
             let m: BulkUpdateInventory = pkt.decode()?;
             let added = inventory::bulk_update(&m, self.login.agent_id);
             self.on_inventory_added(added);
+        } else if id == AssetUploadComplete::ID {
+            let m: AssetUploadComplete = pkt.decode()?;
+            // answered in the order sent: the bot uploads one asset at a time
+            if let Some((transaction, tx)) = self.udp_uploads.pop_front() {
+                let _ = tx.send(if m.asset_block.success {
+                    Ok(transaction)
+                } else {
+                    Err(format!(
+                        "the region refused the upload of {}",
+                        m.asset_block.uuid
+                    ))
+                });
+            }
         } else if id == UpdateCreateInventoryItem::ID {
             let m: UpdateCreateInventoryItem = pkt.decode()?;
             for it in &m.inventory_data {
@@ -2044,6 +2064,27 @@ impl Session<'_> {
                 let _ = reply.send(Ok(self.region_name.clone()));
             }
             self.send_agent_update();
+        } else if id == AvatarAppearance::ID {
+            let m: AvatarAppearance = pkt.decode()?;
+            let faces = crate::appearance::texture_faces(
+                &m.object_data.texture_entry,
+                crate::appearance::AVATAR_FACES,
+            );
+            match faces {
+                Some(faces) => {
+                    let cof_version = m.appearance_data.first().map_or(0, |a| a.cof_version);
+                    let agent = m.sender.id;
+                    self.shared
+                        .state_mut()
+                        .appearances
+                        .insert(agent, crate::appearance::Appearance { cof_version, faces });
+                    self.shared.emit(Event::Appearance { agent, cof_version });
+                }
+                None => log::warn!(
+                    "AvatarAppearance for {}: a TextureEntry cut short",
+                    m.sender.id
+                ),
+            }
         } else if id == KickUser::ID {
             let m: KickUser = pkt.decode()?;
             let reason = field_str(&m.user_info.reason).trim().to_owned();
@@ -2405,6 +2446,7 @@ async fn run(
         region_id: Uuid::nil(),
         estate_manager: false,
         region_product: String::new(),
+        region_server_bakes: false,
         estate_invoice: Uuid::new_v4(),
         estate_waits: Default::default(),
         profile_waits: Default::default(),
@@ -2415,6 +2457,7 @@ async fn run(
         transfers: Default::default(),
         appearance_asked: false,
         created: HashMap::new(),
+        udp_uploads: Default::default(),
         next_callback: 0,
         controls: 0,
         controls_once: 0,
@@ -2522,6 +2565,7 @@ mod tests {
             secure_session_id: uuid::Uuid::from_u128(4),
             inventory_root: uuid::Uuid::nil(),
             sound_upload_cost: None,
+            agent_appearance_service: None,
             home: None,
             buddies: Vec::new(),
         }

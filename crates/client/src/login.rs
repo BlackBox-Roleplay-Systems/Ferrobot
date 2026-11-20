@@ -66,6 +66,9 @@ pub struct LoginResponse {
     /// What uploading a sound costs, when the grid says (Second Life's
     /// `account_level_benefits`, as Aurora's Prices::from_login reads them).
     pub sound_upload_cost: Option<i32>,
+    /// Where viewers fetch avatars' server-side bakes (`agent_appearance_service`):
+    /// `<url>texture/<agent>/<channel>/<bake>`. None when the grid gives none.
+    pub agent_appearance_service: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -337,6 +340,9 @@ fn parse_success(v: &Llsd) -> Result<LoginResponse, LoginError> {
             Llsd::Integer(n) if *n >= 0 => Some(*n),
             _ => None,
         },
+        agent_appearance_service: Some(v["agent_appearance_service"].as_str())
+            .filter(|u| !u.is_empty())
+            .map(str::to_owned),
         home: parse_home(v["home"].as_str()),
         buddies: v["buddy-list"]
             .as_array()

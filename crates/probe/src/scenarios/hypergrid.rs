@@ -25,6 +25,13 @@ impl Probe {
             return;
         };
         let middle = Vec3::new(128.0, 128.0, 30.0);
+        let me = client.state().agent_id;
+        let home_bakes = client
+            .state()
+            .region
+            .as_ref()
+            .is_some_and(|r| r.server_bakes);
+        let mut events = client.subscribe();
 
         if !self
             .teleport_via(
@@ -40,6 +47,40 @@ impl Probe {
             return;
         }
         tokio::time::sleep(SETTLE).await;
+
+        // a region that bakes server-side must not say so to a visitor: the visitor's viewer would
+        // fetch every bake from its own grid's appearance service, which has none of the other
+        // grid's. Its viewer bakes it, and fetches the bakes everyone wears from the region by id.
+        if home_bakes {
+            let t = Instant::now();
+            let told = client
+                .state()
+                .region
+                .as_ref()
+                .is_some_and(|r| r.server_bakes);
+            self.emit(
+                client,
+                &format!("hg-no-server-bakes-in-{there}"),
+                !told,
+                t,
+                if told {
+                    "the region told a visitor it bakes server-side".into()
+                } else {
+                    String::new()
+                },
+            );
+            let appearance = match super::bake::current(client, me) {
+                Some(a) => Some(a),
+                None => {
+                    super::bake::next_appearance(&mut events, client, me, super::bake::BAKE_WAIT)
+                        .await
+                }
+            };
+            if let Some(a) = appearance {
+                self.fetch_bakes(client, &format!("hg-bakes-in-{there}"), &a)
+                    .await;
+            }
+        }
 
         self.teleport(
             client,

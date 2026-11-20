@@ -9,6 +9,7 @@
 //! do when it ends. Requests made between sessions fail with [`ClientError::NotConnected`].
 //! ARCHITECTURE.md, "How the pieces talk".
 
+pub mod appearance;
 mod caps;
 mod circuit;
 pub mod estate;
@@ -38,6 +39,7 @@ pub mod terrain;
 mod transfer;
 pub mod upload;
 pub mod walking;
+pub mod wearable;
 mod xmlrpc;
 
 pub use events::{ChatMessage, Event, InstantMessage, ScriptDialog};

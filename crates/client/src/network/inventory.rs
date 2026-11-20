@@ -45,14 +45,26 @@ pub(crate) enum InventoryRequest {
         parent: Uuid,
         reply: oneshot::Sender<()>,
     },
-    /// CreateInventoryItem, answered by UpdateCreateInventoryItem with the new item's key.
+    /// CreateInventoryItem, answered by UpdateCreateInventoryItem with the new item's key. With a
+    /// `transaction`, the item is made from the asset uploaded under it (UploadUdp); a wearable's
+    /// type goes in `wearable_type`, which the region keeps in the item's flags.
     CreateItem {
         folder: Uuid,
         name: String,
         description: String,
         asset_type: i8,
         inv_type: i8,
+        transaction: Uuid,
+        wearable_type: u8,
         reply: oneshot::Sender<Uuid>,
+    },
+    /// AssetUploadRequest with the asset inline, as the viewer uploads a small asset such as a
+    /// wearable (LLAssetStorage over UDP), answered by AssetUploadComplete: the transaction it
+    /// went under, for CreateItem.
+    UploadUdp {
+        asset_type: i8,
+        data: Vec<u8>,
+        reply: oneshot::Sender<Result<Uuid, String>>,
     },
     /// A link to an item, in a folder (LinkInventoryItem).
     Link {
@@ -146,6 +158,8 @@ impl Session<'_> {
                 description,
                 asset_type,
                 inv_type,
+                transaction,
+                wearable_type,
                 reply,
             } => {
                 self.next_callback = self.next_callback.wrapping_add(1).max(1);
@@ -158,10 +172,25 @@ impl Session<'_> {
                 m.inventory_block.next_owner_mask = 0x7fff_ffff;
                 m.inventory_block.type_ = asset_type;
                 m.inventory_block.inv_type = inv_type;
+                m.inventory_block.transaction_id = transaction;
+                m.inventory_block.wearable_type = wearable_type;
                 m.inventory_block.name = str_field(&name);
                 m.inventory_block.description = str_field(&description);
                 self.send(&m, true);
                 self.created.insert(callback, reply);
+            }
+            InventoryRequest::UploadUdp {
+                asset_type,
+                data,
+                reply,
+            } => {
+                let transaction = Uuid::new_v4();
+                let mut m = AssetUploadRequest::default();
+                m.asset_block.transaction_id = transaction;
+                m.asset_block.type_ = asset_type;
+                m.asset_block.asset_data = data;
+                self.send(&m, true);
+                self.udp_uploads.push_back((transaction, reply));
             }
             InventoryRequest::UploadAsset { upload, reply } => {
                 // LibreMetaverse's RequestCreateItemFromAssetAsync needs the capability too; the

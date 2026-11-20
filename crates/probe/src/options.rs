@@ -99,6 +99,12 @@ pub enum Scenario {
     /// The region console's `kick user`, plain and with `--force` (RemoteAdmin): the bot is told
     /// why, the regions let the agent go, and the next login works.
     Kick,
+    /// Server-side baking: the region's bakes of the bot's outfit, fetched from the home
+    /// region, the neighbour and after a new login.
+    Bake,
+    /// Bakes on Mesh: a test outfit of the probe's own textures (a Universal layer, a skirt)
+    /// worn, kept through teleports, taken off.
+    Bom,
 }
 
 impl Scenario {
@@ -126,6 +132,8 @@ impl Scenario {
             "vanish" => vec![Scenario::Vanish],
             "hypergrid" => vec![Scenario::Hypergrid],
             "kick" => vec![Scenario::Kick],
+            "bake" => vec![Scenario::Bake],
+            "bom" => vec![Scenario::Bom],
             _ => return Err(format!("unknown scenario: {s}")),
         })
     }
