@@ -134,6 +134,9 @@ pub(super) enum Heard {
     /// TeleportFailed: the region the bot left took the agent back (OpenSim's
     /// EntityTransferModule.Fail, after TeleportFinish).
     TeleportFailed(String),
+    /// An instant message: a region may hand one to the circuit of a neighbour the bot is a child
+    /// agent of (OpenSim's MessageTransferModule does), and a viewer reads it from any circuit.
+    InstantMessage(Box<ImprovedInstantMessage>),
 }
 
 impl Neighbour {
@@ -362,22 +365,24 @@ impl Neighbours {
         self.map.clear();
     }
 
-    /// A packet from a neighbour. True when the neighbours changed (opened, named or closed).
+    /// A packet from a neighbour: whether the neighbours changed (opened, named or closed), and an
+    /// instant message it carried.
     pub(super) fn on_datagram(
         &mut self,
         sock: &UdpSocket,
         login: &LoginResponse,
         data: &[u8],
         from: SocketAddr,
-    ) -> bool {
+    ) -> (bool, Option<Box<ImprovedInstantMessage>>) {
         let Some(n) = self.map.get_mut(&from) else {
-            return false;
+            return (false, None);
         };
         match n.on_datagram(sock, login, data) {
-            Heard::Closed => self.close(&from, "DisableSimulator"),
-            Heard::Handshake => true,
+            Heard::Closed => (self.close(&from, "DisableSimulator"), None),
+            Heard::Handshake => (true, None),
+            Heard::InstantMessage(m) => (false, Some(m)),
             // a teleport long over, or one this bot did not make
-            Heard::Nothing | Heard::TeleportFailed(_) => false,
+            Heard::Nothing | Heard::TeleportFailed(_) => (false, None),
         }
     }
 
@@ -427,6 +432,9 @@ fn dispatch(
     } else if id == TeleportFailed::ID {
         let m: TeleportFailed = pkt.decode()?;
         return Ok(Heard::TeleportFailed(field_str(&m.info.reason)));
+    } else if id == ImprovedInstantMessage::ID {
+        let m: ImprovedInstantMessage = pkt.decode()?;
+        return Ok(Heard::InstantMessage(Box::new(m)));
     }
     Ok(Heard::Nothing)
 }
@@ -483,5 +491,32 @@ mod tests {
 
         assert!(n.close(&other, "test"));
         assert!(!n.contains(&other));
+    }
+
+    #[tokio::test]
+    async fn a_neighbours_instant_message_is_passed_on() {
+        // OpenSim's transfer module hands a message to the circuit of a region the bot is a
+        // child agent of: a viewer reads it from any circuit, and so does the bot
+        let sock = UdpSocket::bind("127.0.0.1:0").await.expect("socket");
+        let other: SocketAddr = "127.0.0.1:11".parse().expect("addr");
+        let mut n = Neighbours::new(true);
+        assert!(n.keep(Neighbour::kept(
+            Circuit::new(other),
+            0,
+            6,
+            Handshake::default()
+        )));
+
+        let mut m = ImprovedInstantMessage::default();
+        m.message_block.dialog = 3;
+        m.message_block.id = uuid::Uuid::from_u128(7);
+        let mut data = Vec::new();
+        ferro_msg::build_packet(&m, 1, true, false, &[], &mut data);
+
+        let (changed, im) = n.on_datagram(&sock, &login(), &data, other);
+        assert!(!changed);
+        let im = im.expect("the instant message");
+        assert_eq!(im.message_block.dialog, 3);
+        assert_eq!(im.message_block.id, uuid::Uuid::from_u128(7));
     }
 }
