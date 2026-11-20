@@ -388,6 +388,45 @@ impl Probe {
             (_, _, m) => (false, format!("still in the member list ({m:?})")),
         };
         self.emit(owner, "group-admin-eject", ok, t, note);
+
+        // banned (GroupAPIv1): on the list, and no invitation reaches them; then the ban lifted
+        let t = Instant::now();
+        let (ok, note) = match owner.group_ban(group, &[them], true).await {
+            Ok(list) if list.contains(&them) => (true, String::new()),
+            Ok(list) => (
+                false,
+                format!("not on the ban list ({} banned)", list.len()),
+            ),
+            Err(e) => (false, e.to_string()),
+        };
+        self.emit(owner, "group-admin-ban", ok, t, note);
+
+        let mut events = partner.subscribe();
+        let t = Instant::now();
+        let invited = owner.group_invite(group, them, &[Uuid::nil()]).await;
+        let came = next_event(&mut events, SEEN_ELSEWHERE, |e| match e {
+            Event::InstantMessage(im)
+                if im.dialog == IM_GROUP_INVITATION && im.from_agent_id == group =>
+            {
+                Some(())
+            }
+            _ => None,
+        })
+        .await;
+        let (ok, note) = match (invited, came) {
+            (Err(e), _) => (false, format!("invite: {e}")),
+            (Ok(()), None) => (true, String::new()),
+            (Ok(()), Some(())) => (false, "a banned avatar was invited".to_owned()),
+        };
+        self.emit(owner, "group-admin-banned-not-invited", ok, t, note);
+
+        let t = Instant::now();
+        let (ok, note) = match owner.group_ban(group, &[them], false).await {
+            Ok(list) if !list.contains(&them) => (true, String::new()),
+            Ok(_) => (false, "still on the ban list".to_owned()),
+            Err(e) => (false, e.to_string()),
+        };
+        self.emit(owner, "group-admin-unban", ok, t, note);
     }
 
     /// The partner sends the group's settings with a new charter (the rest as they are); the
