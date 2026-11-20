@@ -38,6 +38,9 @@ pub enum Event {
     TeleportFailed { reason: String },
     /// The session ended; a new login comes next, or not, as the caller decides.
     Disconnected { reason: String },
+    /// An avatar's appearance came (AvatarAppearance), the bot's own included; it is in the
+    /// state's `appearances`.
+    Appearance { agent: Uuid, cof_version: i32 },
     /// Items came into the bot's inventory: an offer accepted, a copy made
     /// (BulkUpdateInventory, LLInventoryModel::processBulkUpdateInventory).
     InventoryAdded(Vec<AddedItem>),

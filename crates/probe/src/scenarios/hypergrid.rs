@@ -25,6 +25,8 @@ impl Probe {
             return;
         };
         let middle = Vec3::new(128.0, 128.0, 30.0);
+        let me = client.state().agent_id;
+        let mut events = client.subscribe();
 
         if !self
             .teleport_via(
@@ -40,6 +42,25 @@ impl Probe {
             return;
         }
         tokio::time::sleep(SETTLE).await;
+
+        // a grid that bakes server-side bakes the visitor too; the visitor's viewer fetches every
+        // bake from its own home grid's appearance service, the one its login named
+        if client.state().agent_appearance_service.is_some() {
+            let first = match super::bake::current(client, me).filter(|a| a.cof_version > 0) {
+                Some(a) => Some(a),
+                None => {
+                    super::bake::next_appearance(&mut events, client, me, super::bake::BAKE_WAIT)
+                        .await
+                }
+            };
+            if let Some(first) = first {
+                let baked = super::bake::settled(&mut events, client, me, first).await;
+                self.fetch_bakes(client, &format!("hg-bakes-in-{there}"), &baked)
+                    .await;
+                self.fetch_from_service(client, "hg-bakes-from-home-service", me, &baked)
+                    .await;
+            }
+        }
 
         self.teleport(
             client,

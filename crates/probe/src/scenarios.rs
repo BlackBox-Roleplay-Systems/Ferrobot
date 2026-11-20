@@ -16,6 +16,8 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+mod bake;
+mod bom;
 mod hypergrid;
 mod land;
 mod sessions;
@@ -109,6 +111,7 @@ impl Probe {
                 Scenario::AbandonedLogin => self.abandoned_login(on).await,
                 Scenario::Vanish => self.vanish(on).await,
                 Scenario::Kick => self.kick(on).await,
+                Scenario::Bake => self.bake(on).await,
                 _ => {
                     self.scenario(&on.client, scenario).await;
                     continue;
@@ -417,8 +420,13 @@ impl Probe {
             Scenario::LandGuard => self.land_guard(client).await,
             Scenario::LandFaults => self.land_faults(client).await,
             Scenario::Hypergrid => self.hypergrid(client).await,
+            Scenario::Bom => self.bom(client).await,
             // run by the round: the session ends in them
-            Scenario::Restart | Scenario::AbandonedLogin | Scenario::Vanish | Scenario::Kick => {}
+            Scenario::Restart
+            | Scenario::AbandonedLogin
+            | Scenario::Vanish
+            | Scenario::Kick
+            | Scenario::Bake => {}
             Scenario::Unreachable => {
                 let unreachable = o.unreachable.clone();
                 self.refused(

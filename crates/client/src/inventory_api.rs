@@ -376,6 +376,8 @@ impl Client {
                 description,
                 asset_type: 7,
                 inv_type: 7,
+                transaction: Uuid::nil(),
+                wearable_type: 0,
                 reply,
             })
             .await?;
@@ -420,6 +422,68 @@ impl Client {
         })
         .await?
         .map_err(ClientError::Refused)
+    }
+
+    /// Upload a texture (a JPEG 2000 codestream) into `folder`, for every owner to come.
+    pub async fn upload_texture(
+        &self,
+        folder: Uuid,
+        name: &str,
+        data: Vec<u8>,
+    ) -> Result<crate::upload::Uploaded, ClientError> {
+        let upload = Box::new(crate::upload::AssetUpload {
+            asset_type: "texture",
+            inventory_type: "texture",
+            folder,
+            name: name.to_owned(),
+            description: String::new(),
+            next_owner_mask: 0x7fff_ffff,
+            group_mask: 0,
+            everyone_mask: 0,
+            expected_cost: None,
+            data,
+        });
+        self.ask_within(UPLOAD_TIMEOUT, |reply| {
+            Request::Inventory(InventoryRequest::UploadAsset { upload, reply })
+        })
+        .await?
+        .map_err(ClientError::Refused)
+    }
+
+    /// Make a wearable (see [`crate::wearable`]) as a viewer makes one: its asset uploaded over
+    /// UDP under a transaction (AssetUploadRequest), then the item made from that transaction
+    /// with the wearable's type (CreateInventoryItem). The region reads what a worn item is from
+    /// that type, which an upload through NewFileAgentInventory does not set. Answers the item.
+    pub async fn create_wearable(
+        &self,
+        folder: Uuid,
+        name: &str,
+        asset_type: i8,
+        wearable_type: u8,
+        data: Vec<u8>,
+    ) -> Result<Uuid, ClientError> {
+        let transaction = self
+            .ask_within(UPLOAD_TIMEOUT, |reply| {
+                Request::Inventory(InventoryRequest::UploadUdp {
+                    asset_type,
+                    data,
+                    reply,
+                })
+            })
+            .await?
+            .map_err(ClientError::Refused)?;
+        let name = name.to_owned();
+        self.inventory_ask(|reply| InventoryRequest::CreateItem {
+            folder,
+            name,
+            description: String::new(),
+            asset_type,
+            inv_type: crate::wearable::INV_WEARABLE,
+            transaction,
+            wearable_type,
+            reply,
+        })
+        .await
     }
 
     /// Create a notecard and give it (LibreMetaverse's SendNotecard, SecondBot's

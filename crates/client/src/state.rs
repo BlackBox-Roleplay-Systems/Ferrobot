@@ -22,6 +22,8 @@ pub struct State {
     pub groups: Vec<Group>,
     /// The inventory's root folder (the login's inventory-root).
     pub inventory_root: Uuid,
+    /// Where viewers fetch avatars' server-side bakes (the login's `agent_appearance_service`).
+    pub agent_appearance_service: Option<String>,
     /// What uploading a sound costs, when the login said.
     pub sound_upload_cost: Option<i32>,
     /// The bot's friends (the login's buddy list, then the friendships it accepts).
@@ -35,6 +37,9 @@ pub struct State {
     /// The avatars the region's object updates place, the bot left out (within its draw
     /// distance; seated ones on their seats).
     pub avatars: std::collections::HashMap<Uuid, Vec3>,
+    /// What the region last said each avatar looks like (AvatarAppearance), the bot's own
+    /// included: with server-side baking it sends the bot its own bakes.
+    pub appearances: std::collections::HashMap<Uuid, crate::appearance::Appearance>,
     /// Where friends were last found on the map (FindAgent).
     pub friend_locations: std::collections::HashMap<Uuid, FriendLocation>,
     /// The mute list, once the grid has sent it.
