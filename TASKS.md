@@ -613,6 +613,10 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   as done (the owner stayed a member, but was told of the ejection); an officer could change
   neither the charter nor a role's title (both needed Change Actions). Not yet: an officer
   inviting and ejecting, declined invitations, notices to a member who turned them off
+- 🟡 `group-admin` on a grid (`--partner-home` a region of another region server): the owner's
+  region must show the partner's acceptance, and the partner's region the role the owner gave,
+  within 5 s (each region caches Robust's answers up to 30 s). Found on Tranquillity's develop:
+  a member ejected through another region server kept the group in their viewer
 - 🟡 The client's group settings: `group_profile` (GroupProfileRequest), `group_update`
   (UpdateGroupInfo), `group_role_update` (GroupRoleUpdate, the whole role)
 - ⬜ The client sometimes reads a packet seconds late in the first seconds after a login: a

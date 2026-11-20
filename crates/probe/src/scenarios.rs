@@ -129,16 +129,17 @@ impl Probe {
 
     /// Log in at the home region's middle and wait for the arrival; the step is told as `what`.
     async fn login(&mut self, what: &str) -> Option<Online> {
-        let user = self.user.clone();
-        self.login_as(what, &user).await
+        let (user, home) = (self.user.clone(), self.opts.home.clone());
+        self.login_as(what, &user, &home).await
     }
 
-    /// As [`Probe::login`], for another account with the bot's password (a scenario's second avatar).
-    async fn login_as(&mut self, what: &str, user: &str) -> Option<Online> {
+    /// As [`Probe::login`], for another account with the bot's password (a scenario's second
+    /// avatar), at the middle of `region`.
+    async fn login_as(&mut self, what: &str, user: &str, region: &str) -> Option<Online> {
         let (client, mut network) = Client::new(self.http.clone());
         network.set_neighbours(self.opts.neighbours);
         let mut events = client.subscribe();
-        let req = self.login_request_for(user);
+        let req = self.login_request_for(user, region);
         let t = Instant::now();
         let resp = match login::login(&self.http, &req).await {
             Ok(resp) => resp,
@@ -162,8 +163,8 @@ impl Probe {
         .await
         .unwrap_or(false);
         let note = match region_name(&client.state()) {
-            r if arrived && r != self.opts.home => {
-                format!("arrived in {r}, not {}", self.opts.home)
+            r if arrived && r != region => {
+                format!("arrived in {r}, not {region}")
             }
             _ => String::new(),
         };
@@ -183,17 +184,17 @@ impl Probe {
 
     /// The bot's login, at the home region's middle.
     fn login_request(&self) -> LoginRequest {
-        self.login_request_for(&self.user)
+        self.login_request_for(&self.user, &self.opts.home)
     }
 
     /// An account's login with the bot's password, at the home region's middle.
-    fn login_request_for(&self, user: &str) -> LoginRequest {
+    fn login_request_for(&self, user: &str, region: &str) -> LoginRequest {
         LoginRequest {
             login_uri: self.opts.login_uri.clone(),
             username: user.to_owned(),
             password: self.password.clone(),
             start: StartLocation::Region {
-                name: self.opts.home.clone(),
+                name: region.to_owned(),
                 x: 128,
                 y: 128,
                 z: 30,
