@@ -599,6 +599,10 @@ LibreMetaverse client, in Rust, on the same client as the bot.
   and a crossing there as a visitor, home again, then the home grid's own teleports. For two
   Tranquillity Hypergrid standalones on one host; not yet: instant messages and friends across
   grids, the visitor's inventory and attachments
+- 🟡 `hg-content` (`--hg-region`): content made on another grid used at home, a taken box rezzed and
+  a notecard written there read back. Run on two Tranquillity Hypergrid standalones on one host on
+  21 November 2026: both fail with `OutboundPermission` at Tranquillity's default (false; the items
+  reach the home inventory, their assets stay on the other grid), both pass with it set to true
 - 🟡 `kick`: the region console's `kick user`, plain and with `--force`, through RemoteAdmin's
   `admin_console_command`; the agent must be in the home region and the neighbour first, then the
   bot must be told the operator's message, both regions must let the agent go

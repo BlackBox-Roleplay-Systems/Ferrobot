@@ -20,6 +20,7 @@ mod bake;
 mod bom;
 mod group_admin;
 mod groups;
+mod hg_content;
 mod hypergrid;
 mod land;
 mod sessions;
@@ -434,6 +435,7 @@ impl Probe {
             Scenario::LandGuard => self.land_guard(client).await,
             Scenario::LandFaults => self.land_faults(client).await,
             Scenario::Hypergrid => self.hypergrid(client).await,
+            Scenario::HgContent => self.hg_content(client).await,
             Scenario::Bom => self.bom(client).await,
             Scenario::Groups => self.groups(client).await,
             Scenario::GroupAdmin => self.group_admin(client).await,

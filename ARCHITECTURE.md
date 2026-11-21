@@ -78,6 +78,7 @@ crates/
     src/scenarios.rs       the scenarios: login, teleports, crossings, faults put in, restarts,
                            a seated crossing
     src/scenarios/land.rs  the land scenarios: divide, join, terraform, as owner, as visitor, faults
+    src/scenarios/hg_content.rs  content made on another grid (Hypergrid), used back home
     src/admin.rs           OpenSim's RemoteAdmin: accounts for the bots, region restarts
     src/judge.rs           a teleport's verdict, from where the avatar is afterwards
     src/report.rs          one JSON line per step, the table
