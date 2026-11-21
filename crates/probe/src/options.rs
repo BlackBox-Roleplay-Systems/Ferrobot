@@ -13,7 +13,8 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --password-file FILE  a file holding its password
   --scenarios LIST      comma-separated: all (local, near, far, cross), local, near, far, cross,
                         bounce, lost-crossing, unreachable, restart, sit-cross, land,
-                        land-guard, land-faults, abandoned-login, vanish, hypergrid (all)
+                        land-guard, land-faults, abandoned-login, vanish, hypergrid,
+                        hg-content (all)
   --rounds N            rounds, each a fresh login (1)
   --bots N              bots at once, each running the scenarios (1): the first is --user, the
                         others the same name with 2, 3… after the last name, the same password
@@ -30,7 +31,7 @@ ferro-probe: teleports and crossings against real regions, timed and judged
   --login-wait SECS     abandoned-login: how long the region may keep a login whose viewer never
                         connects before the next login must work (150)
   --hg-region GATE:REGION
-                        hypergrid: a region of another grid, by its gatekeeper and name
+                        hypergrid, hg-content: a region of another grid, by its gatekeeper and name
                         (host:port:Region); the bot goes there and comes back home through it
   --hg-near REGION      hypergrid: that region's neighbour to the east, crossed into and back
   --partner-home REGION group-admin: the region the second avatar logs in to (default --home);
@@ -100,6 +101,8 @@ pub enum Scenario {
     Vanish,
     /// To a region of another grid (Hypergrid), around it, and back home.
     Hypergrid,
+    /// Content made on another grid (a taken box, a notecard) used back home.
+    HgContent,
     /// The region console's `kick user`, plain and with `--force` (RemoteAdmin): the bot is told
     /// why, the regions let the agent go, and the next login works.
     Kick,
@@ -142,6 +145,7 @@ impl Scenario {
             "abandoned-login" => vec![Scenario::AbandonedLogin],
             "vanish" => vec![Scenario::Vanish],
             "hypergrid" => vec![Scenario::Hypergrid],
+            "hg-content" => vec![Scenario::HgContent],
             "kick" => vec![Scenario::Kick],
             "bake" => vec![Scenario::Bake],
             "bom" => vec![Scenario::Bom],
@@ -262,8 +266,11 @@ impl Options {
         if o.bots > 1 && o.scenarios.contains(&Scenario::Restart) {
             return Err("--scenarios restart runs with one bot".into());
         }
-        if o.scenarios.contains(&Scenario::Hypergrid) && o.hg_region.is_none() {
-            return Err("--scenarios hypergrid needs --hg-region".into());
+        if (o.scenarios.contains(&Scenario::Hypergrid)
+            || o.scenarios.contains(&Scenario::HgContent))
+            && o.hg_region.is_none()
+        {
+            return Err("--scenarios hypergrid and hg-content need --hg-region".into());
         }
         Ok(o)
     }
@@ -298,6 +305,22 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Options, String> {
         Options::parse(args.iter().map(|s| (*s).to_owned()))
+    }
+
+    #[test]
+    fn hg_content_needs_a_region_of_another_grid() {
+        let base = [
+            "--user",
+            "u",
+            "--password-file",
+            "pw",
+            "--scenarios",
+            "hg-content",
+        ];
+        let with = |more: &[&str]| parse(&[&base[..], more].concat());
+        assert!(with(&[]).is_err(), "no --hg-region");
+        let o = with(&["--hg-region", "172.17.0.1:9400:Cedar"]).expect("options");
+        assert_eq!(o.scenarios, vec![Scenario::HgContent]);
     }
 
     #[test]
